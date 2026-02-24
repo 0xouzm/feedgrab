@@ -91,12 +91,23 @@ async def detect_platform(url: str) -> str:
 
 
 if __name__ == "__main__":
-    import sys
+    import argparse
 
-    transport = "stdio"
-    if "--transport" in sys.argv:
-        idx = sys.argv.index("--transport")
-        if idx + 1 < len(sys.argv):
-            transport = sys.argv[idx + 1]
+    parser = argparse.ArgumentParser(description="x-reader MCP Server")
+    parser.add_argument(
+        "--transport", default="stdio", choices=["stdio", "sse"],
+        help="Transport mode (default: stdio)",
+    )
+    parser.add_argument(
+        "--host", default="127.0.0.1",
+        help="Host to bind SSE server (default: 127.0.0.1). "
+        "WARNING: binding to 0.0.0.0 exposes the server to the network "
+        "without authentication — use at your own risk.",
+    )
+    parser.add_argument("--port", type=int, default=8000, help="SSE port (default: 8000)")
+    args = parser.parse_args()
 
-    mcp.run(transport=transport)
+    if args.transport == "sse":
+        mcp.run(transport="sse", host=args.host, port=args.port)
+    else:
+        mcp.run(transport="stdio")

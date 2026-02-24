@@ -16,6 +16,7 @@ from x_reader.schema import (
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
 )
 from x_reader.fetchers.jina import fetch_via_jina
+from x_reader.utils.url_validator import validate_url
 
 
 class UniversalReader:
@@ -60,6 +61,9 @@ class UniversalReader:
         # Ensure URL has scheme
         if not url.startswith(("http://", "https://")):
             url = f"https://{url}"
+
+        # SSRF protection: block private IPs, metadata endpoints, DNS rebinding
+        validate_url(url)
 
         platform = self._detect_platform(url)
         logger.info(f"[{platform}] {url[:60]}...")

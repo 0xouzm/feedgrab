@@ -46,7 +46,21 @@ async def fetch_telegram(
         raise ValueError("TG_API_ID and TG_API_HASH must be set in .env")
 
     session = session_path or os.getenv("TG_SESSION_PATH", "./tg_session")
+
+    # Security: restrict session file to safe directories (prevent path traversal)
+    session_abs = os.path.abspath(session)
+    safe_dirs = [os.path.expanduser("~/.x-reader"), os.path.abspath(".")]
+    if not any(session_abs.startswith(d) for d in safe_dirs):
+        raise ValueError(
+            f"Session path must be under ~/.x-reader/ or current directory, got: {session}"
+        )
+
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    # Lock down session file permissions (contains auth tokens)
+    session_file = session_abs + ".session"
+    if os.path.exists(session_file):
+        os.chmod(session_file, 0o600)
 
     messages = []
     async with TelegramClient(session, int(api_id), api_hash) as client:
