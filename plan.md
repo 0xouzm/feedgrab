@@ -3,6 +3,27 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 2026-02-27 · v0.2.4d · t.co 短链接展开为原始 URL
+
+### 背景
+推文正文中的外部链接（如微信公众号）显示为 `https://t.co/xxx` 短链接，而非用户实际可见的完整 URL。GraphQL 返回的 `entities.urls` 中已包含 `expanded_url`（原始链接），但 `extract_tweet_data()` 未做替换。
+
+### 方案决策
+在 `extract_tweet_data()` 提取 `full_text` 后，遍历 URL 实体（note_tweet `entity_set.urls` 优先，回退 `legacy.entities.urls`），将正文中的 `url`（t.co）替换为 `expanded_url`（原始完整链接）。
+
+### 改动范围
+| 文件 | 改动 |
+|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | `extract_tweet_data()` 中 `full_text` 提取后增加 t.co → expanded_url 替换 |
+
+### 验证结果
+**binghe 推文**：`https://t.co/WngCfV5mTC` → `https://mp.weixin.qq.com/s/t6xjY07Yf7VIflDWvXjk4A`，输出文件中无残留 t.co 链接。
+
+### 状态：全部完成 ✅
+
+
+---
+
 ## 2026-02-27 · v0.2.4c · 修复作者回帖漏抓 + Article 检测增强 + 排序 bug
 
 ### 背景

@@ -457,6 +457,15 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
     )
     full_text = note_tweet.get("text") or legacy.get("full_text", "")
 
+    # Expand t.co short URLs to original URLs (note_tweet entity_set first, then legacy)
+    note_urls = note_tweet.get("entity_set", {}).get("urls", [])
+    legacy_urls = legacy.get("entities", {}).get("urls", [])
+    for url_entity in (note_urls or legacy_urls):
+        short_url = url_entity.get("url", "")
+        expanded_url = url_entity.get("expanded_url", "")
+        if short_url and expanded_url and short_url in full_text:
+            full_text = full_text.replace(short_url, expanded_url)
+
     # Extract media from extended_entities
     media_list = legacy.get("extended_entities", {}).get("media", [])
     images = []
