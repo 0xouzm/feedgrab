@@ -359,6 +359,12 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
                             jina_data = fetch_via_jina(url)
                             jina_content = jina_data.get("content", "")
                             if jina_content and len(jina_content.strip()) > 200:
+                                # Normalize nested image links [![alt](img)](link) → ![image](img)
+                                jina_content = re.sub(
+                                    r'\[!\[[^\]]*\]\(([^)]+)\)\]\([^)]+\)',
+                                    r'![image](\1)',
+                                    jina_content,
+                                )
                                 data["text"] = jina_content
                                 # Update thread_tweets content too for schema
                                 if data.get("thread_tweets"):
