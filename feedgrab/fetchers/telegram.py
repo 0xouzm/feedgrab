@@ -2,7 +2,7 @@
 """
 Telegram channel fetcher — uses Telethon.
 
-Requires: pip install x-reader[telegram]
+Requires: pip install feedgrab[telegram]
 Requires: TG_API_ID + TG_API_HASH in .env
 """
 
@@ -36,7 +36,7 @@ async def fetch_telegram(
     except ImportError:
         raise ImportError(
             "Telethon is required for Telegram fetching. "
-            "Install with: pip install x-reader[telegram]"
+            "Install with: pip install feedgrab[telegram]"
         )
 
     api_id = os.getenv("TG_API_ID", "")
@@ -49,10 +49,10 @@ async def fetch_telegram(
 
     # Security: restrict session file to safe directories (prevent path traversal)
     session_abs = os.path.abspath(session)
-    safe_dirs = [os.path.expanduser("~/.x-reader"), os.path.abspath(".")]
+    safe_dirs = [os.path.expanduser("~/.feedgrab"), os.path.abspath(".")]
     if not any(session_abs.startswith(d) for d in safe_dirs):
         raise ValueError(
-            f"Session path must be under ~/.x-reader/ or current directory, got: {session}"
+            f"Session path must be under ~/.feedgrab/ or current directory, got: {session}"
         )
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)

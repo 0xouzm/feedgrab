@@ -6,8 +6,8 @@ X/Twitter fetcher — three-tier fallback:
 2. Jina Reader (handles non-tweet X pages like profiles)
 3. Playwright + saved session (handles login-required content)
 
-Install browser tier: pip install "x-reader[browser]" && playwright install chromium
-Save X session:       x-reader login twitter
+Install browser tier: pip install "feedgrab[browser]" && playwright install chromium
+Save X session:       feedgrab login twitter
 """
 
 import re
@@ -15,7 +15,7 @@ import requests
 from loguru import logger
 from typing import Dict, Any
 
-from x_reader.fetchers.jina import fetch_via_jina
+from feedgrab.fetchers.jina import fetch_via_jina
 
 
 OEMBED_URL = "https://publish.twitter.com/oembed"
@@ -64,18 +64,18 @@ def _fetch_via_oembed(url: str) -> Dict[str, Any]:
 async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
     """
     Fetch tweet via Playwright with X-specific DOM selectors.
-    Uses saved login session if available (~/.x-reader/sessions/twitter.json).
+    Uses saved login session if available (~/.feedgrab/sessions/twitter.json).
     """
     try:
         from playwright.async_api import async_playwright
     except ImportError:
         raise RuntimeError(
             "Playwright not installed. Run:\n"
-            '  pip install "x-reader[browser]"\n'
+            '  pip install "feedgrab[browser]"\n'
             "  playwright install chromium"
         )
 
-    from x_reader.fetchers.browser import get_session_path
+    from feedgrab.fetchers.browser import get_session_path
     from pathlib import Path
 
     session_path = get_session_path("twitter")
@@ -223,6 +223,6 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
 
     raise RuntimeError(
         f"❌ All Twitter fetch methods failed for: {url}\n"
-        f"   Try: x-reader login twitter (to save session for browser fallback)\n"
-        f"   Then retry: x-reader {url}"
+        f"   Try: feedgrab login twitter (to save session for browser fallback)\n"
+        f"   Then retry: feedgrab {url}"
     )
