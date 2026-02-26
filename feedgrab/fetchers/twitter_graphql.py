@@ -2,11 +2,14 @@
 """
 Twitter/X GraphQL API client — fetch tweet data via X's internal GraphQL endpoints.
 
+Ported from baoyu-danger-x-to-markdown (TypeScript) to Python.
+Reference files: constants.ts, graphql.ts, http.ts, thread.ts
+
 Core capabilities:
     - Dynamic queryId resolution from X's frontend JS bundle (self-updating)
     - Hardcoded fallback queryIds when dynamic resolution fails
     - TweetDetail / TweetResultByRestId API calls
-    - Rate limiting with configurable delays
+    - Rate limiting with configurable delays (safety measure, not in original)
 
 This module uses X's private GraphQL API (reverse-engineered from the web client).
 Users must acknowledge this via consent mechanism before first use.
@@ -18,7 +21,7 @@ import re
 import time
 import requests
 from loguru import logger
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, List
 
 from feedgrab.fetchers.twitter_cookies import (
     build_graphql_headers,
@@ -26,20 +29,58 @@ from feedgrab.fetchers.twitter_cookies import (
 )
 
 # ---------------------------------------------------------------------------
-# Fallback query info (updated manually when dynamic resolution breaks)
+# Fallback queryIds — from baoyu constants.ts
 # ---------------------------------------------------------------------------
 
-FALLBACK_TWEET_DETAIL = {
-    "query_id": "nBS-WpgA6ZG0CyNHD517JQ",
-    "operation_name": "TweetDetail",
+FALLBACK_TWEET_DETAIL_QUERY_ID = "_8aYOgEDz35BrBcBal1-_w"
+FALLBACK_TWEET_RESULT_QUERY_ID = "HJ9lpOL-ZlOk5CkCw0JW6Q"
+FALLBACK_ARTICLE_QUERY_ID = "id8pHQbQi7eZ6P9mA1th1Q"
+
+# ---------------------------------------------------------------------------
+# Feature switches — per-operation, from baoyu constants.ts
+# ---------------------------------------------------------------------------
+
+# TweetResultByRestId features (constants.ts lines 25-61)
+TWEET_RESULT_FEATURES = {
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "articles_preview_enabled": True,
+    "responsive_web_edit_tweet_api_enabled": True,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "view_counts_everywhere_api_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "tweet_awards_web_tipping_enabled": True,
+    "creator_subscriptions_quote_tweet_preview_enabled": True,
+    "freedom_of_speech_not_reach_fetch_enabled": True,
+    "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "rweb_video_timestamps_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "longform_notetweets_inline_media_enabled": True,
+    "rweb_tipjar_consumption_enabled": True,
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "verified_phone_label_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_enhance_cards_enabled": True,
+    "premium_content_api_read_enabled": True,
+    "responsive_web_text_conversations_enabled": True,
+    "responsive_web_media_download_video_enabled": True,
+    "tweetypie_unmention_optimization_enabled": True,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": True,
+    "responsive_web_grok_analyze_post_followups_enabled": True,
+    "responsive_web_grok_share_attachment_enabled": True,
+    "responsive_web_jetfuel_frame": True,
+    "responsive_web_grok_show_grok_translated_post": True,
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_profile_redirect_enabled": True,
+    "rweb_video_screen_enabled": True,
 }
 
-FALLBACK_TWEET_RESULT = {
-    "query_id": "DJS3BdhUhcaEpZ7B7irJDg",
-    "operation_name": "TweetResultByRestId",
-}
-
-FALLBACK_FEATURES = {
+# TweetDetail features (constants.ts lines 105-137)
+TWEET_DETAIL_FEATURES = {
     "rweb_tipjar_consumption_enabled": True,
     "responsive_web_graphql_exclude_directive_enabled": True,
     "verified_phone_label_enabled": False,
@@ -64,24 +105,53 @@ FALLBACK_FEATURES = {
     "longform_notetweets_inline_media_enabled": True,
     "responsive_web_enhance_cards_enabled": False,
     "tweetypie_unmention_optimization_enabled": True,
-    "responsive_web_text_conversations_enabled": False,
-    "responsive_web_media_download_video_enabled": False,
+    "responsive_web_text_conversations_enabled": True,
+    "responsive_web_media_download_video_enabled": True,
+    "premium_content_api_read_enabled": False,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+    "responsive_web_grok_show_grok_translated_post": False,
+    "responsive_web_jetfuel_frame": False,
+    "rweb_video_screen_enabled": False,
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_profile_redirect_enabled": True,
 }
 
-FALLBACK_FIELD_TOGGLES = {
+# ---------------------------------------------------------------------------
+# Field toggles — per-operation, from baoyu constants.ts
+# ---------------------------------------------------------------------------
+
+# TweetResultByRestId field toggles
+TWEET_RESULT_FIELD_TOGGLES = {
+    "withArticleRichContentState": True,
     "withArticlePlainText": False,
+    "withGrokAnalyze": False,
+    "withDisallowedReplyControls": False,
+    "withPayments": True,
+    "withAuxiliaryUserLabels": True,
 }
 
-# Rate limiting defaults
+# TweetDetail field toggles
+TWEET_DETAIL_FIELD_TOGGLES = {
+    "withArticleRichContentState": True,
+    "withArticlePlainText": False,
+    "withGrokAnalyze": False,
+    "withDisallowedReplyControls": False,
+}
+
+# ---------------------------------------------------------------------------
+# Rate limiting (safety measure — original baoyu has none)
+# ---------------------------------------------------------------------------
+
 DEFAULT_REQUEST_DELAY = float(os.getenv("X_REQUEST_DELAY", "1.5"))
 DEFAULT_MAX_PAGES = int(os.getenv("X_THREAD_MAX_PAGES", "20"))
 
 # GraphQL base URL
 GRAPHQL_BASE = "https://x.com/i/api/graphql"
 
-# Cache for resolved query info (avoid re-fetching on every call)
+# Cache for resolved query info and home HTML
 _query_cache: Dict[str, Any] = {}
 _cache_timestamp: float = 0
+_cached_home_html: str = ""
 CACHE_TTL = 3600  # 1 hour
 
 
@@ -89,23 +159,27 @@ CACHE_TTL = 3600  # 1 hour
 # Public API
 # ---------------------------------------------------------------------------
 
-def fetch_tweet_detail(tweet_id: str, cookies: dict) -> Optional[Dict[str, Any]]:
+def fetch_tweet_detail(
+    tweet_id: str, cookies: dict, cursor: str = None
+) -> Optional[Dict[str, Any]]:
     """
     Fetch full tweet detail via TweetDetail GraphQL endpoint.
 
-    This is the primary endpoint — returns the tweet plus surrounding context
-    (conversation thread, quoted tweets, etc.).
+    Returns the tweet plus surrounding conversation context (thread, quoted tweets).
+    Supports cursor-based pagination for thread traversal.
 
     Args:
         tweet_id: The numeric tweet/status ID.
         cookies: dict with 'auth_token' and 'ct0'.
+        cursor: Optional pagination cursor from a previous response.
 
     Returns:
         Raw GraphQL response dict, or None on failure.
     """
-    query_info = _get_query_info("TweetDetail")
+    query_id = _get_query_id("TweetDetail")
     headers = build_graphql_headers(cookies)
 
+    # Variables — matches baoyu graphql.ts fetchTweetDetail()
     variables = {
         "focalTweetId": tweet_id,
         "with_rux_injections": False,
@@ -115,59 +189,25 @@ def fetch_tweet_detail(tweet_id: str, cookies: dict) -> Optional[Dict[str, Any]]
         "withQuickPromoteEligibilityTweetFields": True,
         "withBirdwatchNotes": True,
         "withVoice": True,
+        "withV2Timeline": True,
+        "withDownvotePerspective": False,
+        "withReactionsMetadata": False,
+        "withReactionsPerspective": False,
+        "withSuperFollowsTweetFields": False,
+        "withSuperFollowsUserFields": False,
     }
 
-    return _execute_graphql(
-        query_id=query_info["query_id"],
-        operation_name=query_info["operation_name"],
-        variables=variables,
-        features=_get_features(),
-        field_toggles=FALLBACK_FIELD_TOGGLES,
-        headers=headers,
-    )
-
-
-def fetch_tweet_detail_with_cursor(
-    tweet_id: str, cursor: str, cookies: dict
-) -> Optional[Dict[str, Any]]:
-    """
-    Fetch additional tweets in a thread using a pagination cursor.
-
-    Used for both upward (topCursor) and downward (moreCursor/bottomCursor)
-    pagination when fetching complete threads.
-
-    Args:
-        tweet_id: The focal tweet ID.
-        cursor: Pagination cursor string from a previous response.
-        cookies: dict with 'auth_token' and 'ct0'.
-
-    Returns:
-        Raw GraphQL response dict, or None on failure.
-    """
-    query_info = _get_query_info("TweetDetail")
-    headers = build_graphql_headers(cookies)
-
-    variables = {
-        "focalTweetId": tweet_id,
-        "cursor": cursor,
-        "referrer": "tweet",
-        "with_rux_injections": False,
-        "rankingMode": "Relevance",
-        "includePromotedContent": True,
-        "withCommunity": True,
-        "withQuickPromoteEligibilityTweetFields": True,
-        "withBirdwatchNotes": True,
-        "withVoice": True,
-    }
-
-    _rate_limit_wait()
+    if cursor:
+        variables["cursor"] = cursor
+        variables["referrer"] = "tweet"
+        _rate_limit_wait()
 
     return _execute_graphql(
-        query_id=query_info["query_id"],
-        operation_name=query_info["operation_name"],
+        query_id=query_id,
+        operation_name="TweetDetail",
         variables=variables,
-        features=_get_features(),
-        field_toggles=FALLBACK_FIELD_TOGGLES,
+        features=dict(TWEET_DETAIL_FEATURES),
+        field_toggles=dict(TWEET_DETAIL_FIELD_TOGGLES),
         headers=headers,
     )
 
@@ -186,7 +226,7 @@ def fetch_tweet_by_rest_id(tweet_id: str, cookies: dict) -> Optional[Dict[str, A
     Returns:
         Raw GraphQL response dict, or None on failure.
     """
-    query_info = _get_query_info("TweetResultByRestId")
+    query_id = _get_query_id("TweetResultByRestId")
     headers = build_graphql_headers(cookies)
 
     variables = {
@@ -197,252 +237,138 @@ def fetch_tweet_by_rest_id(tweet_id: str, cookies: dict) -> Optional[Dict[str, A
     }
 
     return _execute_graphql(
-        query_id=query_info["query_id"],
-        operation_name=query_info["operation_name"],
+        query_id=query_id,
+        operation_name="TweetResultByRestId",
         variables=variables,
-        features=_get_features(),
-        field_toggles=FALLBACK_FIELD_TOGGLES,
+        features=dict(TWEET_RESULT_FEATURES),
+        field_toggles=dict(TWEET_RESULT_FIELD_TOGGLES),
         headers=headers,
     )
 
 
-def resolve_query_info_from_bundle(user_agent: str = None) -> Dict[str, Dict[str, str]]:
+# ---------------------------------------------------------------------------
+# Dynamic queryId resolution — from baoyu graphql.ts
+# ---------------------------------------------------------------------------
+
+def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
     """
-    Dynamically resolve queryIds from X's frontend JS bundle.
+    Dynamically resolve queryIds from X's frontend JS bundles.
 
-    Process:
-        1. Fetch x.com HTML → extract JS bundle hash (api:"<hash>")
-        2. Download the JS chunk → regex-extract queryId per operationName
-        3. Return mapping of operationName → {query_id, operation_name}
+    Process (matches baoyu graphql.ts):
+        - TweetDetail: x.com HTML → api:"<hash>" → api.<hash>a.js → extract queryId
+        - TweetResultByRestId: x.com HTML → main.<hash>.js → extract queryId
 
-    Falls back to hardcoded values on any failure.
+    Returns:
+        Dict mapping operation_name → query_id.
     """
     ua = user_agent or DEFAULT_USER_AGENT
-    headers = {"user-agent": ua}
+    result = {}
 
     try:
-        # Step 1: Fetch x.com homepage to find the API chunk hash
-        logger.debug("Resolving queryIds from X frontend bundle...")
-        resp = requests.get("https://x.com", headers=headers, timeout=15)
-        resp.raise_for_status()
-        html = resp.text
+        html = _fetch_home_html(ua)
+        if not html:
+            return _fallback_query_ids()
 
-        # Look for api:"<hash>" pattern in the HTML
+        # TweetDetail — from api.<hash>a.js
         api_match = re.search(r'api:"([a-zA-Z0-9]+)"', html)
-        if not api_match:
-            logger.warning("Could not find API chunk hash in x.com HTML, using fallbacks")
-            return _fallback_query_map()
-
-        chunk_hash = api_match.group(1)
-
-        # Step 2: Download the JS bundle chunk
-        chunk_url = f"https://abs.twimg.com/responsive-web/client-web/api.{chunk_hash}a.js"
-        logger.debug(f"Fetching JS bundle: {chunk_url}")
-        chunk_resp = requests.get(chunk_url, headers=headers, timeout=15)
-        chunk_resp.raise_for_status()
-        chunk_js = chunk_resp.text
-
-        # Step 3: Extract queryId for each operation
-        result = {}
-        for op_name in ("TweetDetail", "TweetResultByRestId"):
-            qid = _extract_query_id(chunk_js, op_name)
+        if api_match:
+            chunk_hash = api_match.group(1)
+            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/api.{chunk_hash}a.js"
+            qid = _fetch_and_extract_query_id(chunk_url, "TweetDetail", ua)
             if qid:
-                result[op_name] = {"query_id": qid, "operation_name": op_name}
-                logger.debug(f"Resolved {op_name}: queryId={qid}")
+                result["TweetDetail"] = qid
+                logger.debug(f"Resolved TweetDetail: queryId={qid}")
 
-        if result:
-            return result
+        # TweetResultByRestId — from main.<hash>.js (different bundle!)
+        main_match = re.search(r'main:"([a-zA-Z0-9]+)"', html)
+        if main_match:
+            chunk_hash = main_match.group(1)
+            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
+            qid = _fetch_and_extract_query_id(chunk_url, "TweetResultByRestId", ua)
+            if qid:
+                result["TweetResultByRestId"] = qid
+                logger.debug(f"Resolved TweetResultByRestId: queryId={qid}")
 
-        logger.warning("No queryIds extracted from JS bundle, using fallbacks")
-        return _fallback_query_map()
+        # ArticleEntityResultByRestId — from bundle.TwitterArticles.<hash>a.js
+        article_match = re.search(r'bundle\.TwitterArticles:"([a-zA-Z0-9]+)"', html)
+        if article_match:
+            chunk_hash = article_match.group(1)
+            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.TwitterArticles.{chunk_hash}a.js"
+            qid = _fetch_and_extract_query_id(chunk_url, "ArticleEntityResultByRestId", ua)
+            if qid:
+                result["ArticleEntityResultByRestId"] = qid
+                logger.debug(f"Resolved ArticleEntityResultByRestId: queryId={qid}")
 
     except Exception as e:
         logger.warning(f"Dynamic queryId resolution failed ({e}), using fallbacks")
-        return _fallback_query_map()
+
+    # Merge with fallbacks for any missing operations
+    fallbacks = _fallback_query_ids()
+    for op, qid in fallbacks.items():
+        if op not in result:
+            result[op] = qid
+
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Response parsing helpers — from baoyu thread.ts parseTweetsAndToken
 # ---------------------------------------------------------------------------
 
-def _execute_graphql(
-    query_id: str,
-    operation_name: str,
-    variables: dict,
-    features: dict,
-    field_toggles: dict,
-    headers: dict,
-) -> Optional[Dict[str, Any]]:
-    """Execute a GraphQL GET request against X's API."""
-    import urllib.parse
-
-    params = {
-        "variables": json.dumps(variables, separators=(",", ":")),
-        "features": json.dumps(features, separators=(",", ":")),
-        "fieldToggles": json.dumps(field_toggles, separators=(",", ":")),
-    }
-
-    url = f"{GRAPHQL_BASE}/{query_id}/{operation_name}"
-
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=30)
-
-        if resp.status_code == 401:
-            logger.error("GraphQL 401 Unauthorized — cookies may have expired")
-            return None
-        if resp.status_code == 403:
-            logger.error("GraphQL 403 Forbidden — account may be restricted")
-            return None
-        if resp.status_code == 429:
-            logger.error("GraphQL 429 Rate Limited — too many requests")
-            return None
-
-        resp.raise_for_status()
-        data = resp.json()
-
-        # Check for GraphQL-level errors
-        if "errors" in data:
-            for err in data["errors"]:
-                logger.warning(f"GraphQL error: {err.get('message', 'unknown')}")
-            # Still return data — some errors are non-fatal (e.g. "Not found" for deleted tweets)
-
-        return data
-
-    except requests.Timeout:
-        logger.error(f"GraphQL request timed out: {operation_name}")
-        return None
-    except requests.RequestException as e:
-        logger.error(f"GraphQL request failed: {e}")
-        return None
-    except json.JSONDecodeError:
-        logger.error("GraphQL response is not valid JSON")
-        return None
-
-
-def _get_query_info(operation_name: str) -> Dict[str, str]:
-    """Get query info for an operation, with caching and dynamic resolution."""
-    global _query_cache, _cache_timestamp
-
-    now = time.time()
-    if _query_cache and (now - _cache_timestamp) < CACHE_TTL:
-        if operation_name in _query_cache:
-            return _query_cache[operation_name]
-
-    # Try dynamic resolution
-    resolved = resolve_query_info_from_bundle()
-    _query_cache = resolved
-    _cache_timestamp = now
-
-    return resolved.get(operation_name, _fallback_for(operation_name))
-
-
-def _get_features() -> dict:
-    """Get feature switches for GraphQL requests."""
-    return dict(FALLBACK_FEATURES)
-
-
-def _fallback_query_map() -> Dict[str, Dict[str, str]]:
-    """Return hardcoded fallback query info for all operations."""
-    return {
-        "TweetDetail": dict(FALLBACK_TWEET_DETAIL),
-        "TweetResultByRestId": dict(FALLBACK_TWEET_RESULT),
-    }
-
-
-def _fallback_for(operation_name: str) -> Dict[str, str]:
-    """Get fallback query info for a specific operation."""
-    fallbacks = _fallback_query_map()
-    return fallbacks.get(operation_name, {"query_id": "", "operation_name": operation_name})
-
-
-def _extract_query_id(js_content: str, operation_name: str) -> Optional[str]:
-    """
-    Extract queryId for a given operationName from the JS bundle.
-
-    Tries multiple regex patterns since X's bundle format can vary.
-    """
-    patterns = [
-        # Pattern 1: queryId:"xxx",operationName:"TweetDetail"
-        rf'queryId:"([^"]+)",operationName:"{operation_name}"',
-        # Pattern 2: operationName:"TweetDetail",...queryId:"xxx"
-        rf'operationName:"{operation_name}"[^}}]*?queryId:"([^"]+)"',
-        # Pattern 3: {queryId:"xxx",...operationName:"TweetDetail"...}
-        rf'\{{[^}}]*queryId:"([^"]+)"[^}}]*operationName:"{operation_name}"[^}}]*\}}',
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, js_content)
-        if match:
-            return match.group(1)
-
-    return None
-
-
-_last_request_time: float = 0
-
-
-def _rate_limit_wait():
-    """Enforce minimum delay between GraphQL requests."""
-    global _last_request_time
-    now = time.time()
-    elapsed = now - _last_request_time
-    delay = DEFAULT_REQUEST_DELAY
-    if elapsed < delay:
-        wait = delay - elapsed
-        logger.debug(f"Rate limiting: waiting {wait:.1f}s")
-        time.sleep(wait)
-    _last_request_time = time.time()
-
-
-# ---------------------------------------------------------------------------
-# Response parsing helpers
-# ---------------------------------------------------------------------------
-
-def extract_tweet_entries(response: Dict[str, Any]) -> list:
+def parse_tweet_entries(response: Dict[str, Any]) -> List[dict]:
     """
     Extract tweet entries from a TweetDetail GraphQL response.
 
-    Navigates the nested response structure:
-        data → tweetResult → result (for TweetResultByRestId)
-        data → threaded_conversation_with_injections_v2 → instructions (for TweetDetail)
+    Checks both v2 and v1 conversation paths (matches baoyu thread.ts).
+    Filters out "you_might_also_like" recommendation entries.
 
     Returns:
-        List of tweet entry dicts from the timeline instructions.
+        List of entry dicts from the timeline instructions.
     """
     if not response or "data" not in response:
         return []
 
+    data = response["data"]
+
+    # Try v2 first, then v1 (matches baoyu thread.ts)
+    instructions = (
+        data.get("threaded_conversation_with_injections_v2", {}).get("instructions")
+        or data.get("threaded_conversation_with_injections", {}).get("instructions")
+        or []
+    )
+
     entries = []
 
-    # TweetDetail response structure
-    try:
-        instructions = (
-            response["data"]
-            .get("threaded_conversation_with_injections_v2", {})
-            .get("instructions", [])
-        )
+    for instruction in instructions:
+        inst_type = instruction.get("type", "")
 
-        for instruction in instructions:
-            inst_type = instruction.get("type")
+        if inst_type == "TimelineAddEntries":
+            for entry in instruction.get("entries", []):
+                # Skip "you_might_also_like" recommendations
+                component = (
+                    entry.get("content", {})
+                    .get("clientEventInfo", {})
+                    .get("component", "")
+                )
+                if component == "you_might_also_like":
+                    continue
+                entries.append(entry)
 
-            if inst_type == "TimelineAddEntries":
-                for entry in instruction.get("entries", []):
-                    entries.append(entry)
-
-            elif inst_type == "TimelineAddToModule":
-                module_items = instruction.get("moduleItems", [])
-                for item in module_items:
-                    entries.append(item)
-
-    except (KeyError, TypeError) as e:
-        logger.debug(f"Failed to parse TweetDetail entries: {e}")
+        elif inst_type == "TimelineAddToModule":
+            for item in instruction.get("moduleItems", []):
+                entries.append(item)
 
     return entries
 
 
-def extract_cursors(entries: list) -> Dict[str, str]:
+def parse_cursors(entries: List[dict]) -> Dict[str, str]:
     """
     Extract pagination cursors from timeline entries.
+
+    Cursor types (matches baoyu thread.ts parseInstruction):
+        - top: TimelineTimelineCursor with cursorType "Top"
+        - bottom: TimelineTimelineCursor with cursorType "Bottom"
+        - more: cursor with cursorType "ShowMore" or "ShowMoreThreads"
 
     Returns:
         dict with optional keys: 'top', 'bottom', 'more'
@@ -452,31 +378,38 @@ def extract_cursors(entries: list) -> Dict[str, str]:
     for entry in entries:
         entry_id = entry.get("entryId", "")
         content = entry.get("content", {})
+        entry_type = content.get("entryType", "")
+        cursor_type = content.get("cursorType", "")
 
-        # Cursor entries have entryId like "cursor-top-...", "cursor-bottom-..."
-        if "cursor-top" in entry_id:
-            cursor_val = (
-                content.get("value")
-                or content.get("itemContent", {}).get("value", "")
-            )
-            if cursor_val:
-                cursors["top"] = cursor_val
+        # Top-level cursor entries (cursor-top-xxx, cursor-bottom-xxx)
+        if entry_type == "TimelineTimelineCursor":
+            value = content.get("value", "")
+            if cursor_type == "Top" and value:
+                cursors["top"] = value
+            elif cursor_type == "Bottom" and value:
+                cursors["bottom"] = value
 
-        elif "cursor-bottom" in entry_id:
-            cursor_val = (
-                content.get("value")
-                or content.get("itemContent", {}).get("value", "")
-            )
-            if cursor_val:
-                cursors["bottom"] = cursor_val
+        # Also check itemContent for cursors (nested in conversation modules)
+        item_content = content.get("itemContent", {})
+        if item_content.get("entryType") == "TimelineTimelineCursor":
+            value = item_content.get("value", "")
+            ct = item_content.get("cursorType", "")
+            if ct == "Top" and value:
+                cursors["top"] = value
+            elif ct == "Bottom" and value:
+                cursors["bottom"] = value
 
-        elif "cursor-showMore" in entry_id or "conversationthread" in entry_id:
-            # "Show more replies" cursor within a conversation module
+        # ShowMore / ShowMoreThreads cursors inside conversation thread modules
+        if "conversationthread" in entry_id or content.get("entryType") == "TimelineTimelineModule":
             items = content.get("items", [])
             for item in items:
-                item_content = item.get("item", {}).get("itemContent", {})
-                if item_content.get("cursorType") == "ShowMoreThreads":
-                    cursors["more"] = item_content.get("value", "")
+                ic = item.get("item", {}).get("itemContent", {})
+                ic_type = ic.get("itemType", ic.get("__typename", ""))
+                ic_cursor_type = ic.get("cursorType", "")
+                if ic_type == "TimelineTimelineCursor" and ic_cursor_type in ("ShowMore", "ShowMoreThreads"):
+                    value = ic.get("value", "")
+                    if value:
+                        cursors["more"] = value
 
     return cursors
 
@@ -485,8 +418,10 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
     """
     Extract structured tweet data from a timeline entry.
 
-    Navigates through the nested result types (Tweet, TweetWithVisibilityResults)
-    and extracts core fields: id, text, author, media, quoted tweet, etc.
+    Navigates TweetWithVisibilityResults wrappers and extracts:
+    id, text (with note_tweet long text), author, media, quoted tweet, metrics.
+
+    Matches baoyu thread.ts parseTweetsAndToken tweet extraction path.
 
     Returns:
         Flat dict with tweet fields, or None if entry is not a tweet.
@@ -514,11 +449,15 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
     user_results = core.get("user_results", {}).get("result", {})
     user_legacy = user_results.get("legacy", {})
 
-    # Extract note_tweet (long text) if available
-    note_tweet = result.get("note_tweet", {}).get("note_tweet_results", {}).get("result", {})
+    # Extract note_tweet (long text) if available — priority over legacy.full_text
+    note_tweet = (
+        result.get("note_tweet", {})
+        .get("note_tweet_results", {})
+        .get("result", {})
+    )
     full_text = note_tweet.get("text") or legacy.get("full_text", "")
 
-    # Extract media
+    # Extract media from extended_entities
     media_list = legacy.get("extended_entities", {}).get("media", [])
     images = []
     videos = []
@@ -527,7 +466,7 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
         if media_type == "photo":
             images.append(media.get("media_url_https", ""))
         elif media_type in ("video", "animated_gif"):
-            # Get highest bitrate video variant
+            # Get highest bitrate mp4 variant
             variants = media.get("video_info", {}).get("variants", [])
             mp4_variants = [v for v in variants if v.get("content_type") == "video/mp4"]
             if mp4_variants:
@@ -556,8 +495,12 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
             "author_name": q_user.get("name", ""),
         }
 
+    # Extract article reference if present
+    article = _extract_article_ref(result)
+
     return {
-        "id": legacy.get("id_str", ""),
+        "id": legacy.get("id_str", result.get("rest_id", "")),
+        "rest_id": result.get("rest_id", ""),
         "text": full_text,
         "author": user_legacy.get("screen_name", ""),
         "author_name": user_legacy.get("name", ""),
@@ -569,9 +512,205 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
         "images": images,
         "videos": videos,
         "quoted_tweet": quoted_tweet,
+        "article": article,
         "likes": legacy.get("favorite_count", 0),
         "retweets": legacy.get("retweet_count", 0),
         "replies": legacy.get("reply_count", 0),
         "bookmarks": legacy.get("bookmark_count", 0),
         "views": result.get("views", {}).get("count", "0"),
+        # Keep raw result for article extraction in later PRs
+        "_raw_result": result,
     }
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _execute_graphql(
+    query_id: str,
+    operation_name: str,
+    variables: dict,
+    features: dict,
+    field_toggles: dict,
+    headers: dict,
+) -> Optional[Dict[str, Any]]:
+    """Execute a GraphQL GET request against X's API."""
+    # Always inject this feature (matches baoyu http.ts buildFeatureMap)
+    features["responsive_web_graphql_exclude_directive_enabled"] = True
+
+    params = {
+        "variables": json.dumps(variables, separators=(",", ":")),
+        "features": json.dumps(features, separators=(",", ":")),
+        "fieldToggles": json.dumps(field_toggles, separators=(",", ":")),
+    }
+
+    url = f"{GRAPHQL_BASE}/{query_id}/{operation_name}"
+
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=30)
+
+        if resp.status_code in (401, 403):
+            logger.error(f"GraphQL {resp.status_code} — cookies may have expired or account restricted")
+            return None
+        if resp.status_code == 429:
+            logger.error("GraphQL 429 Rate Limited — too many requests")
+            return None
+
+        resp.raise_for_status()
+        data = resp.json()
+
+        if "errors" in data:
+            for err in data["errors"]:
+                logger.warning(f"GraphQL error: {err.get('message', 'unknown')}")
+
+        return data
+
+    except requests.Timeout:
+        logger.error(f"GraphQL request timed out: {operation_name}")
+        return None
+    except requests.RequestException as e:
+        logger.error(f"GraphQL request failed: {e}")
+        return None
+    except json.JSONDecodeError:
+        logger.error("GraphQL response is not valid JSON")
+        return None
+
+
+def _get_query_id(operation_name: str) -> str:
+    """Get queryId for an operation, with caching and dynamic resolution."""
+    global _query_cache, _cache_timestamp
+
+    now = time.time()
+    if _query_cache and (now - _cache_timestamp) < CACHE_TTL:
+        if operation_name in _query_cache:
+            return _query_cache[operation_name]
+
+    resolved = resolve_query_ids()
+    _query_cache = resolved
+    _cache_timestamp = now
+
+    fallbacks = _fallback_query_ids()
+    return resolved.get(operation_name, fallbacks.get(operation_name, ""))
+
+
+def _fallback_query_ids() -> Dict[str, str]:
+    """Hardcoded fallback queryIds from baoyu constants.ts."""
+    return {
+        "TweetDetail": FALLBACK_TWEET_DETAIL_QUERY_ID,
+        "TweetResultByRestId": FALLBACK_TWEET_RESULT_QUERY_ID,
+        "ArticleEntityResultByRestId": FALLBACK_ARTICLE_QUERY_ID,
+    }
+
+
+def _fetch_home_html(user_agent: str) -> str:
+    """Fetch and cache x.com homepage HTML (matches baoyu http.ts caching)."""
+    global _cached_home_html
+
+    if _cached_home_html:
+        return _cached_home_html
+
+    try:
+        logger.debug("Fetching x.com homepage for JS bundle discovery...")
+        resp = requests.get(
+            "https://x.com",
+            headers={"user-agent": user_agent},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        _cached_home_html = resp.text
+        return _cached_home_html
+    except Exception as e:
+        logger.warning(f"Failed to fetch x.com homepage: {e}")
+        return ""
+
+
+def _fetch_and_extract_query_id(
+    chunk_url: str, operation_name: str, user_agent: str
+) -> Optional[str]:
+    """Download a JS bundle chunk and extract queryId for an operation."""
+    try:
+        resp = requests.get(
+            chunk_url,
+            headers={"user-agent": user_agent},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return _extract_query_id(resp.text, operation_name)
+    except Exception as e:
+        logger.debug(f"Failed to fetch/parse {chunk_url}: {e}")
+        return None
+
+
+def _extract_query_id(js_content: str, operation_name: str) -> Optional[str]:
+    """
+    Extract queryId for a given operationName from JS bundle content.
+
+    Tries multiple regex patterns since X's bundle format can vary.
+    """
+    patterns = [
+        rf'queryId:"([^"]+)",operationName:"{operation_name}"',
+        rf'operationName:"{operation_name}"[^}}]*?queryId:"([^"]+)"',
+        rf'\{{[^}}]*queryId:"([^"]+)"[^}}]*operationName:"{operation_name}"[^}}]*\}}',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, js_content)
+        if match:
+            return match.group(1)
+
+    return None
+
+
+def _extract_article_ref(result: dict) -> Optional[Dict[str, Any]]:
+    """
+    Extract article entity reference from a tweet result.
+
+    Matches baoyu tweet-article.ts resolveArticleEntityFromTweet() — checks
+    multiple paths where articles can be embedded.
+    """
+    # Check various paths for embedded article
+    for path in [
+        lambda r: r.get("article", {}).get("article_results", {}).get("result"),
+        lambda r: r.get("article", {}).get("result"),
+        lambda r: r.get("legacy", {}).get("article", {}).get("article_results", {}).get("result"),
+        lambda r: r.get("legacy", {}).get("article", {}).get("result"),
+        lambda r: r.get("article_results", {}).get("result"),
+    ]:
+        try:
+            article = path(result)
+            if article and article.get("rest_id"):
+                return {
+                    "id": article.get("rest_id", ""),
+                    "title": article.get("title", ""),
+                    "has_content": bool(
+                        article.get("content_state")
+                        or article.get("plain_text")
+                        or article.get("preview_text")
+                    ),
+                }
+        except (TypeError, AttributeError):
+            continue
+
+    return None
+
+
+_last_request_time: float = 0
+
+
+def _rate_limit_wait():
+    """
+    Enforce minimum delay between GraphQL requests.
+
+    Safety measure added in feedgrab — the original baoyu has no rate limiting,
+    which risks account throttling with aggressive thread pagination.
+    """
+    global _last_request_time
+    now = time.time()
+    elapsed = now - _last_request_time
+    delay = DEFAULT_REQUEST_DELAY
+    if elapsed < delay:
+        wait = delay - elapsed
+        logger.debug(f"Rate limiting: waiting {wait:.1f}s")
+        time.sleep(wait)
+    _last_request_time = time.time()
