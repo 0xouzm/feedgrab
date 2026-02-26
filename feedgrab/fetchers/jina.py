@@ -18,6 +18,9 @@ HEADERS = {
     "User-Agent": "feedgrab/0.1",
 }
 
+# Jina Reader injects these metadata lines into the markdown output
+_JINA_META_PREFIXES = ("URL Source:", "Published Time:", "Markdown Content:")
+
 
 def fetch_via_jina(url: str) -> dict:
     """
@@ -40,7 +43,11 @@ def fetch_via_jina(url: str) -> dict:
         content_lines = []
 
         for line in lines:
-            if not title and line.strip():
+            stripped = line.strip()
+            # Skip Jina metadata prefix lines
+            if any(stripped.startswith(p) for p in _JINA_META_PREFIXES):
+                continue
+            if not title and stripped:
                 # First non-empty line as title, strip markdown heading
                 title = line.lstrip("#").strip()
             else:

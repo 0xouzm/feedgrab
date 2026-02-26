@@ -29,6 +29,33 @@ def _extract_author(url: str) -> str:
     return f"@{match.group(1)}" if match else ""
 
 
+def _clean_jina_twitter_title(raw_title: str) -> tuple[str, str]:
+    """Extract clean title and author display name from Jina page title.
+
+    Jina returns page titles like:
+      'Title: 鱼总聊AI on X: "OpenClaw新手完整学习路径-更适合新手食用的学习+使用教程" / X'
+      '鱼总聊AI on X: "OpenClaw新手完整学习路径" / X'
+
+    Returns:
+        (clean_title, author_name) — e.g. ("OpenClaw新手...", "鱼总聊AI")
+    """
+    title = raw_title.strip()
+    # Strip "Title: " prefix
+    if title.lower().startswith("title:"):
+        title = title[6:].strip()
+
+    # Try to match pattern: {author} on X: "{actual_title}" / X
+    m = re.match(r'(.+?)\s+on\s+X[:\s]*["\u201c](.+?)["\u201d]\s*/\s*X$', title)
+    if m:
+        return m.group(2).strip(), m.group(1).strip()
+
+    # Fallback: strip trailing " / X" or " - X"
+    title = re.sub(r'\s*[/\-]\s*X\s*$', '', title)
+    # Strip leading "Title: "
+    title = re.sub(r'^Title:\s*', '', title, flags=re.IGNORECASE)
+    return title.strip(), ""
+
+
 def _extract_tweet_id(url: str) -> str:
     """Extract numeric tweet ID from URL."""
     match = re.search(r'x\.com/\w+/status/(\d+)', url)
@@ -72,15 +99,31 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
         root = thread.get("root_tweet", tweets[0])
         author = thread.get("author", "")
 
-        # Build result with thread data
+        # Build result with thread data + metrics from root tweet
+        # For Twitter Articles, prefer article title over tweet text (which is just a t.co link)
+        article = root.get("article", {})
+        title = article.get("title") or root.get("text", "")
+        title = title[:100]
+
         return {
             "text": _join_thread_text(tweets),
             "author": f"@{author}" if author else "",
+            "author_name": thread.get("author_name", root.get("author_name", "")),
             "url": url,
-            "title": root.get("text", "")[:100],
+            "title": title,
             "platform": "twitter",
             "thread_tweets": tweets,
             "has_thread": len(tweets) > 1,
+            "likes": root.get("likes", 0),
+            "retweets": root.get("retweets", 0),
+            "replies": root.get("replies", 0),
+            "bookmarks": root.get("bookmarks", 0),
+            "views": root.get("views", "0"),
+            "created_at": root.get("created_at", ""),
+            "images": [img for t in tweets for img in t.get("images", [])],
+            "videos": [v for t in tweets for v in t.get("videos", [])],
+            "author_replies": thread.get("author_replies", []),
+            "comments": thread.get("comments", []),
         }
 
     # Fallback: single tweet via TweetDetail
@@ -90,14 +133,27 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
         for entry in entries:
             tweet_data = extract_tweet_data(entry)
             if tweet_data and tweet_data.get("id") == tweet_id:
+                article = tweet_data.get("article", {})
+                title = article.get("title") or tweet_data.get("text", "")
+                title = title[:100]
+
                 return {
                     "text": tweet_data.get("text", ""),
                     "author": f"@{tweet_data.get('author', '')}",
+                    "author_name": tweet_data.get("author_name", ""),
                     "url": url,
-                    "title": tweet_data.get("text", "")[:100],
+                    "title": title,
                     "platform": "twitter",
                     "thread_tweets": [tweet_data],
                     "has_thread": False,
+                    "likes": tweet_data.get("likes", 0),
+                    "retweets": tweet_data.get("retweets", 0),
+                    "replies": tweet_data.get("replies", 0),
+                    "bookmarks": tweet_data.get("bookmarks", 0),
+                    "views": tweet_data.get("views", "0"),
+                    "created_at": tweet_data.get("created_at", ""),
+                    "images": tweet_data.get("images", []),
+                    "videos": tweet_data.get("videos", []),
                 }
 
     raise RuntimeError("GraphQL returned no usable data")
@@ -261,10 +317,56 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
                 logger.info(f"[Twitter] Tier 0 — GraphQL: {url}")
                 data = await _fetch_via_graphql(url, tweet_id)
                 if data and data.get("text"):
+                    # Check if this is a Twitter Article (text is just a t.co link)
+                    # If so, fetch full article body via Jina while keeping GraphQL metadata
+                    text = data["text"].strip()
+                    is_article_stub = (
+                        len(text) < 200
+                        and ("https://t.co/" in text or text.startswith("http"))
+                    )
+                    if is_article_stub:
+                        logger.info("[Twitter] Article detected — fetching body via Jina")
+                        try:
+                            jina_data = fetch_via_jina(url)
+                            jina_content = jina_data.get("content", "")
+                            if jina_content and len(jina_content.strip()) > 200:
+                                data["text"] = jina_content
+                                # Update thread_tweets content too for schema
+                                if data.get("thread_tweets"):
+                                    data["thread_tweets"][0]["text"] = jina_content
+                                logger.info("[Twitter] Article body fetched successfully")
+                            else:
+                                logger.warning("[Twitter] Jina article body too short, keeping original")
+                        except Exception as je:
+                            logger.warning(f"[Twitter] Jina article fetch failed ({je}), keeping original")
                     return data
                 logger.warning("[Twitter] GraphQL returned empty content")
+            else:
+                logger.warning(
+                    "\n"
+                    "+--------------------------------------------------+\n"
+                    "|  Twitter Cookie 未配置 - 无法获取完整数据        |\n"
+                    "+--------------------------------------------------+\n"
+                    "|  缺少 cookie 将导致:                             |\n"
+                    "|  - 无法获取 likes/views/bookmarks 等指标         |\n"
+                    "|  - 无法获取作者回帖和评论                        |\n"
+                    "|  - 仅能获取基础正文内容                          |\n"
+                    "+--------------------------------------------------+\n"
+                    "|  配置方法 (任选其一):                            |\n"
+                    "|  1. feedgrab login twitter                       |\n"
+                    "|  2. .env 设置 X_AUTH_TOKEN + X_CT0               |\n"
+                    "|  3. 手动写入 sessions/x.json                     |\n"
+                    "+--------------------------------------------------+"
+                )
         except Exception as e:
-            logger.warning(f"[Twitter] GraphQL failed ({e}), falling back")
+            err_msg = str(e)
+            if "401" in err_msg or "403" in err_msg or "unauthorized" in err_msg.lower():
+                logger.warning(
+                    "[Twitter] Cookie expired! Run: feedgrab login twitter\n"
+                    "  Falling back to limited mode (no metrics)..."
+                )
+            else:
+                logger.warning(f"[Twitter] GraphQL failed ({e}), falling back")
 
     # Tier 1: oEmbed API (best for individual tweets, no auth)
     if _is_tweet_url(url):
@@ -302,11 +404,13 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
             and title.lower() not in ("x", "title: x", "")
         )
         if jina_ok:
+            clean_title, jina_author_name = _clean_jina_twitter_title(title)
             return {
                 "text": content,
                 "author": author,
+                "author_name": jina_author_name,
                 "url": url,
-                "title": title,
+                "title": clean_title,
                 "platform": "twitter",
             }
         logger.warning("[Twitter] Jina returned unusable content")

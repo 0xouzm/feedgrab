@@ -18,6 +18,7 @@ import os
 from loguru import logger
 from typing import Dict, Any, Optional, List
 
+from feedgrab.config import x_fetch_author_replies, x_fetch_all_comments, x_max_comments
 from feedgrab.fetchers.twitter_graphql import (
     fetch_tweet_detail,
     parse_tweet_entries,
@@ -152,16 +153,45 @@ def fetch_tweet_thread(
 
     root_tweet = thread_tweets[0]
     author = root_tweet.get("author", "")
+    root_user_id = root_tweet.get("user_id", "")
 
     logger.info(f"[Thread] Found {len(thread_tweets)} tweets by @{author}")
 
-    return {
+    result = {
         "tweets": thread_tweets,
         "root_tweet": root_tweet,
         "author": author,
         "author_name": root_tweet.get("author_name", ""),
         "tweet_count": len(thread_tweets),
     }
+
+    # --- Classify remaining entries (zero extra API calls) ---
+    thread_ids = {t.get("id") for t in thread_tweets}
+
+    # C 类：作者回复评论者（不在自回复链中的作者推文）
+    if x_fetch_author_replies():
+        author_replies = [
+            t for t in all_entries
+            if t.get("user_id") == root_user_id
+            and t.get("id") not in thread_ids
+            and t.get("in_reply_to_user_id") != root_user_id
+        ]
+        author_replies.sort(key=lambda t: t.get("created_at", ""))
+        result["author_replies"] = author_replies
+        logger.info(f"[Thread] Collected {len(author_replies)} author replies to commenters")
+
+    # B 类：其他用户评论（按点赞数降序）
+    if x_fetch_all_comments():
+        max_c = x_max_comments()
+        comments = [
+            t for t in all_entries
+            if t.get("user_id") != root_user_id
+        ]
+        comments.sort(key=lambda t: t.get("likes", 0), reverse=True)
+        result["comments"] = comments[:max_c]
+        logger.info(f"[Thread] Collected {len(result['comments'])} comments (max {max_c})")
+
+    return result
 
 
 # ---------------------------------------------------------------------------

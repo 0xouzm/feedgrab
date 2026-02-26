@@ -4,8 +4,8 @@ Twitter/X Cookie management — multi-source authentication for GraphQL API.
 
 Cookie sources (priority order):
     1. Environment variables: X_AUTH_TOKEN + X_CT0
-    2. Cookie file: ~/.feedgrab/cookies/twitter.json
-    3. Playwright session: ~/.feedgrab/sessions/twitter.json
+    2. Cookie file: sessions/x.json
+    3. Playwright session: sessions/twitter.json
     4. Chrome CDP: auto-extract from running Chrome (requires --remote-debugging-port)
 
 Required cookies for GraphQL API:
@@ -15,11 +15,24 @@ Required cookies for GraphQL API:
 
 import json
 import os
+import shutil
 from pathlib import Path
 from loguru import logger
 
-COOKIE_DIR = Path.home() / ".feedgrab" / "cookies"
-SESSION_DIR = Path.home() / ".feedgrab" / "sessions"
+from feedgrab.config import get_cookie_dir, get_session_dir
+
+COOKIE_DIR = get_cookie_dir()
+SESSION_DIR = get_session_dir()
+
+# Legacy paths (for backward compatibility migration)
+_LEGACY_COOKIE_DIRS = [
+    Path.cwd() / ".feedgrab" / "cookies",       # project-local .feedgrab/cookies/
+    Path.home() / ".feedgrab" / "cookies",       # user-home ~/.feedgrab/cookies/
+]
+_LEGACY_SESSION_DIRS = [
+    Path.cwd() / ".feedgrab" / "sessions",       # project-local .feedgrab/sessions/
+    Path.home() / ".feedgrab" / "sessions",       # user-home ~/.feedgrab/sessions/
+]
 
 REQUIRED_COOKIES = ("auth_token", "ct0")
 
@@ -77,9 +90,9 @@ def has_required_cookies(cookies: dict) -> bool:
 
 
 def save_twitter_cookies(cookies: dict) -> None:
-    """Save cookies to ~/.feedgrab/cookies/twitter.json with restrictive permissions."""
+    """Save cookies to cookie directory with restrictive permissions."""
     COOKIE_DIR.mkdir(parents=True, exist_ok=True)
-    cookie_path = COOKIE_DIR / "twitter.json"
+    cookie_path = COOKIE_DIR / "x.json"
 
     with open(cookie_path, "w", encoding="utf-8") as f:
         json.dump(cookies, f, indent=2)
@@ -129,10 +142,23 @@ def _load_from_env() -> dict:
 
 
 def _load_from_cookie_file() -> dict:
-    """Source 2: Load cookies from ~/.feedgrab/cookies/twitter.json."""
-    cookie_path = COOKIE_DIR / "twitter.json"
+    """Source 2: Load cookies from cookie file (sessions/x.json)."""
+    cookie_path = COOKIE_DIR / "x.json"
     if not cookie_path.exists():
-        return {}
+        # Backward compat: search legacy cookie dirs and migrate
+        for legacy_dir in _LEGACY_COOKIE_DIRS:
+            for name in ("x.json", "twitter.json"):
+                legacy_path = legacy_dir / name
+                if legacy_path.exists():
+                    COOKIE_DIR.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(legacy_path), str(cookie_path))
+                    logger.info(f"Migrated cookie: {legacy_path} -> {cookie_path}")
+                    break
+            else:
+                continue
+            break
+        else:
+            return {}
 
     try:
         with open(cookie_path, "r", encoding="utf-8") as f:
@@ -153,9 +179,18 @@ def _load_from_playwright_session() -> dict:
     This bridges the existing `feedgrab login twitter` flow with GraphQL:
     users login once via Playwright, both browser and GraphQL paths work.
     """
+    # Try new path first, then legacy session dirs
     session_path = SESSION_DIR / "twitter.json"
     if not session_path.exists():
-        return {}
+        for legacy_dir in _LEGACY_SESSION_DIRS:
+            legacy_path = legacy_dir / "twitter.json"
+            if legacy_path.exists():
+                SESSION_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(legacy_path), str(session_path))
+                logger.info(f"Migrated session: {legacy_path} -> {session_path}")
+                break
+        else:
+            return {}
 
     try:
         with open(session_path, "r", encoding="utf-8") as f:

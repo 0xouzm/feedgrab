@@ -11,7 +11,9 @@ Install: pip install "feedgrab[browser]" && playwright install chromium
 from loguru import logger
 from pathlib import Path
 
-SESSION_DIR = Path.home() / ".feedgrab" / "sessions"
+from feedgrab.config import get_session_dir
+
+SESSION_DIR = get_session_dir()
 TIMEOUT_MS = 30_000
 
 

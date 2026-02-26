@@ -14,7 +14,9 @@ import time
 from pathlib import Path
 from loguru import logger
 
-SESSION_DIR = Path.home() / ".feedgrab" / "sessions"
+from feedgrab.config import get_session_dir
+
+SESSION_DIR = get_session_dir()
 
 PLATFORM_URLS = {
     "xhs": "https://www.xiaohongshu.com/explore",

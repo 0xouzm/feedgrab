@@ -10,6 +10,10 @@ venv/
 # Environment
 .env
 
+# feedgrab data (cookies, sessions)
+sessions/
+.feedgrab/
+
 # Telethon session
 *.session
 tg_session*

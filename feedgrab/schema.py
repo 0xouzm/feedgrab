@@ -162,20 +162,41 @@ def from_twitter(data: dict) -> UnifiedContent:
     # If thread data is present, assemble rich content from all tweets
     tweets = data.get("thread_tweets", [])
     if tweets:
-        parts = []
-        for i, t in enumerate(tweets):
-            part = f"**[{i+1}/{len(tweets)}]** {t.get('text', '')}"
-            # Inline images
-            for img_url in t.get("images", []):
-                part += f"\n\n![image]({img_url})"
-            # Quoted tweet as blockquote
-            qt = t.get("quoted_tweet")
-            if qt and qt.get("text"):
-                part += f"\n\n> **@{qt.get('author', '')}**: {qt['text']}"
-            parts.append(part)
-        content = "\n\n---\n\n".join(parts)
+        root_text = tweets[0].get("text", "")
+        # Detect Article: root tweet text is long (Jina-fetched body), don't wrap in [1/N]
+        is_article = len(root_text) > 500 and len(tweets) <= 3
+        if is_article:
+            content = root_text
+            # Append author replies as footnotes if any
+            if len(tweets) > 1:
+                replies = []
+                for t in tweets[1:]:
+                    reply_text = t.get("text", "").strip()
+                    if reply_text:
+                        replies.append(reply_text)
+                if replies:
+                    content += "\n\n---\n\n" + "\n\n".join(replies)
+        else:
+            parts = []
+            for i, t in enumerate(tweets):
+                part = f"**[{i+1}/{len(tweets)}]** {t.get('text', '')}"
+                # Inline images
+                for img_url in t.get("images", []):
+                    part += f"\n\n![image]({img_url})"
+                # Quoted tweet as blockquote
+                qt = t.get("quoted_tweet")
+                if qt and qt.get("text"):
+                    part += f"\n\n> **@{qt.get('author', '')}**: {qt['text']}"
+                parts.append(part)
+            content = "\n\n---\n\n".join(parts)
     else:
         content = data.get("text", "")
+
+    # Collect all images across tweets for cover_image
+    all_images = data.get("images", [])
+    if not all_images and tweets:
+        all_images = [img for t in tweets for img in t.get("images", [])]
+    cover_image = all_images[0] if all_images else ""
 
     return UnifiedContent(
         source_type=SourceType.TWITTER,
@@ -186,11 +207,19 @@ def from_twitter(data: dict) -> UnifiedContent:
         extra={
             "tweet_count": len(tweets) if tweets else 1,
             "has_thread": bool(tweets),
+            "author_name": data.get("author_name", ""),
+            "created_at": data.get("created_at", ""),
+            "cover_image": cover_image,
             "likes": data.get("likes", 0),
             "retweets": data.get("retweets", 0),
-            "images": data.get("images", []),
+            "replies": data.get("replies", 0),
+            "bookmarks": data.get("bookmarks", 0),
+            "views": data.get("views", "0"),
+            "images": all_images,
             "videos": data.get("videos", []),
             "quoted_tweets": data.get("quoted_tweets", []),
+            "author_replies": data.get("author_replies", []),
+            "comments": data.get("comments", []),
         },
     )
 
