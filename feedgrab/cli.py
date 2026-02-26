@@ -15,16 +15,16 @@ import asyncio
 import json
 from pathlib import Path
 
+# Fix Windows console encoding — force UTF-8 instead of GBK
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from dotenv import load_dotenv
 load_dotenv()
 
 from feedgrab.reader import UniversalReader
 from feedgrab.schema import UnifiedInbox, SourceType
-
-# Fix Windows console encoding for Unicode output
-if sys.platform == "win32":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 def get_inbox_path() -> str:
@@ -39,21 +39,21 @@ def cmd_fetch(urls: list):
     async def run():
         if len(urls) == 1:
             item = await reader.read(urls[0])
-            print(f"[OK] [{item.source_type.value}] {item.title[:60]}")
-            print(f"     {item.url}")
-            print(f"     {item.content[:200]}...")
+            print(f"✅ [{item.source_type.value}] {item.title[:60]}")
+            print(f"   {item.url}")
+            print(f"   {item.content[:200]}...")
         else:
             items = await reader.read_batch(urls)
             for item in items:
-                print(f"[OK] [{item.source_type.value}] {item.title[:60]}")
-            print(f"\nFetched {len(items)}/{len(urls)} URLs")
+                print(f"✅ [{item.source_type.value}] {item.title[:60]}")
+            print(f"\n📦 Fetched {len(items)}/{len(urls)} URLs")
 
     try:
         asyncio.run(run())
     except KeyboardInterrupt:
-        print("\nCancelled")
+        print("\n⏹ Cancelled")
     except Exception as e:
-        print(f"[ERROR] {e}")
+        print(f"❌ {e}")
         sys.exit(1)
 
 
@@ -61,21 +61,21 @@ def cmd_list():
     """Show inbox contents."""
     inbox = UnifiedInbox(get_inbox_path())
     if not inbox.items:
-        print("Inbox is empty")
+        print("📦 Inbox is empty")
         return
 
-    print(f"Inbox: {len(inbox.items)} items\n")
+    print(f"📦 Inbox: {len(inbox.items)} items\n")
 
-    label_map = {
-        SourceType.TELEGRAM: "TG",  SourceType.RSS: "RSS",
-        SourceType.BILIBILI: "BLI", SourceType.XIAOHONGSHU: "XHS",
-        SourceType.TWITTER: "X",    SourceType.WECHAT: "WX",
-        SourceType.YOUTUBE: "YT",   SourceType.MANUAL: "MAN",
+    emoji_map = {
+        SourceType.TELEGRAM: "📢", SourceType.RSS: "📰",
+        SourceType.BILIBILI: "🎬", SourceType.XIAOHONGSHU: "📕",
+        SourceType.TWITTER: "🐦", SourceType.WECHAT: "💬",
+        SourceType.YOUTUBE: "▶️", SourceType.MANUAL: "✏️",
     }
 
     for i, item in enumerate(inbox.items[-20:], 1):
-        label = label_map.get(item.source_type, "??")
-        print(f"  {i:2d}. [{label:3s}] [{item.source_type.value:8s}] {item.title[:50]}")
+        emoji = emoji_map.get(item.source_type, "📄")
+        print(f"  {i:2d}. {emoji} [{item.source_type.value:8s}] {item.title[:50]}")
 
 
 def cmd_clear():
@@ -85,9 +85,9 @@ def cmd_clear():
         confirm = input("Clear inbox? (y/N) ")
         if confirm.lower() == 'y':
             path.write_text("[]")
-            print("[OK] Inbox cleared")
+            print("✅ Inbox cleared")
     else:
-        print("Inbox is already empty")
+        print("📦 Inbox is already empty")
 
 
 def cmd_login(platform: str, headless: bool = False):
@@ -99,7 +99,7 @@ def cmd_login(platform: str, headless: bool = False):
 def main():
     if len(sys.argv) < 2:
         print("""
-feedgrab -- Universal content grabber
+📖 feedgrab — Universal content grabber
 
 Usage:
     feedgrab <url>              Fetch content from any URL
@@ -124,8 +124,8 @@ Examples:
 
     if cmd == "login":
         if len(sys.argv) < 3:
-            print("[ERROR] Usage: feedgrab login <platform> [--headless]")
-            print("        Supported: xhs, wechat, twitter")
+            print("❌ Usage: feedgrab login <platform> [--headless]")
+            print("   Supported: xhs, wechat, twitter")
             sys.exit(1)
         headless = "--headless" in sys.argv
         cmd_login(sys.argv[2], headless=headless)
@@ -137,8 +137,8 @@ Examples:
         urls = [arg for arg in sys.argv[1:] if arg.startswith(("http", "www.")) or "." in arg]
         cmd_fetch(urls)
     else:
-        print(f"[ERROR] Unknown command: {cmd}")
-        print("        Run 'feedgrab' with no args for help")
+        print(f"❌ Unknown command: {cmd}")
+        print("   Run 'feedgrab' with no args for help")
 
 
 if __name__ == "__main__":
