@@ -3,34 +3,40 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
-## 2026-02-27 · v0.2.4 · 修复标题过长 + 图片丢失 + 标签硬编码
+## 2026-02-27 · v0.2.4 · 修复标题过长 + 图片丢失 + 标签硬编码 + cover_image 逻辑 + 图片格式
 
 ### 背景
-实测抓取普通推文发现三个问题：标题使用推文前100字符太长，单条推文正文缺少图片，YAML tags 永远是硬编码的 `clippings` + `twitter` 未提取推文中的 `#hashtag`。
+实测抓取普通推文和长文章发现多个问题：标题使用推文前100字符太长且含换行符，单条推文正文缺少图片，YAML tags 硬编码 `clippings`/`twitter` 未提取推文 `#hashtag`，cover_image 对普通推文和长文章处理不合理，Jina 返回的长文章正文图片使用非标准嵌套 Markdown 格式。
 
 ### 方案决策
-- **标题截断**：50字符（中文约25字，足以概括主题）
-- **图片嵌入**：单条推文去掉多余的 `[1/1]` 前缀，保留图片嵌入；Article 长文末尾追加图片
-- **标签提取**：四层穿透 — GraphQL 提取 → twitter.py 透传 → schema.py 设置 tags → storage.py 渲染
-- **额外修复**：`article` 为 `None` 时 `.get()` 崩溃（`root.get("article", {})` 不防 None）
+- **标题智能截断**：`_clean_title()` 函数 — 过滤换行/制表/控制字符，50字符内优先在句号（。！？.!?）处断开
+- **图片嵌入**：单条推文去掉多余的 `[1/1]` 前缀，保留图片嵌入逻辑
+- **标签提取**：四层穿透提取推文 `#hashtag`，无 hashtag 时不输出 tags 字段，不插入硬编码值
+- **Hashtag 源**：优先从 `note_tweet.entity_set.hashtags` 提取（长推文），回退到 `legacy.entities.hashtags`
+- **cover_image 区分**：仅长文章（Article）输出 cover_image（从 `cover_media.media_info.original_img_url` 提取），普通推文不输出
+- **长文章封面**：正文开头插入 `![cover](url)` 显示封面图
+- **Jina 图片格式**：`[![alt](img)](link)` 嵌套格式统一转为标准 `![image](img)`
+- **额外修复**：`article` 为 `None` 时 `.get()` 崩溃防护
 
 ### 改动范围
 
 | 文件 | 改动 |
 |------|------|
-| `feedgrab/fetchers/twitter_graphql.py` | `extract_tweet_data()` 新增 hashtags 提取（note_tweet entity_set 优先于 legacy entities） |
-| `feedgrab/fetchers/twitter.py` | 透传 hashtags，标题截断 100→50，`article` None 防护 |
-| `feedgrab/schema.py` | 单条推文去 `[1/1]` 前缀，Article 追加图片，tags 含 hashtags，标题截断 50 |
-| `feedgrab/utils/storage.py` | tags 渲染改用 `item.tags`，文件名 content 截断 150→50 |
+| `feedgrab/fetchers/twitter_graphql.py` | `extract_tweet_data()` 提取 hashtags（note_tweet 优先）；`_extract_article_ref()` 提取 cover_image |
+| `feedgrab/fetchers/twitter.py` | `_clean_title()` 智能截断；透传 hashtags + article_data；Jina 图片格式正规化；`article` None 防护 |
+| `feedgrab/schema.py` | 单条推文去 `[1/1]`；Article 正文开头插入封面图；cover_image 仅长文章；tags 只含 hashtag |
+| `feedgrab/utils/storage.py` | tags 从 `item.tags` 读取，无 tag 不输出；文件名截断 150→50 |
 
-### 关键发现
-推文使用 Note（长推文）时，hashtags 在 `note_tweet.note_tweet_results.result.entity_set.hashtags` 而非 `legacy.entities.hashtags`。代码需优先读取 note_tweet 路径。
+### 验证结果
+**普通推文**（iBigQiang/status/2026279968171606479）：
+- 标题智能截断在句号处：`最近看到好多新蓝V都成功✅认证了创作者身份。`
+- 无 cover_image 字段，图片内联在正文
+- Tags 只有 `互关`、`蓝v关注必回`，无硬编码值
 
-### 验证结果（2026-02-27 测试 iBigQiang/status/2026279968171606479）
-- 标题 50 字符：`最近看到好多新蓝V都成功✅认证了创作者身份。咱也不能落下了，设个小目标：一个月内拿到老马低保入门券（`
-- 正文含图片：`![image](https://pbs.twimg.com/media/HB7IlUxaEAA74v_.jpg)`
-- Tags 含推文标签：`"互关"`, `"蓝v关注必回"`
-- 线程推文（AI_Jasonyu）仍正常抓取
+**长文章**（AI_Jasonyu/status/2026455606970954087）：
+- cover_image 从 article cover_media 提取：`https://pbs.twimg.com/media/HB7xEvcaAAAmexY.jpg`
+- 正文开头显示 `![cover](...)`
+- 正文图片全部为标准 `![image](url)` 格式，无嵌套链接
 
 ### 状态：全部完成 ✅
 
