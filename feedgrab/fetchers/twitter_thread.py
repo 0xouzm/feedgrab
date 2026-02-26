@@ -180,14 +180,23 @@ def fetch_tweet_thread(
         result["author_replies"] = author_replies
         logger.info(f"[Thread] Collected {len(author_replies)} author replies to commenters")
 
-    # B 类：其他用户评论（按点赞数降序）
+    # B 类：评论区
     if x_fetch_all_comments():
         max_c = x_max_comments()
-        comments = [
-            t for t in all_entries
-            if t.get("user_id") != root_user_id
-        ]
-        comments.sort(key=lambda t: t.get("likes", 0), reverse=True)
+        if x_fetch_author_replies():
+            # Both on: comments = only non-author (author replies shown separately)
+            comments = [
+                t for t in all_entries
+                if t.get("user_id") != root_user_id
+            ]
+            comments.sort(key=lambda t: t.get("likes", 0), reverse=True)
+        else:
+            # Only ALL_COMMENTS: all non-thread entries (everyone), chronological
+            comments = [
+                t for t in all_entries
+                if t.get("id") not in thread_ids
+            ]
+            comments.sort(key=lambda t: t.get("created_at", ""))
         result["comments"] = comments[:max_c]
         logger.info(f"[Thread] Collected {len(result['comments'])} comments (max {max_c})")
 
