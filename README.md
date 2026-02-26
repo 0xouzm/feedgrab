@@ -1,11 +1,13 @@
-# x-reader
+# feedgrab
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Universal content reader — fetch, transcribe, and digest content from any platform.
+Universal content grabber — fetch, transcribe, and digest content from any platform.
 
 Give it a URL (article, video, podcast, tweet), get back structured content. Works as CLI, Python library, MCP server, or Claude Code skills.
+
+> **Origin**: feedgrab is a fusion upgrade based on [x-reader](https://github.com/runesleo/x-reader) by [@runes_leo](https://x.com/runes_leo) and the [baoyu-danger-x-to-markdown](https://github.com/anthropics/claude-code/tree/main/skills) Claude Code skill by [@dotey](https://x.com/dotey). It inherits x-reader's multi-platform architecture and integrates baoyu's reverse-engineered X/Twitter GraphQL capabilities for deep tweet/thread fetching.
 
 ## What It Does
 
@@ -16,13 +18,14 @@ Any URL → Platform Detection → Fetch Content → Unified Output
          7+ platforms          video: yt-dlp subtitles
                                audio: Whisper transcription
                                API: Bilibili / RSS / Telegram
+                               X/Twitter: GraphQL → oEmbed → Jina → Playwright
 ```
 
 The Python layer handles text fetching and YouTube subtitle extraction. The **Claude Code skills** (optional) add full Whisper transcription for video/podcast and AI-powered content analysis.
 
 ## Three Layers
 
-x-reader is composable. Use the layers you need:
+feedgrab is composable. Use the layers you need:
 
 | Layer | What | Format | Install |
 |-------|------|--------|---------|
@@ -34,19 +37,19 @@ x-reader is composable. Use the layers you need:
 
 ```bash
 # Fetch any URL
-x-reader https://mp.weixin.qq.com/s/abc123
+feedgrab https://mp.weixin.qq.com/s/abc123
 
-# Fetch a tweet
-x-reader https://x.com/elonmusk/status/123456
+# Fetch a tweet (with GraphQL deep fetch if cookies configured)
+feedgrab https://x.com/elonmusk/status/123456
 
 # Fetch multiple URLs
-x-reader https://url1.com https://url2.com
+feedgrab https://url1.com https://url2.com
 
 # Login to a platform (one-time, for browser fallback)
-x-reader login xhs
+feedgrab login xhs
 
 # View inbox
-x-reader list
+feedgrab list
 ```
 
 ### Layer 2: Claude Code Skills
@@ -74,8 +77,8 @@ Then in Claude Code, just send a YouTube/Bilibili/podcast link — the video ski
 > Requires cloning the repo (mcp_server.py is not included in pip install).
 
 ```bash
-git clone https://github.com/runesleo/x-reader.git
-cd x-reader
+git clone https://github.com/iBigQiang/feedgrab.git
+cd feedgrab
 pip install -e ".[mcp]"
 python mcp_server.py
 ```
@@ -90,9 +93,9 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 ```json
 {
     "mcpServers": {
-        "x-reader": {
+        "feedgrab": {
             "command": "python",
-            "args": ["/path/to/x-reader/mcp_server.py"]
+            "args": ["/path/to/feedgrab/mcp_server.py"]
         }
     }
 }
@@ -102,43 +105,61 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 
 | Platform | Text Fetch | Video/Audio Transcript |
 |----------|-----------|----------------------|
-| YouTube | ✅ Jina | ✅ yt-dlp subtitles → Groq Whisper fallback |
-| Bilibili (B站) | ✅ API | ✅ via Claude Code skill |
-| X / Twitter | ✅ Jina → Playwright | — |
-| WeChat (微信公众号) | ✅ Jina → Playwright | — |
-| Xiaohongshu (小红书) | ✅ Jina → Playwright* | — |
-| Telegram | ✅ Telethon | — |
-| RSS | ✅ feedparser | — |
-| 小宇宙 (Xiaoyuzhou) | — | ✅ via Claude Code skill |
-| Apple Podcasts | — | ✅ via Claude Code skill |
-| Any web page | ✅ Jina fallback | — |
+| YouTube | Jina | yt-dlp subtitles → Groq Whisper fallback |
+| Bilibili (B站) | API | via Claude Code skill |
+| X / Twitter | **GraphQL** → oEmbed → Jina → Playwright | — |
+| WeChat (微信公众号) | Jina → Playwright | — |
+| Xiaohongshu (小红书) | Jina → Playwright* | — |
+| Telegram | Telethon | — |
+| RSS | feedparser | — |
+| 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
+| Apple Podcasts | — | via Claude Code skill |
+| Any web page | Jina fallback | — |
 
-> \*XHS requires a one-time login: `x-reader login xhs` (saves session for Playwright fallback)
+> \*XHS requires a one-time login: `feedgrab login xhs` (saves session for Playwright fallback)
 >
 > YouTube Whisper transcription requires `GROQ_API_KEY` — get a free key from [Groq](https://console.groq.com/keys)
+
+### X/Twitter Four-Tier Fallback
+
+feedgrab uses an advanced four-tier strategy for X/Twitter content:
+
+| Tier | Method | Auth Required | Capabilities |
+|------|--------|--------------|-------------|
+| 0 | **GraphQL API** | Cookie (`auth_token` + `ct0`) | Complete threads, images, videos, quoted tweets, articles |
+| 1 | oEmbed API | None | Single tweet text (public tweets only) |
+| 2 | Jina Reader | None | Profiles, non-tweet pages |
+| 3 | Playwright | Optional session | Login-required content, last resort |
+
+Tier 0 (GraphQL) is ported from the [baoyu-danger-x-to-markdown](https://github.com/anthropics/claude-code) skill, featuring:
+- Dynamic `queryId` resolution from X's frontend JS bundles
+- Complete thread reconstruction (author self-reply chains)
+- Multi-phase pagination (upward + downward + continuation)
+- Full media extraction (images, videos, quoted tweets)
+- Markdown rendering with YAML front matter
 
 ## Install
 
 ```bash
 # From GitHub (recommended)
-pip install git+https://github.com/runesleo/x-reader.git
+pip install git+https://github.com/iBigQiang/feedgrab.git
 
 # With Telegram support
-pip install "x-reader[telegram] @ git+https://github.com/runesleo/x-reader.git"
+pip install "feedgrab[telegram] @ git+https://github.com/iBigQiang/feedgrab.git"
 
 # With browser fallback (Playwright — for XHS/WeChat anti-scraping)
-pip install "x-reader[browser] @ git+https://github.com/runesleo/x-reader.git"
+pip install "feedgrab[browser] @ git+https://github.com/iBigQiang/feedgrab.git"
 playwright install chromium
 
 # With all optional dependencies
-pip install "x-reader[all] @ git+https://github.com/runesleo/x-reader.git"
+pip install "feedgrab[all] @ git+https://github.com/iBigQiang/feedgrab.git"
 playwright install chromium
 ```
 
 Or clone and install locally:
 ```bash
-git clone https://github.com/runesleo/x-reader.git
-cd x-reader
+git clone https://github.com/iBigQiang/feedgrab.git
+cd feedgrab
 pip install -e ".[all]"
 playwright install chromium
 ```
@@ -163,7 +184,7 @@ export GROQ_API_KEY=your_key_here
 
 ```python
 import asyncio
-from x_reader.reader import UniversalReader
+from feedgrab.reader import UniversalReader
 
 async def main():
     reader = UniversalReader()
@@ -184,38 +205,48 @@ cp .env.example .env
 
 | Variable | Required | Description |
 |----------|----------|-------------|
+| `X_AUTH_TOKEN` | X GraphQL only | Twitter/X auth cookie |
+| `X_CT0` | X GraphQL only | Twitter/X CSRF token cookie |
+| `X_GRAPHQL_ENABLED` | No | Enable/disable GraphQL tier (default: `true`) |
+| `X_THREAD_MAX_PAGES` | No | Max pagination for threads (default: `20`) |
+| `X_REQUEST_DELAY` | No | Delay between GraphQL requests in seconds (default: `1.5`) |
 | `TG_API_ID` | Telegram only | From https://my.telegram.org |
 | `TG_API_HASH` | Telegram only | From https://my.telegram.org |
 | `GROQ_API_KEY` | Whisper only | From https://console.groq.com/keys (free) |
+| `GEMINI_API_KEY` | AI analysis only | From Google AI Studio |
 | `INBOX_FILE` | No | Path to inbox JSON (default: `./unified_inbox.json`) |
-| `OUTPUT_DIR` | No | Directory for Markdown output (default: disabled) |
-| `OBSIDIAN_VAULT` | No | Path to Obsidian vault (writes to `01-收集箱/x-reader-inbox.md`) |
+| `OUTPUT_DIR` | No | Directory for Markdown output (default: `./output`) |
+| `OBSIDIAN_VAULT` | No | Path to Obsidian vault (writes to `01-收集箱/feedgrab-inbox.md`) |
 
 ## Architecture
 
 ```
-x-reader/
-├── x_reader/              # Python package
-│   ├── cli.py             # CLI entry point
-│   ├── reader.py          # URL dispatcher (UniversalReader)
-│   ├── schema.py          # Unified data model (UnifiedContent + Inbox)
-│   ├── login.py           # Browser login manager (saves sessions)
+feedgrab/
+├── feedgrab/                  # Python package
+│   ├── cli.py                 # CLI entry point
+│   ├── reader.py              # URL dispatcher (UniversalReader)
+│   ├── schema.py              # Unified data model (UnifiedContent + Inbox)
+│   ├── login.py               # Browser login manager (saves sessions)
 │   ├── fetchers/
-│   │   ├── jina.py        # Jina Reader (universal fallback)
-│   │   ├── browser.py     # Playwright headless (anti-scraping fallback)
-│   │   ├── bilibili.py    # Bilibili API
-│   │   ├── youtube.py     # yt-dlp subtitle extraction
-│   │   ├── rss.py         # feedparser
-│   │   ├── telegram.py    # Telethon
-│   │   ├── twitter.py     # Jina-based
-│   │   ├── wechat.py      # Jina → Playwright fallback
-│   │   └── xhs.py         # Jina → Playwright + session fallback
+│   │   ├── jina.py            # Jina Reader (universal fallback)
+│   │   ├── browser.py         # Playwright headless (anti-scraping fallback)
+│   │   ├── bilibili.py        # Bilibili API
+│   │   ├── youtube.py         # yt-dlp subtitle extraction
+│   │   ├── rss.py             # RSS (feedparser)
+│   │   ├── telegram.py        # Telegram (Telethon)
+│   │   ├── twitter.py         # X/Twitter four-tier dispatcher
+│   │   ├── twitter_cookies.py # Cookie multi-source management (env/file/Playwright/CDP)
+│   │   ├── twitter_graphql.py # X GraphQL API client (TweetDetail, dynamic queryId)
+│   │   ├── twitter_thread.py  # Thread reconstruction (pagination + dedup + root-walk)
+│   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)
+│   │   ├── wechat.py          # Jina → Playwright fallback
+│   │   └── xhs.py             # Jina → Playwright + session fallback
 │   └── utils/
-│       └── storage.py     # JSON + Markdown dual output
-├── skills/                # Claude Code skills
-│   ├── video/             # Video/podcast → transcript + summary
-│   └── analyzer/          # Content → structured analysis
-├── mcp_server.py          # MCP server entry point
+│       └── storage.py         # JSON + Markdown dual output
+├── skills/                    # Claude Code skills
+│   ├── video/                 # Video/podcast → transcript + summary
+│   └── analyzer/              # Content → structured analysis
+├── mcp_server.py              # MCP server entry point
 └── pyproject.toml
 ```
 
@@ -226,6 +257,9 @@ User sends URL
     │
     ├─ Text content (article, tweet, WeChat)
     │   └─ Python fetcher → UnifiedContent → inbox
+    │
+    ├─ X/Twitter tweet or thread
+    │   └─ GraphQL (full thread + media) → oEmbed → Jina → Playwright
     │
     ├─ Video (YouTube, Bilibili, X video)
     │   ├─ Python fetcher → metadata (title, description)
@@ -238,9 +272,16 @@ User sends URL
         └─ Analyzer skill → structured report + action items
 ```
 
+## Credits
+
+feedgrab is built upon:
+
+- **[x-reader](https://github.com/runesleo/x-reader)** by [@runes_leo](https://x.com/runes_leo) — the original multi-platform content reader providing the core architecture, CLI, MCP server, and fetchers for 7+ platforms.
+- **[baoyu-danger-x-to-markdown](https://github.com/anthropics/claude-code)** by [@dotey](https://x.com/dotey) (宝玉) — the X/Twitter deep fetching skill providing reverse-engineered GraphQL API access, thread reconstruction, and Markdown rendering.
+
 ## Author
 
-Built by [@runes_leo](https://x.com/runes_leo) — more AI tools at [leolabs.me](https://leolabs.me)
+Maintained by [@iBigQiang](https://github.com/iBigQiang)
 
 ## License
 
