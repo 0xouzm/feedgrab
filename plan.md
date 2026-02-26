@@ -3,6 +3,47 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 2026-02-27 · v0.2.4c · 修复作者回帖漏抓 + Article 检测增强 + 排序 bug
+
+### 背景
+测试 binghe 推文发现两个问题：
+1. 作者嵌套回复 2 条只抓到 1 条 — `created_at` 字符串排序导致条目被错误 slice 掉
+2. 长文章偶尔正文只输出 t.co 短链接 — `is_article_stub` 检测仅看合并文本长度，多推文线程合并后超 200 字符就检测失败
+
+### 根因分析
+- **排序 bug**：Twitter `created_at` 格式为 `"Fri Dec 26 04:50:10 +0000 2025"`，字符串排序按星期几字母序（Fri < Wed），导致 12月26日的条目排在 12月24日之前，被 `root_idx` slice 切掉
+- **作者回帖过滤**：条件 `in_reply_to_user_id != root_user_id` 排除了作者回复自己（对评论者回复的继续回复）
+- **Article 检测**：`is_article_stub` 仅检查合并文本 `len(text) < 200 and "https://t.co/"` — 多推文线程合并后轻松超 200 字符
+
+### 方案决策
+- **排序修复**：`all_entries.sort()` 改用 Tweet ID（Snowflake ID 单调递增）代替 `created_at` 字符串
+- **作者回帖**：移除 `in_reply_to_user_id != root_user_id` 条件，所有不在线程链中的作者推文均视为回帖
+- **Article 检测增强**：主信号用 `article_data.has_content`，次信号检查首条推文文本（非合并文本）
+- **Jina 重试**：Article 正文获取失败时自动重试 1 次（间隔 2 秒）
+- **线程编号**：主贴不加 `[1/21]` 前缀，续帖从 `[1/20]` 编号，主贴与续帖层次更清晰
+
+### 改动范围
+
+| 文件 | 改动 |
+|------|------|
+| `feedgrab/fetchers/twitter_thread.py` | Phase 7 排序改用 `int(id)`；作者回帖/评论排序统一改用 ID；移除 `in_reply_to_user_id` 过滤条件 |
+| `feedgrab/fetchers/twitter.py` | `is_article_stub` 改为 `article_data.has_content` + 首条推文文本检测；Jina 获取增加重试机制；线程主贴不加编号前缀 |
+| `feedgrab/schema.py` | 线程主贴不加编号前缀，续帖从 `[1/N]` 编号 |
+
+### 验证结果
+**binghe 推文**（binghe/status/2003639692542247190）：
+- 修复前：1 条作者回帖、6 条评论
+- 修复后：2 条作者回帖（时间正序）、10 条评论
+- 线程 21 条不变
+
+**鱼总长文章**（AI_Jasonyu/status/2026455606970954087）：
+- Article 正确检测，cover_image 正常，正文完整内容
+
+### 状态：全部完成 ✅
+
+
+---
+
 ## 2026-02-27 · v0.2.4 · 修复标题过长 + 图片丢失 + 标签硬编码 + cover_image 逻辑 + 图片格式
 
 ### 背景

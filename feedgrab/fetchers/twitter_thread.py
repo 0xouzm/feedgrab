@@ -130,7 +130,9 @@ def fetch_tweet_thread(
     root = _find_root(all_entries)
 
     # Phase 7: Sort by time, slice from root, filter same-thread
-    all_entries.sort(key=lambda t: t.get("created_at", ""))
+    # Sort by tweet ID (Snowflake IDs are monotonically increasing with time)
+    # Using created_at string sort is unreliable (day-of-week prefix breaks order)
+    all_entries.sort(key=lambda t: int(t.get("id", "0")))
 
     # Slice from root onwards
     root_id = root.get("id", "") if root else ""
@@ -169,14 +171,14 @@ def fetch_tweet_thread(
     thread_ids = {t.get("id") for t in thread_tweets}
 
     # C 类：作者回复评论者（不在自回复链中的作者推文）
+    # 不限制 in_reply_to_user_id —— 作者回复评论者后又继续自回复也应抓取
     if x_fetch_author_replies():
         author_replies = [
             t for t in all_entries
             if t.get("user_id") == root_user_id
             and t.get("id") not in thread_ids
-            and t.get("in_reply_to_user_id") != root_user_id
         ]
-        author_replies.sort(key=lambda t: t.get("created_at", ""))
+        author_replies.sort(key=lambda t: int(t.get("id", "0")))
         result["author_replies"] = author_replies
         logger.info(f"[Thread] Collected {len(author_replies)} author replies to commenters")
 
@@ -196,7 +198,7 @@ def fetch_tweet_thread(
                 t for t in all_entries
                 if t.get("id") not in thread_ids
             ]
-            comments.sort(key=lambda t: t.get("created_at", ""))
+            comments.sort(key=lambda t: int(t.get("id", "0")))
         result["comments"] = comments[:max_c]
         logger.info(f"[Thread] Collected {len(result['comments'])} comments (max {max_c})")
 

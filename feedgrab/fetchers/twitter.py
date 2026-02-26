@@ -189,15 +189,23 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
 
 
 def _join_thread_text(tweets: list) -> str:
-    """Join thread tweets into a single text with numbering."""
+    """Join thread tweets into a single text with numbering.
+
+    First tweet (main post) has no prefix; subsequent tweets numbered [1/N]...[N/N].
+    """
     if len(tweets) == 1:
         return tweets[0].get("text", "")
 
     parts = []
-    for i, tweet in enumerate(tweets, 1):
+    rest_count = len(tweets) - 1
+    for i, tweet in enumerate(tweets):
         text = tweet.get("text", "").strip()
-        if text:
-            parts.append(f"[{i}/{len(tweets)}] {text}")
+        if not text:
+            continue
+        if i == 0:
+            parts.append(text)
+        else:
+            parts.append(f"[{i}/{rest_count}] {text}")
     return "\n\n".join(parts)
 
 
@@ -346,34 +354,55 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
                 logger.info(f"[Twitter] Tier 0 — GraphQL: {url}")
                 data = await _fetch_via_graphql(url, tweet_id)
                 if data and data.get("text"):
-                    # Check if this is a Twitter Article (text is just a t.co link)
-                    # If so, fetch full article body via Jina while keeping GraphQL metadata
+                    # Check if this is a Twitter Article that needs Jina for full body
+                    # Primary signal: article_data with has_content flag (from GraphQL)
+                    # Secondary signal: text is short stub with t.co link
+                    article_data = data.get("article_data") or {}
+                    has_article = article_data.get("has_content", False)
                     text = data["text"].strip()
-                    is_article_stub = (
-                        len(text) < 200
-                        and ("https://t.co/" in text or text.startswith("http"))
-                    )
+                    text_is_stub = (
+                        "https://t.co/" in text or text.startswith("http")
+                    ) and len(text) < 200
+                    # For multi-tweet threads, check first tweet individually
+                    if not text_is_stub and data.get("thread_tweets"):
+                        first_text = (data["thread_tweets"][0].get("text") or "").strip()
+                        text_is_stub = (
+                            len(first_text) < 200
+                            and ("https://t.co/" in first_text or first_text.startswith("http"))
+                        )
+                    is_article_stub = has_article or text_is_stub
                     if is_article_stub:
                         logger.info("[Twitter] Article detected — fetching body via Jina")
-                        try:
-                            jina_data = fetch_via_jina(url)
-                            jina_content = jina_data.get("content", "")
-                            if jina_content and len(jina_content.strip()) > 200:
-                                # Normalize nested image links [![alt](img)](link) → ![image](img)
-                                jina_content = re.sub(
-                                    r'\[!\[[^\]]*\]\(([^)]+)\)\]\([^)]+\)',
-                                    r'![image](\1)',
-                                    jina_content,
-                                )
-                                data["text"] = jina_content
-                                # Update thread_tweets content too for schema
-                                if data.get("thread_tweets"):
-                                    data["thread_tweets"][0]["text"] = jina_content
-                                logger.info("[Twitter] Article body fetched successfully")
-                            else:
-                                logger.warning("[Twitter] Jina article body too short, keeping original")
-                        except Exception as je:
-                            logger.warning(f"[Twitter] Jina article fetch failed ({je}), keeping original")
+                        jina_content = ""
+                        for attempt in range(2):
+                            try:
+                                jina_data = fetch_via_jina(url)
+                                jina_content = jina_data.get("content", "")
+                                if jina_content and len(jina_content.strip()) > 200:
+                                    break
+                                if attempt == 0:
+                                    logger.info("[Twitter] Jina returned short content, retrying...")
+                                    import time; time.sleep(2)
+                            except Exception as je:
+                                if attempt == 0:
+                                    logger.info(f"[Twitter] Jina attempt 1 failed ({je}), retrying...")
+                                    import time; time.sleep(2)
+                                else:
+                                    logger.warning(f"[Twitter] Jina retry also failed ({je})")
+                        if jina_content and len(jina_content.strip()) > 200:
+                            # Normalize nested image links [![alt](img)](link) → ![image](img)
+                            jina_content = re.sub(
+                                r'\[!\[[^\]]*\]\(([^)]+)\)\]\([^)]+\)',
+                                r'![image](\1)',
+                                jina_content,
+                            )
+                            data["text"] = jina_content
+                            # Update thread_tweets content too for schema
+                            if data.get("thread_tweets"):
+                                data["thread_tweets"][0]["text"] = jina_content
+                            logger.info("[Twitter] Article body fetched successfully")
+                        else:
+                            logger.warning("[Twitter] Jina article body too short after retries, keeping original")
                     return data
                 logger.warning("[Twitter] GraphQL returned empty content")
             else:

@@ -190,11 +190,13 @@ def from_twitter(data: dict) -> UnifiedContent:
                 content = f"![cover]({article_cover})\n\n{content}"
         else:
             parts = []
+            rest_count = len(tweets) - 1
             for i, t in enumerate(tweets):
                 text = t.get('text', '')
-                # Single tweet: no numbering prefix
-                if len(tweets) > 1:
-                    part = f"**[{i+1}/{len(tweets)}]** {text}"
+                # First tweet (main post): no prefix
+                # Subsequent tweets: [1/N]...[N/N]
+                if len(tweets) > 1 and i > 0:
+                    part = f"**[{i}/{rest_count}]** {text}"
                 else:
                     part = text
                 # Inline images
