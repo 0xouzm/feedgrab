@@ -15,9 +15,9 @@ Give it a URL (article, video, podcast, tweet), get back structured content. Wor
 
 ```
 Any URL → Platform Detection → Fetch Content → Unified Output
-              ↓                      ↓
-         auto-detect           text: Jina Reader
-         7+ platforms          video: yt-dlp subtitles
+              ↓                      ↓                ↓
+         auto-detect           text: Jina Reader    → output/X/Author：Title.md
+         7+ platforms          video: yt-dlp subs    → output/YouTube/Title.md
                                audio: Whisper transcription
                                API: Bilibili / RSS / Telegram
                                X/Twitter: GraphQL → oEmbed → Jina → Playwright
@@ -138,7 +138,49 @@ Tier 0 (GraphQL) is ported from the [baoyu-danger-x-to-markdown](https://github.
 - Complete thread reconstruction (author self-reply chains)
 - Multi-phase pagination (upward + downward + continuation)
 - Full media extraction (images, videos, quoted tweets)
-- Markdown rendering with YAML front matter
+- Engagement metrics (likes / retweets / replies / bookmarks / views)
+- Author replies + comments collection (opt-in toggles)
+
+### Output Format
+
+Each fetched item is saved as an individual Markdown file, organized by platform:
+
+```
+output/
+├── X/                    # Twitter/X
+│   └── AuthorName：Tweet Title.md
+├── XHS/                  # Xiaohongshu
+├── WeChat/               # WeChat articles
+├── YouTube/
+├── Bilibili/
+├── Telegram/
+└── RSS/
+```
+
+Files use Obsidian-compatible YAML front matter:
+
+```yaml
+---
+title: "OpenClaw Beginner Guide"
+source: "https://x.com/AI_Jasonyu/status/123"
+author:
+  - "@AI_Jasonyu"
+author_name: "鱼总聊AI"
+published: 2026-02-25
+created: 2026-02-26
+cover_image: "https://pbs.twimg.com/media/xxx.jpg"
+likes: 1075
+retweets: 315
+replies: 41
+bookmarks: 2180
+views: 426321
+tags:
+  - "clippings"
+  - "twitter"
+---
+```
+
+> Set `OBSIDIAN_VAULT` to write directly into your Obsidian vault under platform subdirectories.
 
 ## Install
 
@@ -212,13 +254,17 @@ cp .env.example .env
 | `X_GRAPHQL_ENABLED` | No | Enable/disable GraphQL tier (default: `true`) |
 | `X_THREAD_MAX_PAGES` | No | Max pagination for threads (default: `20`) |
 | `X_REQUEST_DELAY` | No | Delay between GraphQL requests in seconds (default: `1.5`) |
+| `X_FETCH_AUTHOR_REPLIES` | No | Collect author's replies to commenters (default: `false`) |
+| `X_FETCH_ALL_COMMENTS` | No | Collect all comments under tweet (default: `false`) |
+| `X_MAX_COMMENTS` | No | Max comments to collect (default: `50`) |
 | `TG_API_ID` | Telegram only | From https://my.telegram.org |
 | `TG_API_HASH` | Telegram only | From https://my.telegram.org |
 | `GROQ_API_KEY` | Whisper only | From https://console.groq.com/keys (free) |
 | `GEMINI_API_KEY` | AI analysis only | From Google AI Studio |
+| `FEEDGRAB_DATA_DIR` | No | Cookie/session storage directory (default: `sessions`) |
 | `INBOX_FILE` | No | Path to inbox JSON (default: `./unified_inbox.json`) |
 | `OUTPUT_DIR` | No | Directory for Markdown output (default: `./output`) |
-| `OBSIDIAN_VAULT` | No | Path to Obsidian vault (writes to `01-收集箱/feedgrab-inbox.md`) |
+| `OBSIDIAN_VAULT` | No | Path to Obsidian vault (writes to platform subdirectories) |
 
 ## Architecture
 
@@ -226,6 +272,7 @@ cp .env.example .env
 feedgrab/
 ├── feedgrab/                  # Python package
 │   ├── cli.py                 # CLI entry point
+│   ├── config.py              # Centralized config (paths, feature flags)
 │   ├── reader.py              # URL dispatcher (UniversalReader)
 │   ├── schema.py              # Unified data model (UnifiedContent + Inbox)
 │   ├── login.py               # Browser login manager (saves sessions)
@@ -239,12 +286,13 @@ feedgrab/
 │   │   ├── twitter.py         # X/Twitter four-tier dispatcher
 │   │   ├── twitter_cookies.py # Cookie multi-source management (env/file/Playwright/CDP)
 │   │   ├── twitter_graphql.py # X GraphQL API client (TweetDetail, dynamic queryId)
-│   │   ├── twitter_thread.py  # Thread reconstruction (pagination + dedup + root-walk)
+│   │   ├── twitter_thread.py  # Thread reconstruction + comment classification
 │   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)
 │   │   ├── wechat.py          # Jina → Playwright fallback
 │   │   └── xhs.py             # Jina → Playwright + session fallback
 │   └── utils/
-│       └── storage.py         # JSON + Markdown dual output
+│       └── storage.py         # Per-platform Markdown + JSON dual output
+├── sessions/                  # Cookie/session storage (auto-created, git-ignored)
 ├── skills/                    # Claude Code skills
 │   ├── video/                 # Video/podcast → transcript + summary
 │   └── analyzer/              # Content → structured analysis

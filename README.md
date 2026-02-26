@@ -15,9 +15,9 @@
 
 ```
 任意 URL → 平台检测 → 抓取内容 → 统一输出
-              ↓                ↓
-         自动识别          文本：Jina Reader
-         7+ 平台           视频：yt-dlp 字幕
+              ↓                ↓          ↓
+         自动识别          文本：Jina Reader    → output/X/作者：标题.md
+         7+ 平台           视频：yt-dlp 字幕    → output/YouTube/标题.md
                            音频：Whisper 转录
                            API：Bilibili / RSS / Telegram
                            X/Twitter：GraphQL → oEmbed → Jina → Playwright
@@ -138,7 +138,49 @@ Tier 0（GraphQL）移植自 [baoyu-danger-x-to-markdown](https://github.com/Jim
 - 完整线程重建（作者自回复链）
 - 多阶段分页（向上 + 向下 + 续页）
 - 完整媒体提取（图片、视频、引用推文）
-- Markdown 渲染（含 YAML front matter）
+- 互动数据（likes / retweets / replies / bookmarks / views）
+- 作者回帖 + 评论区采集（可选开关）
+
+### 输出格式
+
+每条内容保存为独立的 Markdown 文件，按平台分目录存放：
+
+```
+output/
+├── X/                    # Twitter/X
+│   └── 鱼总聊AI：OpenClaw新手完整学习路径.md
+├── XHS/                  # 小红书
+├── WeChat/               # 微信公众号
+├── YouTube/              # YouTube
+├── Bilibili/             # B 站
+├── Telegram/             # Telegram
+└── RSS/                  # RSS
+```
+
+文件使用 Obsidian 兼容的 YAML front matter：
+
+```yaml
+---
+title: "OpenClaw新手完整学习路径"
+source: "https://x.com/AI_Jasonyu/status/123"
+author:
+  - "@AI_Jasonyu"
+author_name: "鱼总聊AI"
+published: 2026-02-25
+created: 2026-02-26
+cover_image: "https://pbs.twimg.com/media/xxx.jpg"
+likes: 1075
+retweets: 315
+replies: 41
+bookmarks: 2180
+views: 426321
+tags:
+  - "clippings"
+  - "twitter"
+---
+```
+
+> 设置 `OBSIDIAN_VAULT` 后，内容会直接写入 Obsidian 笔记库对应的平台子目录。
 
 ## 安装
 
@@ -212,13 +254,17 @@ cp .env.example .env
 | `X_GRAPHQL_ENABLED` | 否 | 启用/禁用 GraphQL 层（默认：`true`） |
 | `X_THREAD_MAX_PAGES` | 否 | 线程最大分页数（默认：`20`） |
 | `X_REQUEST_DELAY` | 否 | GraphQL 请求间隔秒数（默认：`1.5`） |
+| `X_FETCH_AUTHOR_REPLIES` | 否 | 采集作者回帖（默认：`false`） |
+| `X_FETCH_ALL_COMMENTS` | 否 | 采集全部评论（默认：`false`） |
+| `X_MAX_COMMENTS` | 否 | 最大评论采集数（默认：`50`） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `GROQ_API_KEY` | 仅 Whisper | 从 https://console.groq.com/keys 免费获取 |
 | `GEMINI_API_KEY` | 仅 AI 分析 | 从 Google AI Studio 获取 |
+| `FEEDGRAB_DATA_DIR` | 否 | Cookie/Session 存储目录（默认：`sessions`） |
 | `INBOX_FILE` | 否 | 收件箱 JSON 路径（默认：`./unified_inbox.json`） |
 | `OUTPUT_DIR` | 否 | Markdown 输出目录（默认：`./output`） |
-| `OBSIDIAN_VAULT` | 否 | Obsidian 笔记库路径（写入 `01-收集箱/feedgrab-inbox.md`） |
+| `OBSIDIAN_VAULT` | 否 | Obsidian 笔记库路径（内容写入对应平台子目录） |
 
 ## 架构
 
@@ -226,6 +272,7 @@ cp .env.example .env
 feedgrab/
 ├── feedgrab/                  # Python 包
 │   ├── cli.py                 # CLI 入口
+│   ├── config.py              # 集中配置（路径、开关）
 │   ├── reader.py              # URL 调度器（UniversalReader）
 │   ├── schema.py              # 统一数据模型（UnifiedContent + Inbox）
 │   ├── login.py               # 浏览器登录管理器（保存 session）
@@ -239,12 +286,13 @@ feedgrab/
 │   │   ├── twitter.py         # X/Twitter 四级兜底调度器
 │   │   ├── twitter_cookies.py # Cookie 多源管理（环境变量/文件/Playwright/CDP）
 │   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, 动态 queryId）
-│   │   ├── twitter_thread.py  # 线程重建（分页 + 去重 + 根推文追溯）
+│   │   ├── twitter_thread.py  # 线程重建 + 评论分类（分页 + 去重 + 根推文追溯）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
 │   │   ├── wechat.py          # Jina → Playwright 兜底
 │   │   └── xhs.py             # Jina → Playwright + Session 兜底
 │   └── utils/
-│       └── storage.py         # JSON + Markdown 双重输出
+│       └── storage.py         # 按平台分目录 Markdown + JSON 双重输出
+├── sessions/                  # Cookie/Session 存储（自动创建，git 忽略）
 ├── skills/                    # Claude Code 技能
 │   ├── video/                 # 视频/播客 → 转录 + 摘要
 │   └── analyzer/              # 内容 → 结构化分析
