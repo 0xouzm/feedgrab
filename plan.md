@@ -3,6 +3,40 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 2026-02-27 · v0.2.4 · 修复标题过长 + 图片丢失 + 标签硬编码
+
+### 背景
+实测抓取普通推文发现三个问题：标题使用推文前100字符太长，单条推文正文缺少图片，YAML tags 永远是硬编码的 `clippings` + `twitter` 未提取推文中的 `#hashtag`。
+
+### 方案决策
+- **标题截断**：50字符（中文约25字，足以概括主题）
+- **图片嵌入**：单条推文去掉多余的 `[1/1]` 前缀，保留图片嵌入；Article 长文末尾追加图片
+- **标签提取**：四层穿透 — GraphQL 提取 → twitter.py 透传 → schema.py 设置 tags → storage.py 渲染
+- **额外修复**：`article` 为 `None` 时 `.get()` 崩溃（`root.get("article", {})` 不防 None）
+
+### 改动范围
+
+| 文件 | 改动 |
+|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | `extract_tweet_data()` 新增 hashtags 提取（note_tweet entity_set 优先于 legacy entities） |
+| `feedgrab/fetchers/twitter.py` | 透传 hashtags，标题截断 100→50，`article` None 防护 |
+| `feedgrab/schema.py` | 单条推文去 `[1/1]` 前缀，Article 追加图片，tags 含 hashtags，标题截断 50 |
+| `feedgrab/utils/storage.py` | tags 渲染改用 `item.tags`，文件名 content 截断 150→50 |
+
+### 关键发现
+推文使用 Note（长推文）时，hashtags 在 `note_tweet.note_tweet_results.result.entity_set.hashtags` 而非 `legacy.entities.hashtags`。代码需优先读取 note_tweet 路径。
+
+### 验证结果（2026-02-27 测试 iBigQiang/status/2026279968171606479）
+- 标题 50 字符：`最近看到好多新蓝V都成功✅认证了创作者身份。咱也不能落下了，设个小目标：一个月内拿到老马低保入门券（`
+- 正文含图片：`![image](https://pbs.twimg.com/media/HB7IlUxaEAA74v_.jpg)`
+- Tags 含推文标签：`"互关"`, `"蓝v关注必回"`
+- 线程推文（AI_Jasonyu）仍正常抓取
+
+### 状态：全部完成 ✅
+
+
+---
+
 ## 2026-02-26 · v0.2.3 · Cookie 集中管理 + 评论回复采集开关
 
 ### 背景

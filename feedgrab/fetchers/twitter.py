@@ -22,6 +22,29 @@ from feedgrab.fetchers.jina import fetch_via_jina
 
 OEMBED_URL = "https://publish.twitter.com/oembed"
 
+# Sentence-ending punctuation for smart title truncation
+_SENTENCE_ENDS = set("。！？.!?")
+
+
+def _clean_title(text: str, max_len: int = 50) -> str:
+    """Clean and smart-truncate text for use as a title.
+
+    - Strip newlines, tabs, control chars; collapse whitespace
+    - If within max_len, return as-is
+    - Otherwise prefer cutting at last sentence-ending punctuation
+    """
+    # Remove newlines, tabs, control chars; collapse whitespace
+    text = re.sub(r'[\r\n\t]+', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text) <= max_len:
+        return text
+    # Look for last sentence-ending punctuation within max_len
+    candidate = text[:max_len]
+    for i in range(len(candidate) - 1, max_len // 3 - 1, -1):
+        if candidate[i] in _SENTENCE_ENDS:
+            return candidate[:i + 1]
+    return candidate
+
 
 def _extract_author(url: str) -> str:
     """Extract @username from tweet URL."""
@@ -101,9 +124,9 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
 
         # Build result with thread data + metrics from root tweet
         # For Twitter Articles, prefer article title over tweet text (which is just a t.co link)
-        article = root.get("article", {})
+        article = root.get("article") or {}
         title = article.get("title") or root.get("text", "")
-        title = title[:100]
+        title = _clean_title(title)
 
         return {
             "text": _join_thread_text(tweets),
@@ -114,6 +137,7 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
             "platform": "twitter",
             "thread_tweets": tweets,
             "has_thread": len(tweets) > 1,
+            "article_data": article,
             "likes": root.get("likes", 0),
             "retweets": root.get("retweets", 0),
             "replies": root.get("replies", 0),
@@ -122,6 +146,9 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
             "created_at": root.get("created_at", ""),
             "images": [img for t in tweets for img in t.get("images", [])],
             "videos": [v for t in tweets for v in t.get("videos", [])],
+            "hashtags": list(dict.fromkeys(
+                tag for t in tweets for tag in t.get("hashtags", [])
+            )),
             "author_replies": thread.get("author_replies", []),
             "comments": thread.get("comments", []),
         }
@@ -133,9 +160,9 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
         for entry in entries:
             tweet_data = extract_tweet_data(entry)
             if tweet_data and tweet_data.get("id") == tweet_id:
-                article = tweet_data.get("article", {})
+                article = tweet_data.get("article") or {}
                 title = article.get("title") or tweet_data.get("text", "")
-                title = title[:100]
+                title = _clean_title(title)
 
                 return {
                     "text": tweet_data.get("text", ""),
@@ -146,6 +173,7 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
                     "platform": "twitter",
                     "thread_tweets": [tweet_data],
                     "has_thread": False,
+                    "article_data": article,
                     "likes": tweet_data.get("likes", 0),
                     "retweets": tweet_data.get("retweets", 0),
                     "replies": tweet_data.get("replies", 0),
@@ -154,6 +182,7 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
                     "created_at": tweet_data.get("created_at", ""),
                     "images": tweet_data.get("images", []),
                     "videos": tweet_data.get("videos", []),
+                    "hashtags": tweet_data.get("hashtags", []),
                 }
 
     raise RuntimeError("GraphQL returned no usable data")

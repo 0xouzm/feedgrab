@@ -498,6 +498,12 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
     # Extract article reference if present
     article = _extract_article_ref(result)
 
+    # Extract hashtags from entities (check note_tweet entity_set first, then legacy)
+    note_hashtags = note_tweet.get("entity_set", {}).get("hashtags", [])
+    legacy_hashtags = legacy.get("entities", {}).get("hashtags", [])
+    raw_hashtags = note_hashtags or legacy_hashtags
+    hashtags = [h.get("text", "") for h in raw_hashtags if h.get("text")]
+
     return {
         "id": legacy.get("id_str", result.get("rest_id", "")),
         "rest_id": result.get("rest_id", ""),
@@ -513,6 +519,7 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
         "videos": videos,
         "quoted_tweet": quoted_tweet,
         "article": article,
+        "hashtags": hashtags,
         "likes": legacy.get("favorite_count", 0),
         "retweets": legacy.get("retweet_count", 0),
         "replies": legacy.get("reply_count", 0),
@@ -680,9 +687,18 @@ def _extract_article_ref(result: dict) -> Optional[Dict[str, Any]]:
         try:
             article = path(result)
             if article and article.get("rest_id"):
+                # Extract cover image from cover_media
+                cover_media = article.get("cover_media") or {}
+                media_info = cover_media.get("media_info") or {}
+                cover_image = (
+                    media_info.get("original_img_url")
+                    or (media_info.get("preview_image") or {}).get("original_img_url")
+                    or ""
+                )
                 return {
                     "id": article.get("rest_id", ""),
                     "title": article.get("title", ""),
+                    "cover_image": cover_image,
                     "has_content": bool(
                         article.get("content_state")
                         or article.get("plain_text")

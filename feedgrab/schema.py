@@ -19,6 +19,7 @@ from typing import Optional, List
 from enum import Enum
 import hashlib
 import json
+import re
 
 
 class SourceType(str, Enum):
@@ -161,6 +162,9 @@ def from_bilibili(video: dict) -> UnifiedContent:
 def from_twitter(data: dict) -> UnifiedContent:
     # If thread data is present, assemble rich content from all tweets
     tweets = data.get("thread_tweets", [])
+    article_data = data.get("article_data") or {}
+    is_article = False
+
     if tweets:
         root_text = tweets[0].get("text", "")
         # Detect Article: root tweet text is long (Jina-fetched body), don't wrap in [1/N]
@@ -176,10 +180,23 @@ def from_twitter(data: dict) -> UnifiedContent:
                         replies.append(reply_text)
                 if replies:
                     content += "\n\n---\n\n" + "\n\n".join(replies)
+            # Article: append images at the end
+            for t in tweets:
+                for img_url in t.get("images", []):
+                    content += f"\n\n![image]({img_url})"
+            # Article: prepend cover image at the top
+            article_cover = article_data.get("cover_image", "")
+            if article_cover:
+                content = f"![cover]({article_cover})\n\n{content}"
         else:
             parts = []
             for i, t in enumerate(tweets):
-                part = f"**[{i+1}/{len(tweets)}]** {t.get('text', '')}"
+                text = t.get('text', '')
+                # Single tweet: no numbering prefix
+                if len(tweets) > 1:
+                    part = f"**[{i+1}/{len(tweets)}]** {text}"
+                else:
+                    part = text
                 # Inline images
                 for img_url in t.get("images", []):
                     part += f"\n\n![image]({img_url})"
@@ -192,18 +209,16 @@ def from_twitter(data: dict) -> UnifiedContent:
     else:
         content = data.get("text", "")
 
-    # Collect all images across tweets for cover_image
-    all_images = data.get("images", [])
-    if not all_images and tweets:
-        all_images = [img for t in tweets for img in t.get("images", [])]
-    cover_image = all_images[0] if all_images else ""
+    # cover_image: only for articles (from article cover_media)
+    cover_image = article_data.get("cover_image", "") if is_article else ""
 
     return UnifiedContent(
         source_type=SourceType.TWITTER,
         source_name=data.get("author", ""),
-        title=data.get("title", data.get("text", "")[:100]),
+        title=data.get("title", re.sub(r'[\r\n\t]+', '', data.get("text", ""))[:50]),
         content=content,
         url=data.get("url", ""),
+        tags=data.get("hashtags", []),
         extra={
             "tweet_count": len(tweets) if tweets else 1,
             "has_thread": bool(tweets),
@@ -215,7 +230,7 @@ def from_twitter(data: dict) -> UnifiedContent:
             "replies": data.get("replies", 0),
             "bookmarks": data.get("bookmarks", 0),
             "views": data.get("views", "0"),
-            "images": all_images,
+            "images": data.get("images", []),
             "videos": data.get("videos", []),
             "quoted_tweets": data.get("quoted_tweets", []),
             "author_replies": data.get("author_replies", []),

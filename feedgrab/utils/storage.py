@@ -92,7 +92,7 @@ def _generate_filename(item: UnifiedContent) -> str:
     if item.title and item.title.strip():
         raw_title = item.title.strip()
     elif item.content and item.content.strip():
-        raw_title = item.content.strip()[:150]
+        raw_title = item.content.strip()[:50]
     else:
         raw_title = item.id
 
@@ -192,10 +192,11 @@ def _format_markdown(item: UnifiedContent) -> str:
         if extra.get("duration"):
             fm_lines.append(f"duration: {extra['duration']}")
 
-    # Tags
-    fm_lines.append("tags:")
-    fm_lines.append('  - "clippings"')
-    fm_lines.append(f'  - "{item.source_type.value}"')
+    # Tags (from tweet hashtags or other sources)
+    if item.tags:
+        fm_lines.append("tags:")
+        for tag in item.tags:
+            fm_lines.append(f'  - "{tag}"')
 
     # Internal tracking
     fm_lines.append(f"item_id: {item.id}")
