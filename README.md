@@ -1,80 +1,82 @@
 # feedgrab
 
+**[English](README_en.md)** | **中文**
+
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Universal content grabber — fetch, transcribe, and digest content from any platform.
+万能内容抓取器 — 从任意平台抓取、转录和消化内容。
 
-Give it a URL (article, video, podcast, tweet), get back structured content. Works as CLI, Python library, MCP server, or Claude Code skills.
+给它一个 URL（文章、视频、播客、推文），返回结构化的内容。支持 CLI 命令行、Python 库、MCP 服务器和 Claude Code 技能四种使用方式。
 
-> **Origin**: feedgrab is a fusion upgrade based on [x-reader](https://github.com/runesleo/x-reader) by [@runes_leo](https://x.com/runes_leo) and the [baoyu-danger-x-to-markdown](https://github.com/anthropics/claude-code/tree/main/skills) Claude Code skill by [@dotey](https://x.com/dotey). It inherits x-reader's multi-platform architecture and integrates baoyu's reverse-engineered X/Twitter GraphQL capabilities for deep tweet/thread fetching.
+> **项目来源**：feedgrab 是在 [@runes_leo](https://x.com/runes_leo) 的 [x-reader](https://github.com/runesleo/x-reader) 和 [@dotey](https://x.com/dotey)（宝玉）的 [baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown) Claude Code 技能基础上融合升级而来。继承了 x-reader 的多平台架构，融合了宝玉 skill 逆向工程的 X/Twitter GraphQL 深度抓取能力。
 
-## What It Does
+## 它能做什么
 
 ```
-Any URL → Platform Detection → Fetch Content → Unified Output
-              ↓                      ↓
-         auto-detect           text: Jina Reader
-         7+ platforms          video: yt-dlp subtitles
-                               audio: Whisper transcription
-                               API: Bilibili / RSS / Telegram
-                               X/Twitter: GraphQL → oEmbed → Jina → Playwright
+任意 URL → 平台检测 → 抓取内容 → 统一输出
+              ↓                ↓
+         自动识别          文本：Jina Reader
+         7+ 平台           视频：yt-dlp 字幕
+                           音频：Whisper 转录
+                           API：Bilibili / RSS / Telegram
+                           X/Twitter：GraphQL → oEmbed → Jina → Playwright
 ```
 
-The Python layer handles text fetching and YouTube subtitle extraction. The **Claude Code skills** (optional) add full Whisper transcription for video/podcast and AI-powered content analysis.
+Python 层负责文本抓取和 YouTube 字幕提取。**Claude Code 技能**（可选）提供完整的 Whisper 视频/播客转录和 AI 内容分析功能。
 
-## Three Layers
+## 三个层级
 
-feedgrab is composable. Use the layers you need:
+feedgrab 可自由组合，按需使用：
 
-| Layer | What | Format | Install |
-|-------|------|--------|---------|
-| **Python CLI/Library** | Basic content fetching + unified schema | See [Install](#install) | Required |
-| **Claude Code Skills** | Video transcription + AI analysis | Copy `skills/` to `~/.claude/skills/` | Optional |
-| **MCP Server** | Expose reading as MCP tools | `python mcp_server.py` | Optional |
+| 层级 | 功能 | 格式 | 安装方式 |
+|------|------|------|----------|
+| **Python CLI/库** | 基础内容抓取 + 统一数据结构 | 见 [安装](#安装) | 必需 |
+| **Claude Code 技能** | 视频转录 + AI 分析 | 复制 `skills/` 到 `~/.claude/skills/` | 可选 |
+| **MCP 服务器** | 将阅读能力暴露为 MCP 工具 | `python mcp_server.py` | 可选 |
 
-### Layer 1: Python CLI
+### 第一层：Python CLI
 
 ```bash
-# Fetch any URL
+# 抓取任意 URL
 feedgrab https://mp.weixin.qq.com/s/abc123
 
-# Fetch a tweet (with GraphQL deep fetch if cookies configured)
+# 抓取推文（配置好 Cookie 后自动走 GraphQL 深度抓取）
 feedgrab https://x.com/elonmusk/status/123456
 
-# Fetch multiple URLs
+# 批量抓取多个 URL
 feedgrab https://url1.com https://url2.com
 
-# Login to a platform (one-time, for browser fallback)
+# 登录某个平台（一次性操作，用于浏览器兜底）
 feedgrab login xhs
 
-# View inbox
+# 查看收件箱
 feedgrab list
 ```
 
-### Layer 2: Claude Code Skills
+### 第二层：Claude Code 技能
 
-> Requires cloning the repo (not included in pip install).
+> 需要克隆仓库（pip install 不包含此部分）。
 
-For video/podcast transcription and content analysis:
+用于视频/播客转录和内容分析：
 
 ```
 skills/
-├── video/       # YouTube/Bilibili/podcast → full transcript via Whisper
-└── analyzer/    # Any content → structured analysis report
+├── video/       # YouTube/B站/播客 → 通过 Whisper 生成完整转录
+└── analyzer/    # 任意内容 → 结构化分析报告
 ```
 
-Install:
+安装：
 ```bash
 cp -r skills/video ~/.claude/skills/video
 cp -r skills/analyzer ~/.claude/skills/analyzer
 ```
 
-Then in Claude Code, just send a YouTube/Bilibili/podcast link — the video skill auto-triggers and produces a full transcript + summary.
+安装后，在 Claude Code 中直接发送 YouTube/B站/播客链接，video 技能会自动触发并生成完整的转录 + 摘要。
 
-### Layer 3: MCP Server
+### 第三层：MCP 服务器
 
-> Requires cloning the repo (mcp_server.py is not included in pip install).
+> 需要克隆仓库（mcp_server.py 不包含在 pip install 中）。
 
 ```bash
 git clone https://github.com/iBigQiang/feedgrab.git
@@ -83,80 +85,80 @@ pip install -e ".[mcp]"
 python mcp_server.py
 ```
 
-Tools exposed:
-- `read_url(url)` — fetch any URL
-- `read_batch(urls)` — fetch multiple URLs concurrently
-- `list_inbox()` — view previously fetched content
-- `detect_platform(url)` — identify platform from URL
+暴露的工具：
+- `read_url(url)` — 抓取任意 URL
+- `read_batch(urls)` — 批量并发抓取多个 URL
+- `list_inbox()` — 查看已抓取的内容
+- `detect_platform(url)` — 从 URL 识别平台
 
-Claude Code config (`~/.claude/claude_desktop_config.json`):
+Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 ```json
 {
     "mcpServers": {
         "feedgrab": {
             "command": "python",
-            "args": ["/path/to/feedgrab/mcp_server.py"]
+            "args": ["/你的路径/feedgrab/mcp_server.py"]
         }
     }
 }
 ```
 
-## Supported Platforms
+## 支持的平台
 
-| Platform | Text Fetch | Video/Audio Transcript |
-|----------|-----------|----------------------|
-| YouTube | Jina | yt-dlp subtitles → Groq Whisper fallback |
-| Bilibili (B站) | API | via Claude Code skill |
+| 平台 | 文本抓取 | 视频/音频转录 |
+|------|---------|-------------|
+| YouTube | Jina | yt-dlp 字幕 → Groq Whisper 兜底 |
+| B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → oEmbed → Jina → Playwright | — |
-| WeChat (微信公众号) | Jina → Playwright | — |
-| Xiaohongshu (小红书) | Jina → Playwright* | — |
+| 微信公众号 | Jina → Playwright | — |
+| 小红书 | Jina → Playwright* | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
-| 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
-| Apple Podcasts | — | via Claude Code skill |
-| Any web page | Jina fallback | — |
+| 小宇宙播客 | — | 通过 Claude Code 技能 |
+| Apple Podcasts | — | 通过 Claude Code 技能 |
+| 任意网页 | Jina 兜底 | — |
 
-> \*XHS requires a one-time login: `feedgrab login xhs` (saves session for Playwright fallback)
+> \*小红书需要一次性登录：`feedgrab login xhs`（保存 session 供 Playwright 兜底使用）
 >
-> YouTube Whisper transcription requires `GROQ_API_KEY` — get a free key from [Groq](https://console.groq.com/keys)
+> YouTube Whisper 转录需要 `GROQ_API_KEY` — 从 [Groq](https://console.groq.com/keys) 免费获取
 
-### X/Twitter Four-Tier Fallback
+### X/Twitter 四级兜底策略
 
-feedgrab uses an advanced four-tier strategy for X/Twitter content:
+feedgrab 对 X/Twitter 内容采用先进的四级兜底策略：
 
-| Tier | Method | Auth Required | Capabilities |
-|------|--------|--------------|-------------|
-| 0 | **GraphQL API** | Cookie (`auth_token` + `ct0`) | Complete threads, images, videos, quoted tweets, articles |
-| 1 | oEmbed API | None | Single tweet text (public tweets only) |
-| 2 | Jina Reader | None | Profiles, non-tweet pages |
-| 3 | Playwright | Optional session | Login-required content, last resort |
+| 层级 | 方式 | 是否需要认证 | 能力 |
+|------|------|-------------|------|
+| 0 | **GraphQL API** | 需要 Cookie（`auth_token` + `ct0`） | 完整线程、图片、视频、引用推文、长文章 |
+| 1 | oEmbed API | 不需要 | 单条推文文本（仅公开推文） |
+| 2 | Jina Reader | 不需要 | 个人主页、非推文页面 |
+| 3 | Playwright | 可选 session | 需要登录的内容，最后兜底 |
 
-Tier 0 (GraphQL) is ported from the [baoyu-danger-x-to-markdown](https://github.com/anthropics/claude-code) skill, featuring:
-- Dynamic `queryId` resolution from X's frontend JS bundles
-- Complete thread reconstruction (author self-reply chains)
-- Multi-phase pagination (upward + downward + continuation)
-- Full media extraction (images, videos, quoted tweets)
-- Markdown rendering with YAML front matter
+Tier 0（GraphQL）移植自 [baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown) 技能，特性包括：
+- 动态 `queryId` 解析（从 X 前端 JS bundle 中提取）
+- 完整线程重建（作者自回复链）
+- 多阶段分页（向上 + 向下 + 续页）
+- 完整媒体提取（图片、视频、引用推文）
+- Markdown 渲染（含 YAML front matter）
 
-## Install
+## 安装
 
 ```bash
-# From GitHub (recommended)
+# 从 GitHub 安装（推荐）
 pip install git+https://github.com/iBigQiang/feedgrab.git
 
-# With Telegram support
+# 带 Telegram 支持
 pip install "feedgrab[telegram] @ git+https://github.com/iBigQiang/feedgrab.git"
 
-# With browser fallback (Playwright — for XHS/WeChat anti-scraping)
+# 带浏览器兜底（Playwright — 用于小红书/微信反爬）
 pip install "feedgrab[browser] @ git+https://github.com/iBigQiang/feedgrab.git"
 playwright install chromium
 
-# With all optional dependencies
+# 安装所有可选依赖
 pip install "feedgrab[all] @ git+https://github.com/iBigQiang/feedgrab.git"
 playwright install chromium
 ```
 
-Or clone and install locally:
+或克隆后本地安装：
 ```bash
 git clone https://github.com/iBigQiang/feedgrab.git
 cd feedgrab
@@ -164,7 +166,7 @@ pip install -e ".[all]"
 playwright install chromium
 ```
 
-### Dependencies for video/audio (optional)
+### 视频/音频依赖（可选）
 
 ```bash
 # macOS
@@ -175,12 +177,12 @@ pip install yt-dlp
 apt install ffmpeg
 ```
 
-For Whisper transcription, get a free API key from [Groq](https://console.groq.com/keys) and set:
+Whisper 转录需要从 [Groq](https://console.groq.com/keys) 免费获取 API 密钥并设置：
 ```bash
 export GROQ_API_KEY=your_key_here
 ```
 
-## Use as Library
+## 作为库使用
 
 ```python
 import asyncio
@@ -195,94 +197,94 @@ async def main():
 asyncio.run(main())
 ```
 
-## Configuration
+## 配置
 
-Copy `.env.example` to `.env`:
+复制 `.env.example` 为 `.env`：
 
 ```bash
 cp .env.example .env
 ```
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `X_AUTH_TOKEN` | X GraphQL only | Twitter/X auth cookie |
-| `X_CT0` | X GraphQL only | Twitter/X CSRF token cookie |
-| `X_GRAPHQL_ENABLED` | No | Enable/disable GraphQL tier (default: `true`) |
-| `X_THREAD_MAX_PAGES` | No | Max pagination for threads (default: `20`) |
-| `X_REQUEST_DELAY` | No | Delay between GraphQL requests in seconds (default: `1.5`) |
-| `TG_API_ID` | Telegram only | From https://my.telegram.org |
-| `TG_API_HASH` | Telegram only | From https://my.telegram.org |
-| `GROQ_API_KEY` | Whisper only | From https://console.groq.com/keys (free) |
-| `GEMINI_API_KEY` | AI analysis only | From Google AI Studio |
-| `INBOX_FILE` | No | Path to inbox JSON (default: `./unified_inbox.json`) |
-| `OUTPUT_DIR` | No | Directory for Markdown output (default: `./output`) |
-| `OBSIDIAN_VAULT` | No | Path to Obsidian vault (writes to `01-收集箱/feedgrab-inbox.md`) |
+| 变量 | 必需 | 说明 |
+|------|------|------|
+| `X_AUTH_TOKEN` | 仅 X GraphQL | Twitter/X 认证 Cookie |
+| `X_CT0` | 仅 X GraphQL | Twitter/X CSRF 令牌 Cookie |
+| `X_GRAPHQL_ENABLED` | 否 | 启用/禁用 GraphQL 层（默认：`true`） |
+| `X_THREAD_MAX_PAGES` | 否 | 线程最大分页数（默认：`20`） |
+| `X_REQUEST_DELAY` | 否 | GraphQL 请求间隔秒数（默认：`1.5`） |
+| `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
+| `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |
+| `GROQ_API_KEY` | 仅 Whisper | 从 https://console.groq.com/keys 免费获取 |
+| `GEMINI_API_KEY` | 仅 AI 分析 | 从 Google AI Studio 获取 |
+| `INBOX_FILE` | 否 | 收件箱 JSON 路径（默认：`./unified_inbox.json`） |
+| `OUTPUT_DIR` | 否 | Markdown 输出目录（默认：`./output`） |
+| `OBSIDIAN_VAULT` | 否 | Obsidian 笔记库路径（写入 `01-收集箱/feedgrab-inbox.md`） |
 
-## Architecture
+## 架构
 
 ```
 feedgrab/
-├── feedgrab/                  # Python package
-│   ├── cli.py                 # CLI entry point
-│   ├── reader.py              # URL dispatcher (UniversalReader)
-│   ├── schema.py              # Unified data model (UnifiedContent + Inbox)
-│   ├── login.py               # Browser login manager (saves sessions)
+├── feedgrab/                  # Python 包
+│   ├── cli.py                 # CLI 入口
+│   ├── reader.py              # URL 调度器（UniversalReader）
+│   ├── schema.py              # 统一数据模型（UnifiedContent + Inbox）
+│   ├── login.py               # 浏览器登录管理器（保存 session）
 │   ├── fetchers/
-│   │   ├── jina.py            # Jina Reader (universal fallback)
-│   │   ├── browser.py         # Playwright headless (anti-scraping fallback)
-│   │   ├── bilibili.py        # Bilibili API
-│   │   ├── youtube.py         # yt-dlp subtitle extraction
-│   │   ├── rss.py             # RSS (feedparser)
-│   │   ├── telegram.py        # Telegram (Telethon)
-│   │   ├── twitter.py         # X/Twitter four-tier dispatcher
-│   │   ├── twitter_cookies.py # Cookie multi-source management (env/file/Playwright/CDP)
-│   │   ├── twitter_graphql.py # X GraphQL API client (TweetDetail, dynamic queryId)
-│   │   ├── twitter_thread.py  # Thread reconstruction (pagination + dedup + root-walk)
-│   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)
-│   │   ├── wechat.py          # Jina → Playwright fallback
-│   │   └── xhs.py             # Jina → Playwright + session fallback
+│   │   ├── jina.py            # Jina Reader（万能兜底）
+│   │   ├── browser.py         # Playwright 无头浏览器（反爬兜底）
+│   │   ├── bilibili.py        # B 站 API
+│   │   ├── youtube.py         # yt-dlp 字幕提取
+│   │   ├── rss.py             # RSS 解析（feedparser）
+│   │   ├── telegram.py        # Telegram 频道（Telethon）
+│   │   ├── twitter.py         # X/Twitter 四级兜底调度器
+│   │   ├── twitter_cookies.py # Cookie 多源管理（环境变量/文件/Playwright/CDP）
+│   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, 动态 queryId）
+│   │   ├── twitter_thread.py  # 线程重建（分页 + 去重 + 根推文追溯）
+│   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
+│   │   ├── wechat.py          # Jina → Playwright 兜底
+│   │   └── xhs.py             # Jina → Playwright + Session 兜底
 │   └── utils/
-│       └── storage.py         # JSON + Markdown dual output
-├── skills/                    # Claude Code skills
-│   ├── video/                 # Video/podcast → transcript + summary
-│   └── analyzer/              # Content → structured analysis
-├── mcp_server.py              # MCP server entry point
+│       └── storage.py         # JSON + Markdown 双重输出
+├── skills/                    # Claude Code 技能
+│   ├── video/                 # 视频/播客 → 转录 + 摘要
+│   └── analyzer/              # 内容 → 结构化分析
+├── mcp_server.py              # MCP 服务器入口
 └── pyproject.toml
 ```
 
-## How the Layers Work Together
+## 各层级协作方式
 
 ```
-User sends URL
+用户发送 URL
     │
-    ├─ Text content (article, tweet, WeChat)
-    │   └─ Python fetcher → UnifiedContent → inbox
+    ├─ 文本内容（文章、推文、微信）
+    │   └─ Python 抓取器 → UnifiedContent → 收件箱
     │
-    ├─ X/Twitter tweet or thread
-    │   └─ GraphQL (full thread + media) → oEmbed → Jina → Playwright
+    ├─ X/Twitter 推文或线程
+    │   └─ GraphQL（完整线程 + 媒体）→ oEmbed → Jina → Playwright
     │
-    ├─ Video (YouTube, Bilibili, X video)
-    │   ├─ Python fetcher → metadata (title, description)
-    │   └─ Video skill → full transcript via subtitles/Whisper
+    ├─ 视频（YouTube、B站、X 视频）
+    │   ├─ Python 抓取器 → 元数据（标题、描述）
+    │   └─ Video 技能 → 通过字幕/Whisper 生成完整转录
     │
-    ├─ Podcast (小宇宙, Apple Podcasts)
-    │   └─ Video skill → full transcript via Whisper
+    ├─ 播客（小宇宙、Apple Podcasts）
+    │   └─ Video 技能 → 通过 Whisper 生成完整转录
     │
-    └─ Analysis requested
-        └─ Analyzer skill → structured report + action items
+    └─ 需要分析
+        └─ Analyzer 技能 → 结构化报告 + 行动建议
 ```
 
-## Credits
+## 致谢
 
-feedgrab is built upon:
+feedgrab 基于以下项目融合升级而来：
 
-- **[x-reader](https://github.com/runesleo/x-reader)** by [@runes_leo](https://x.com/runes_leo) — the original multi-platform content reader providing the core architecture, CLI, MCP server, and fetchers for 7+ platforms.
-- **[baoyu-danger-x-to-markdown](https://github.com/anthropics/claude-code)** by [@dotey](https://x.com/dotey) (宝玉) — the X/Twitter deep fetching skill providing reverse-engineered GraphQL API access, thread reconstruction, and Markdown rendering.
+- **[x-reader](https://github.com/runesleo/x-reader)** — 由 [@runes_leo](https://x.com/runes_leo) 开发的多平台万能内容阅读器，提供了核心架构、CLI、MCP 服务器和 7+ 平台的抓取器。
+- **[baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown)** — 由 [@dotey](https://x.com/dotey)（宝玉）开发的 X/Twitter 深度抓取技能，提供了逆向工程的 GraphQL API 访问、线程重建和 Markdown 渲染能力。
 
-## Author
+## 作者
 
-Maintained by [@iBigQiang](https://github.com/iBigQiang)
+由 [@iBigQiang](https://github.com/iBigQiang) 维护
 
-## License
+## 许可证
 
 MIT
