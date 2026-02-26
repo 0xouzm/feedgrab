@@ -159,15 +159,38 @@ def from_bilibili(video: dict) -> UnifiedContent:
 
 
 def from_twitter(data: dict) -> UnifiedContent:
+    # If thread data is present, assemble rich content from all tweets
+    tweets = data.get("thread_tweets", [])
+    if tweets:
+        parts = []
+        for i, t in enumerate(tweets):
+            part = f"**[{i+1}/{len(tweets)}]** {t.get('text', '')}"
+            # Inline images
+            for img_url in t.get("images", []):
+                part += f"\n\n![image]({img_url})"
+            # Quoted tweet as blockquote
+            qt = t.get("quoted_tweet")
+            if qt and qt.get("text"):
+                part += f"\n\n> **@{qt.get('author', '')}**: {qt['text']}"
+            parts.append(part)
+        content = "\n\n---\n\n".join(parts)
+    else:
+        content = data.get("text", "")
+
     return UnifiedContent(
         source_type=SourceType.TWITTER,
-        source_name=data.get('author', ''),
-        title=data.get('text', '')[:100],
-        content=data.get('text', ''),
-        url=data.get('url', ''),
+        source_name=data.get("author", ""),
+        title=data.get("title", data.get("text", "")[:100]),
+        content=content,
+        url=data.get("url", ""),
         extra={
-            "likes": data.get('likes', 0),
-            "retweets": data.get('retweets', 0),
+            "tweet_count": len(tweets) if tweets else 1,
+            "has_thread": bool(tweets),
+            "likes": data.get("likes", 0),
+            "retweets": data.get("retweets", 0),
+            "images": data.get("images", []),
+            "videos": data.get("videos", []),
+            "quoted_tweets": data.get("quoted_tweets", []),
         },
     )
 
