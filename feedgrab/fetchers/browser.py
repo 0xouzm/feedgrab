@@ -109,7 +109,12 @@ async def evaluate_xhs_note(page) -> dict:
         await page.wait_for_selector("#noteContainer", timeout=8000)
     except Exception:
         pass
-    await page.wait_for_timeout(1000)
+    # Wait for date element (lazy-loaded) — gives more time for full render
+    try:
+        await page.wait_for_selector(".bottom-container .date", timeout=3000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(500)
 
     data = await page.evaluate(XHS_NOTE_JS_EVALUATE)
     return _build_xhs_result(data, page.url)

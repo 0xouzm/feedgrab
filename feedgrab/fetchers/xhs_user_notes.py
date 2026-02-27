@@ -437,13 +437,17 @@ async def fetch_user_notes(profile_url: str) -> dict:
                     # Extract full note data using shared Playwright helper
                     data = await evaluate_xhs_note(page)
                     data["platform"] = "xhs"
-                    data["url"] = note_url.split("?")[0]  # clean URL for storage
+                    data["url"] = note_url  # keep xsec_token so URL is accessible
 
                     # Use displayTitle from Tier 0 as fallback if DOM extraction empty
                     if not data.get("title") and note_item.get("displayTitle"):
                         data["title"] = note_item["displayTitle"]
                     if not data.get("author") and note_item.get("nickname"):
                         data["author"] = note_item["nickname"]
+
+                    # Date: try DOM first, fall back to today
+                    if not data.get("date"):
+                        data["date"] = datetime.now().strftime("%Y-%m-%d")
 
                     # Date filtering
                     note_date = _parse_xhs_date(data.get("date", ""))
