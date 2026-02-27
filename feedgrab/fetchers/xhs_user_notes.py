@@ -280,6 +280,65 @@ def _save_batch_record(
 
 
 # ---------------------------------------------------------------------------
+# Captcha / login redirect handling
+# ---------------------------------------------------------------------------
+
+CAPTCHA_WAIT_TIMEOUT = 120  # seconds
+
+async def _handle_captcha_or_login(page, profile_url: str, session_path: str, context):
+    """Handle captcha or login redirect by waiting for user to solve it.
+
+    If captcha is detected, waits up to CAPTCHA_WAIT_TIMEOUT seconds for user
+    to solve it manually in the visible browser window. After solving, saves
+    the updated session and navigates back to the profile page.
+    """
+    current_url = page.url
+    if "captcha" in current_url:
+        logger.info(
+            "[XHS-User] *** 检测到验证码，请在浏览器窗口中手动完成验证 ***"
+        )
+        for _ in range(CAPTCHA_WAIT_TIMEOUT // 2):
+            await page.wait_for_timeout(2000)
+            current_url = page.url
+            if "captcha" not in current_url and "login" not in current_url:
+                logger.info("[XHS-User] 验证码已通过!")
+                # Save updated session with captcha-verified state
+                await context.storage_state(path=session_path)
+                logger.info(f"[XHS-User] Session 已更新: {session_path}")
+                break
+        else:
+            raise RuntimeError(
+                f"验证码等待超时 ({CAPTCHA_WAIT_TIMEOUT}s)。请重试。"
+            )
+    elif "login" in current_url:
+        logger.info(
+            "[XHS-User] *** Session 已过期，请在浏览器窗口中重新登录 ***"
+        )
+        for _ in range(150):  # 5 min for login
+            await page.wait_for_timeout(2000)
+            current_url = page.url
+            if "login" not in current_url and "captcha" not in current_url:
+                logger.info("[XHS-User] 登录成功!")
+                await context.storage_state(path=session_path)
+                logger.info(f"[XHS-User] Session 已更新: {session_path}")
+                break
+        else:
+            raise RuntimeError("登录等待超时 (5min)。请重试。")
+
+    # Navigate to profile page if redirected away
+    if "/user/profile/" not in page.url:
+        await page.goto(
+            profile_url, wait_until="domcontentloaded", timeout=30_000
+        )
+        await page.wait_for_timeout(3000)
+        # Check again after re-navigation
+        if "captcha" in page.url or "login" in page.url:
+            raise RuntimeError(
+                "验证后仍无法访问主页。请检查账号状态或稍后重试。"
+            )
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -329,15 +388,22 @@ async def fetch_user_notes(profile_url: str) -> dict:
     logger.info(f"[XHS-User] 已有 {initial_count} 条笔记索引")
 
     # 5. Launch browser (ONE context for entire batch)
+    # Use headed mode so user can solve captcha if needed
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         context = await browser.new_context(
             storage_state=session_path,
             user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+                "Chrome/132.0.0.0 Safari/537.36"
             ),
+            viewport={"width": 1920, "height": 1080},
+            locale="zh-CN",
         )
         page = await context.new_page()
 
@@ -348,11 +414,11 @@ async def fetch_user_notes(profile_url: str) -> dict:
             )
             await page.wait_for_timeout(3000)
 
-            # Session expiry check
+            # Session / captcha check
             current_url = page.url
-            if "login" in current_url:
-                raise RuntimeError(
-                    "XHS session 已过期。请重新运行: feedgrab login xhs"
+            if "captcha" in current_url or "login" in current_url:
+                await _handle_captcha_or_login(
+                    page, profile_url, session_path, context
                 )
 
             # 5b. Tier 0: Extract from __INITIAL_STATE__

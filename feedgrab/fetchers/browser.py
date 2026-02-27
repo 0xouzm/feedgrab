@@ -144,7 +144,13 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
     logger.info(f"Browser fetch: {url}")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        # Use headed mode for XHS (anti-bot detection), headless for others
+        is_xhs = "xiaohongshu.com" in url or "xhslink.com" in url
+        browser = await p.chromium.launch(
+            headless=not is_xhs,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
 
         context_kwargs = {}
         if storage_state and Path(storage_state).exists():
@@ -152,9 +158,9 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
             logger.info(f"Using session: {storage_state}")
 
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/120.0.0.0 Safari/537.36",
+                       "Chrome/132.0.0.0 Safari/537.36",
             **context_kwargs,
         )
         page = await context.new_page()

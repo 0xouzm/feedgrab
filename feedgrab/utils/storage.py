@@ -31,21 +31,26 @@ def _format_twitter_datetime(created_at: str) -> str:
 def _parse_xhs_date(raw: str) -> str:
     """Parse XHS date string into 'YYYY-MM-DD'.
 
-    Three formats:
-      - "02-18 福建"        → MM-DD + location (assume current year)
-      - "编辑于 2025-08-16"  → full date with year
-      - "3天前 江苏"         → relative time (N天前/昨天/前天/N小时前/N分钟前)
+    Formats:
+      - "02-18 福建"             → MM-DD + location (assume current year)
+      - "编辑于 2025-08-16"      → full date with year
+      - "3天前 江苏"              → relative time (N天前/昨天/前天/N小时前/N分钟前)
+      - "编辑于 昨天 10:17 福建"  → "编辑于" + relative time + HH:MM + location
+      - "编辑于 3天前 福建"       → "编辑于" + relative time + location
     """
     if not raw:
         return ""
     text = raw.strip()
 
-    # Format 2: "编辑于 YYYY-MM-DD"
+    # Strip "编辑于" prefix for uniform parsing
+    text = re.sub(r"^编辑于\s*", "", text)
+
+    # Format: full date "YYYY-MM-DD"
     full_match = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
     if full_match:
         return f"{full_match.group(1)}-{full_match.group(2)}-{full_match.group(3)}"
 
-    # Format 3: relative time → convert to absolute date
+    # Format: relative time → convert to absolute date
     now = datetime.now()
     days_match = re.match(r"(\d+)\s*天前", text)
     if days_match:
@@ -57,7 +62,7 @@ def _parse_xhs_date(raw: str) -> str:
     if re.match(r"\d+\s*小时前", text) or re.match(r"\d+\s*分钟前", text) or text.startswith("刚刚"):
         return now.strftime("%Y-%m-%d")
 
-    # Format 1: "MM-DD ..." (no year)
+    # Format: "MM-DD ..." (no year)
     match = re.match(r"(\d{2})-(\d{2})", text)
     if not match:
         return ""
