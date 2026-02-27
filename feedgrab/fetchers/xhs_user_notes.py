@@ -6,12 +6,11 @@ Supports:
     feedgrab https://www.xiaohongshu.com/user/profile/5eb416f000000000010010c2
     feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...?xsec_token=...
 
-Design:
-    - Playwright browser with saved session (reuse xhs.json)
-    - Scroll profile page to collect note card URLs
-    - Visit each note URL in same browser context, extract via JS evaluate
-    - Stream-save each note immediately as Markdown
-    - Date filtering: stop after 3 consecutive old notes
+Strategy (tiered, with fallback):
+    Tier 0 — Extract notes from __INITIAL_STATE__ (Vue SSR data, ~30 notes, zero API calls)
+    Tier 1 — Inject XHR interceptor + auto-scroll to capture user_posted API responses
+             (falls back to Tier 0 only if API returns 461 / blocked)
+    Tier 2 — Navigate to each note detail page (with xsec_token) for full content extraction
 """
 
 import json
@@ -19,7 +18,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Dict, Tuple
 
 from loguru import logger
 
@@ -55,89 +54,188 @@ def _parse_profile_url(url: str) -> str:
     raise ValueError(f"无法从 URL 提取小红书用户 ID: {url}")
 
 
+def _build_note_url(note_id: str, xsec_token: str) -> str:
+    """Construct a full XHS note URL with xsec_token for access."""
+    base = f"https://www.xiaohongshu.com/explore/{note_id}"
+    if xsec_token:
+        return f"{base}?xsec_token={xsec_token}&xsec_source=pc_user"
+    return base
+
+
 # ---------------------------------------------------------------------------
-# Profile page scrolling — collect note URLs
+# Tier 0 — Extract from __INITIAL_STATE__ (Vue SSR data)
 # ---------------------------------------------------------------------------
 
-XHS_PROFILE_JS = """() => {
-    // Author name from profile header
-    const nameEl = document.querySelector('.user-name')
-        || document.querySelector('.nickname')
-        || document.querySelector('.user-nickname');
-    const authorName = nameEl ? nameEl.innerText.trim().split('\\n')[0] : '';
+XHS_INITIAL_STATE_JS = """() => {
+    const state = window.__INITIAL_STATE__;
+    if (!state || !state.user) return { found: false };
 
-    // Note cards in the waterfall grid — cover multiple selectors
-    const links = Array.from(
-        document.querySelectorAll(
-            'section.note-item a[href*="/explore/"], '
-            + 'section.note-item a[href*="/discovery/item/"], '
-            + 'div.note-item a[href*="/explore/"], '
-            + 'a.cover[href*="/explore/"], '
-            + 'a.cover[href*="/discovery/item/"], '
-            + 'a[href*="/explore/"][class*="cover"], '
-            + '.feeds-container a[href*="/explore/"]'
-        )
-    );
+    // Author name from userPageData
+    let authorName = '';
+    try {
+        const upd = state.user.userPageData;
+        const raw = upd._rawValue || upd._value || upd;
+        if (raw && raw.basicInfo) authorName = raw.basicInfo.nickname || '';
+    } catch(e) {}
 
-    const urls = links.map(a => {
-        try {
-            const u = new URL(a.href, window.location.origin);
-            return u.origin + u.pathname;
-        } catch(e) { return ''; }
-    }).filter(Boolean);
+    // Notes from Vue 3 ref
+    const notesRef = state.user.notes;
+    if (!notesRef) return { found: true, authorName, notes: [] };
 
-    // Deduplicate while preserving order
-    const seen = new Set();
-    const unique = [];
-    for (const url of urls) {
-        if (!seen.has(url)) {
-            seen.add(url);
-            unique.push(url);
-        }
+    const rawNotes = notesRef._rawValue || notesRef._value || notesRef;
+    if (!rawNotes) return { found: true, authorName, notes: [] };
+
+    // rawNotes is [[...notes...], ...] (array of arrays)
+    const innerArr = Array.isArray(rawNotes[0]) ? rawNotes[0] : rawNotes;
+    if (!Array.isArray(innerArr)) return { found: true, authorName, notes: [] };
+
+    const notes = [];
+    for (const item of innerArr) {
+        const nc = item.noteCard || {};
+        const user = nc.user || {};
+        const interact = nc.interactInfo || {};
+
+        notes.push({
+            noteId: item.id || nc.noteId || '',
+            xsecToken: item.xsecToken || nc.xsecToken || '',
+            displayTitle: nc.displayTitle || '',
+            type: nc.type || '',
+            nickname: user.nickname || '',
+            userId: user.userId || user.user_id || '',
+            likedCount: interact.likedCount || 0,
+        });
     }
 
-    return { authorName, noteUrls: unique };
+    return { found: true, authorName, notes };
 }"""
 
 
-async def _scroll_and_collect(page, max_scrolls: int) -> Tuple[str, List[str]]:
-    """Scroll the profile page to load all note cards.
+async def _extract_initial_state(page) -> Tuple[str, List[Dict]]:
+    """Tier 0: Extract notes from Vue SSR __INITIAL_STATE__.
 
     Returns:
-        (author_name, note_urls) — author display name and ordered list of note URLs.
+        (author_name, note_items) where each note_item is a dict with
+        noteId, xsecToken, displayTitle, type, nickname, userId, likedCount.
     """
-    all_urls: List[str] = []
-    seen = set()
-    author_name = ""
+    data = await page.evaluate(XHS_INITIAL_STATE_JS)
+    if not data.get("found"):
+        return "", []
+
+    author_name = data.get("authorName", "")
+    notes = data.get("notes", [])
+    # Filter out items without noteId
+    notes = [n for n in notes if n.get("noteId")]
+    return author_name, notes
+
+
+# ---------------------------------------------------------------------------
+# Tier 1 — XHR interceptor + auto-scroll for paginated data
+# ---------------------------------------------------------------------------
+
+XHS_XHR_INTERCEPTOR_JS = """() => {
+    // Only inject once
+    if (window.__xhs_xhr_intercepted) return;
+    window.__xhs_xhr_intercepted = true;
+    window.__xhs_intercepted_notes = [];
+
+    const origOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function() {
+        const url = arguments[1] || '';
+        this.addEventListener('readystatechange', function() {
+            if (this.readyState === 4 && url.includes('/api/sns/web/v1/user_posted')) {
+                try {
+                    const resp = JSON.parse(this.responseText);
+                    if (resp.code === 0 && resp.data && resp.data.notes) {
+                        for (const note of resp.data.notes) {
+                            window.__xhs_intercepted_notes.push({
+                                noteId: note.note_id || '',
+                                xsecToken: note.xsec_token || '',
+                                displayTitle: note.display_title || '',
+                                type: note.type || '',
+                                nickname: (note.user || {}).nickname || '',
+                                userId: (note.user || {}).user_id || '',
+                                likedCount: ((note.interact_info || {}).liked_count) || 0,
+                            });
+                        }
+                    }
+                } catch(e) {}
+            }
+        });
+        return origOpen.apply(this, arguments);
+    };
+}"""
+
+XHS_COLLECT_INTERCEPTED_JS = """() => {
+    const notes = window.__xhs_intercepted_notes || [];
+    // Clear after reading
+    window.__xhs_intercepted_notes = [];
+    return notes;
+}"""
+
+
+async def _scroll_and_collect(
+    page, initial_notes: List[Dict], max_scrolls: int
+) -> List[Dict]:
+    """Tier 1: Auto-scroll with XHR interception to collect more notes.
+
+    Starts with Tier 0 initial notes, then scrolls to trigger user_posted API.
+    Falls back gracefully if API is blocked (461).
+
+    Returns:
+        Combined list of note items (deduped by noteId).
+    """
+    # Inject XHR interceptor
+    await page.evaluate(XHS_XHR_INTERCEPTOR_JS)
+
+    all_notes: Dict[str, Dict] = {}
+    for n in initial_notes:
+        all_notes[n["noteId"]] = n
+
     no_new_count = 0
 
     for scroll_idx in range(max_scrolls):
-        data = await page.evaluate(XHS_PROFILE_JS)
-        if not author_name:
-            author_name = data.get("authorName", "")
+        # Scroll down
+        await page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
+        await page.wait_for_timeout(2000)
 
-        new_urls = [u for u in data["noteUrls"] if u not in seen]
-        for u in new_urls:
-            seen.add(u)
-            all_urls.append(u)
+        # Collect intercepted API responses
+        new_notes = await page.evaluate(XHS_COLLECT_INTERCEPTED_JS)
+        added = 0
+        for n in new_notes:
+            nid = n.get("noteId", "")
+            if nid and nid not in all_notes:
+                all_notes[nid] = n
+                added += 1
 
-        if not new_urls:
+        if added == 0:
             no_new_count += 1
             if no_new_count >= 3:
-                logger.info(f"[XHS-User] 连续 {no_new_count} 次无新笔记，停止滚动")
+                logger.info(
+                    f"[XHS-User] 连续 {no_new_count} 次滚动无新笔记，停止"
+                )
                 break
         else:
             no_new_count = 0
             logger.info(
                 f"[XHS-User] 滚动 {scroll_idx + 1}: "
-                f"新增 {len(new_urls)} 篇，累计 {len(all_urls)} 篇"
+                f"新增 {added} 篇，累计 {len(all_notes)} 篇"
             )
 
-        # Scroll down
-        await page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
-        await page.wait_for_timeout(1500)
+    # Return in order: initial notes first, then scrolled notes
+    ordered = []
+    seen = set()
+    for n in initial_notes:
+        nid = n["noteId"]
+        if nid not in seen:
+            seen.add(nid)
+            ordered.append(all_notes.get(nid, n))
+    # Append any additional notes from scrolling
+    for nid, n in all_notes.items():
+        if nid not in seen:
+            seen.add(nid)
+            ordered.append(n)
 
-    return author_name, all_urls
+    return ordered
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +346,7 @@ async def fetch_user_notes(profile_url: str) -> dict:
             await page.goto(
                 profile_url, wait_until="domcontentloaded", timeout=30_000
             )
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(3000)
 
             # Session expiry check
             current_url = page.url
@@ -257,16 +355,32 @@ async def fetch_user_notes(profile_url: str) -> dict:
                     "XHS session 已过期。请重新运行: feedgrab login xhs"
                 )
 
-            # 5b. Scroll and collect note URLs
-            logger.info("[XHS-User] 开始滚动收集笔记链接...")
-            author_name, note_urls = await _scroll_and_collect(page, max_scrolls)
+            # 5b. Tier 0: Extract from __INITIAL_STATE__
+            logger.info("[XHS-User] Tier 0: 从 __INITIAL_STATE__ 提取笔记列表...")
+            author_name, initial_notes = await _extract_initial_state(page)
 
             if not author_name:
                 author_name = f"user_{xhs_user_id[:8]}"
 
-            total = len(note_urls)
             logger.info(
-                f"[XHS-User] 作者: {author_name}, 共发现 {total} 篇笔记"
+                f"[XHS-User] Tier 0: 作者 {author_name}, "
+                f"首页 {len(initial_notes)} 篇笔记"
+            )
+
+            # 5c. Tier 1: Scroll for more (if max_scrolls > 0)
+            if max_scrolls > 0 and initial_notes:
+                logger.info("[XHS-User] Tier 1: 滚动加载更多笔记...")
+                all_note_items = await _scroll_and_collect(
+                    page, initial_notes, max_scrolls
+                )
+            else:
+                all_note_items = initial_notes
+
+            total = len(all_note_items)
+            logger.info(
+                f"[XHS-User] 共收集 {total} 篇笔记 "
+                f"(Tier 0: {len(initial_notes)}, "
+                f"Tier 1 追加: {total - len(initial_notes)})"
             )
 
             if total == 0:
@@ -278,11 +392,11 @@ async def fetch_user_notes(profile_url: str) -> dict:
                     "list_path": "",
                 }
 
-            # 5c. Determine subfolder
+            # 5d. Determine subfolder
             safe_author = re.sub(r'[\\/:*?"<>|]', '_', author_name)
             subfolder = f"notes_{safe_author}"
 
-            # 5d. Process each note URL
+            # 5e. Tier 2: Process each note — navigate to detail page for full content
             fetched = 0
             skipped = 0
             failed = 0
@@ -290,36 +404,46 @@ async def fetch_user_notes(profile_url: str) -> dict:
             consecutive_old = 0
             OLD_THRESHOLD = 3
 
-            for idx, note_url in enumerate(note_urls):
-                item_id = item_id_from_url(note_url)
+            for idx, note_item in enumerate(all_note_items):
+                note_id = note_item["noteId"]
+                xsec_token = note_item.get("xsecToken", "")
+                note_url = _build_note_url(note_id, xsec_token)
+                item_id = item_id_from_url(note_url.split("?")[0])
 
                 # Dedup check
                 if has_item(item_id, saved_ids):
                     logger.debug(
                         f"[XHS-User] [{idx+1}/{total}] 已存在，跳过: "
-                        f"{note_url[-30:]}"
+                        f"{note_item.get('displayTitle', '')[:30]}"
                     )
                     skipped += 1
                     note_list.append({
                         "url": note_url,
                         "item_id": item_id,
+                        "title": note_item.get("displayTitle", ""),
                         "status": "skipped",
                         "error": "已存在",
                     })
                     continue
 
                 try:
-                    # Navigate to note page (reuse same page/tab)
+                    # Navigate to note detail page (with xsec_token)
                     await page.goto(
                         note_url,
                         wait_until="domcontentloaded",
                         timeout=30_000,
                     )
 
-                    # Extract note data using shared helper
+                    # Extract full note data using shared Playwright helper
                     data = await evaluate_xhs_note(page)
                     data["platform"] = "xhs"
-                    data["url"] = note_url
+                    data["url"] = note_url.split("?")[0]  # clean URL for storage
+
+                    # Use displayTitle from Tier 0 as fallback if DOM extraction empty
+                    if not data.get("title") and note_item.get("displayTitle"):
+                        data["title"] = note_item["displayTitle"]
+                    if not data.get("author") and note_item.get("nickname"):
+                        data["author"] = note_item["nickname"]
 
                     # Date filtering
                     note_date = _parse_xhs_date(data.get("date", ""))
@@ -336,6 +460,7 @@ async def fetch_user_notes(profile_url: str) -> dict:
                                 "url": note_url,
                                 "item_id": item_id,
                                 "date": note_date,
+                                "title": data.get("title", ""),
                                 "status": "skipped",
                                 "error": f"日期过滤 ({note_date})",
                             })
@@ -355,14 +480,14 @@ async def fetch_user_notes(profile_url: str) -> dict:
                     save_to_markdown(content)
 
                     # Update dedup index
-                    add_item(item_id, note_url, saved_ids)
+                    add_item(item_id, note_url.split("?")[0], saved_ids)
                     fetched += 1
 
                     note_title = (
                         data.get("title") or data.get("content", "")[:30]
                     )
                     note_list.append({
-                        "url": note_url,
+                        "url": note_url.split("?")[0],
                         "item_id": item_id,
                         "author": data.get("author", ""),
                         "date": note_date,
@@ -385,12 +510,14 @@ async def fetch_user_notes(profile_url: str) -> dict:
                     error_msg = str(e)
                     logger.warning(
                         f"[XHS-User] [{idx+1}/{total}] "
-                        f"失败: {note_url[-30:]} - {error_msg[:80]}"
+                        f"失败: {note_item.get('displayTitle', '')[:30]} "
+                        f"- {error_msg[:80]}"
                     )
                     failed += 1
                     note_list.append({
                         "url": note_url,
                         "item_id": item_id,
+                        "title": note_item.get("displayTitle", ""),
                         "status": "failed",
                         "error": error_msg[:200],
                     })
