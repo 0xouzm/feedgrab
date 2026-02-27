@@ -111,14 +111,14 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright | — |
-| Xiaohongshu (小红书) | Jina → Playwright* | — |
+| Xiaohongshu (小红书) | Jina → **Playwright deep fetch*** | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
 | Apple Podcasts | — | via Claude Code skill |
 | Any web page | Jina fallback | — |
 
-> \*XHS requires a one-time login: `feedgrab login xhs` (saves session for Playwright fallback)
+> \*XHS requires a one-time login: `feedgrab login xhs` (saves session for Playwright deep fetch — extracts images, engagement metrics, tags, publish dates, and full metadata)
 >
 > YouTube Whisper transcription requires `GROQ_API_KEY` — get a free key from [Groq](https://console.groq.com/keys)
 
@@ -148,8 +148,9 @@ Each fetched item is saved as an individual Markdown file, organized by platform
 ```
 output/
 ├── X/                    # Twitter/X
-│   └── AuthorName：Tweet Title.md
+│   └── AuthorName_YYYY-MM-DD：Tweet Title.md
 ├── XHS/                  # Xiaohongshu
+│   └── AuthorName_YYYY-MM-DD：Note Title.md
 ├── WeChat/               # WeChat articles
 ├── YouTube/
 ├── Bilibili/
@@ -158,6 +159,8 @@ output/
 ```
 
 Files use Obsidian-compatible YAML front matter:
+
+**Twitter example:**
 
 ```yaml
 ---
@@ -177,6 +180,30 @@ views: 426321
 tags:
   - "clippings"
   - "twitter"
+---
+```
+
+**Xiaohongshu example:**
+
+```yaml
+---
+title: "开学第一课还没思路的班主任看过来👀"
+source: "https://www.xiaohongshu.com/explore/69948f62..."
+author:
+  - "墨客老师资料库"
+author_url: "https://www.xiaohongshu.com/user/profile/5eb416f..."
+published: 2026-02-18
+created: 2026-02-27
+cover_image: "https://sns-webpic-qc.xhscdn.com/..."
+likes: 179
+collects: 242
+comments: 28
+location: "福建"
+tags:
+  - "开学第一课ppt"
+  - "开学第一课"
+  - "教师开学第一课"
+item_id: db22cbe3d9c0
 ---
 ```
 
