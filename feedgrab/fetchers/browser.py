@@ -90,13 +90,16 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
                             .filter(Boolean)
                         : [];
 
-                    // 笔记图片（排除头像等，去重 swiper 循环副本）
-                    const images = [...new Set(
-                        Array.from(
-                            document.querySelectorAll('.swiper-wrapper .note-slider-img img')
-                        ).map(img => img.src || '')
-                         .filter(src => src.startsWith('http'))
-                    )];
+                    // 笔记图片：只取非 duplicate 的 slide，按 data-index 排序
+                    const images = Array.from(
+                        document.querySelectorAll('.swiper-wrapper .swiper-slide:not(.swiper-slide-duplicate)')
+                    ).sort((a, b) =>
+                        (parseInt(a.dataset.swiperSlideIndex) || 0) -
+                        (parseInt(b.dataset.swiperSlideIndex) || 0)
+                    ).map(slide => {
+                        const img = slide.querySelector('img');
+                        return img ? (img.src || '') : '';
+                    }).filter(src => src.startsWith('http'));
 
                     // 互动数据：点赞、收藏、评论
                     const counts = Array.from(
