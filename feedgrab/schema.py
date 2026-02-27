@@ -298,7 +298,10 @@ def from_manual(title: str, content: str, url: str = "") -> UnifiedContent:
 class UnifiedInbox:
     """JSON-based content inbox with dedup."""
 
-    def __init__(self, filepath: str = "unified_inbox.json"):
+    def __init__(self, filepath: str = None):
+        if filepath is None:
+            from feedgrab.config import get_inbox_path
+            filepath = get_inbox_path()
         self.filepath = filepath
         self.items: List[UnifiedContent] = []
         self.load()

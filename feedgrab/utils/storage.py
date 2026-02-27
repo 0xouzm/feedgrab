@@ -275,8 +275,11 @@ def _format_markdown(item: UnifiedContent) -> str:
 # Public API
 # =========================================================================
 
-def save_to_json(item: UnifiedContent, filepath: str = "unified_inbox.json"):
+def save_to_json(item: UnifiedContent, filepath: str = None):
     """Append content to JSON inbox file."""
+    if filepath is None:
+        from feedgrab.config import get_inbox_path
+        filepath = get_inbox_path()
     path = Path(filepath)
     data = []
 

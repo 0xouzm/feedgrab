@@ -109,3 +109,31 @@ def x_user_tweet_delay() -> float:
 def x_user_tweets_since() -> str:
     """Date filter for user tweets (e.g. '2025-10-01'). Empty = fetch all."""
     return os.getenv("X_USER_TWEETS_SINCE", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Inbox JSON path
+# ---------------------------------------------------------------------------
+
+def get_inbox_path() -> str:
+    """Return the path for unified_inbox.json.
+
+    Priority:
+      1. INBOX_FILE env var (explicit override)
+      2. {OBSIDIAN_VAULT}/unified_inbox.json
+      3. {OUTPUT_DIR}/unified_inbox.json
+      4. ./unified_inbox.json (legacy fallback)
+    """
+    explicit = os.getenv("INBOX_FILE", "").strip()
+    if explicit:
+        return explicit
+
+    vault = os.getenv("OBSIDIAN_VAULT", "").strip()
+    if vault:
+        return str(Path(vault) / "unified_inbox.json")
+
+    output_dir = os.getenv("OUTPUT_DIR", "").strip()
+    if output_dir:
+        return str(Path(output_dir) / "unified_inbox.json")
+
+    return "unified_inbox.json"

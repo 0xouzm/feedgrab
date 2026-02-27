@@ -25,10 +25,7 @@ load_dotenv()
 
 from feedgrab.reader import UniversalReader
 from feedgrab.schema import UnifiedInbox, SourceType
-
-
-def get_inbox_path() -> str:
-    return os.getenv("INBOX_FILE", "unified_inbox.json")
+from feedgrab.config import get_inbox_path
 
 
 def cmd_fetch(urls: list):
