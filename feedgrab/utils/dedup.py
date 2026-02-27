@@ -23,21 +23,21 @@ from pathlib import Path
 from loguru import logger
 
 
-def _get_base_dir() -> Path:
-    """Return the X platform base directory."""
+def _get_base_dir(platform: str = "X") -> Path:
+    """Return the platform base directory."""
     vault_path = os.getenv("OBSIDIAN_VAULT", "")
     output_dir = os.getenv("OUTPUT_DIR", "")
     if vault_path:
-        return Path(vault_path) / "01-收集箱" / "X"
+        return Path(vault_path) / "01-收集箱" / platform
     elif output_dir:
-        return Path(output_dir) / "X"
+        return Path(output_dir) / platform
     else:
-        return Path("output") / "X"
+        return Path("output") / platform
 
 
-def get_index_path() -> Path:
+def get_index_path(platform: str = "X") -> Path:
     """Return path to the global dedup index file."""
-    index_dir = _get_base_dir() / "index"
+    index_dir = _get_base_dir(platform) / "index"
     index_dir.mkdir(parents=True, exist_ok=True)
     return index_dir / "item_id_url.json"
 
@@ -47,7 +47,7 @@ def item_id_from_url(url: str) -> str:
     return hashlib.md5(url.encode()).hexdigest()[:12]
 
 
-def load_index() -> dict:
+def load_index(platform: str = "X") -> dict:
     """Load the global dedup index.
 
     Returns:
@@ -57,7 +57,7 @@ def load_index() -> dict:
         - New format: {"id": ["date", "url"]}
         - Old format: ["id1", "id2", ...] (auto-migrated)
     """
-    index_path = get_index_path()
+    index_path = get_index_path(platform)
 
     # Try new location first
     if index_path.exists():
@@ -73,7 +73,7 @@ def load_index() -> dict:
             pass
 
     # Try migrating from old location
-    old_path = _get_base_dir() / ".item_id_index.json"
+    old_path = _get_base_dir(platform) / ".item_id_index.json"
     if old_path.exists():
         logger.info(f"[Dedup] 发现旧索引文件: {old_path}，开始迁移...")
         migrated = _migrate_old_index(old_path)
@@ -90,13 +90,13 @@ def load_index() -> dict:
     return {}
 
 
-def save_index(index: dict):
+def save_index(index: dict, platform: str = "X"):
     """Persist the dedup index to disk.
 
     Format: one entry per line for compact readability.
         {"item_id": ["date", "url"], ...}
     """
-    index_path = get_index_path()
+    index_path = get_index_path(platform)
     index_path.parent.mkdir(parents=True, exist_ok=True)
     sorted_items = sorted(index.items())
     lines = ["{"]

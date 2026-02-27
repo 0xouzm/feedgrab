@@ -16,6 +16,104 @@ from feedgrab.config import get_session_dir
 SESSION_DIR = get_session_dir()
 TIMEOUT_MS = 30_000
 
+# XHS note page JS evaluate — extracted for reuse by batch fetcher
+XHS_NOTE_JS_EVALUATE = """() => {
+    const title = document.querySelector('#detail-title');
+    const desc = document.querySelector('#detail-desc');
+    const author = document.querySelector('.author-wrapper .username')
+        || document.querySelector('.author-container .username');
+
+    // 正文（不含标签文本，标签单独提取）
+    let content = '';
+    if (desc) {
+        const clone = desc.cloneNode(true);
+        clone.querySelectorAll('a.tag').forEach(a => a.remove());
+        content = clone.innerText.trim();
+    }
+
+    // 话题标签
+    const tags = desc
+        ? Array.from(desc.querySelectorAll('a.tag'))
+            .map(a => a.innerText.trim().replace(/^#+/, ''))
+            .filter(Boolean)
+        : [];
+
+    // 笔记图片：只取非 duplicate 的 slide，按 data-index 排序
+    const images = Array.from(
+        document.querySelectorAll('.swiper-wrapper .swiper-slide:not(.swiper-slide-duplicate)')
+    ).sort((a, b) =>
+        (parseInt(a.dataset.swiperSlideIndex) || 0) -
+        (parseInt(b.dataset.swiperSlideIndex) || 0)
+    ).map(slide => {
+        const img = slide.querySelector('img');
+        return img ? (img.src || '') : '';
+    }).filter(src => src.startsWith('http'));
+
+    // 互动数据：点赞、收藏、评论
+    const counts = Array.from(
+        document.querySelectorAll('.engage-bar .count')
+    ).map(el => el.innerText.trim());
+
+    // 日期 + IP属地（如 "02-18 福建" 或 "编辑于 2025-08-16"）
+    const dateEl = document.querySelector('.bottom-container .date');
+
+    // 作者主页链接（去掉追踪参数）
+    let authorUrl = '';
+    const authorLink = document.querySelector('.author-wrapper a[href*="/user/profile/"]');
+    if (authorLink) {
+        try {
+            const u = new URL(authorLink.href);
+            authorUrl = u.origin + u.pathname;
+        } catch(e) {}
+    }
+
+    return {
+        title: title ? title.innerText.trim() : '',
+        content: content,
+        author: author ? author.innerText.trim().split('\\n')[0] : '',
+        authorUrl: authorUrl,
+        tags: tags,
+        images: images,
+        likes: parseInt(counts[0]) || 0,
+        collects: parseInt(counts[1]) || 0,
+        comments: parseInt(counts[2]) || 0,
+        date: dateEl ? dateEl.innerText.trim() : '',
+    };
+}"""
+
+
+def _build_xhs_result(data: dict, page_url: str) -> dict:
+    """Convert raw XHS JS evaluate output to a standardized result dict."""
+    return {
+        "title": (data["title"] or "").strip()[:200],
+        "content": (data["content"] or "").strip(),
+        "url": page_url,
+        "author": (data["author"] or "").strip(),
+        "author_url": data.get("authorUrl", ""),
+        "tags": data.get("tags", []),
+        "images": data.get("images", []),
+        "likes": data.get("likes", 0),
+        "collects": data.get("collects", 0),
+        "comments": data.get("comments", 0),
+        "date": data.get("date", ""),
+    }
+
+
+async def evaluate_xhs_note(page) -> dict:
+    """Wait for XHS note to render, then extract structured data via JS evaluate.
+
+    Assumes the page has already navigated to an XHS note URL.
+    Returns standardized result dict.
+    """
+    try:
+        await page.wait_for_selector("#noteContainer", timeout=8000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(1000)
+
+    data = await page.evaluate(XHS_NOTE_JS_EVALUATE)
+    return _build_xhs_result(data, page.url)
+
 
 async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
     """
@@ -69,83 +167,9 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
                     logger.warning("[XHS] #noteContainer not found within 8s, proceeding anyway")
                 await page.wait_for_timeout(1000)
 
-                data = await page.evaluate("""() => {
-                    const title = document.querySelector('#detail-title');
-                    const desc = document.querySelector('#detail-desc');
-                    const author = document.querySelector('.author-wrapper .username')
-                        || document.querySelector('.author-container .username');
+                data = await page.evaluate(XHS_NOTE_JS_EVALUATE)
 
-                    // 正文（不含标签文本，标签单独提取）
-                    let content = '';
-                    if (desc) {
-                        const clone = desc.cloneNode(true);
-                        clone.querySelectorAll('a.tag').forEach(a => a.remove());
-                        content = clone.innerText.trim();
-                    }
-
-                    // 话题标签
-                    const tags = desc
-                        ? Array.from(desc.querySelectorAll('a.tag'))
-                            .map(a => a.innerText.trim().replace(/^#+/, ''))
-                            .filter(Boolean)
-                        : [];
-
-                    // 笔记图片：只取非 duplicate 的 slide，按 data-index 排序
-                    const images = Array.from(
-                        document.querySelectorAll('.swiper-wrapper .swiper-slide:not(.swiper-slide-duplicate)')
-                    ).sort((a, b) =>
-                        (parseInt(a.dataset.swiperSlideIndex) || 0) -
-                        (parseInt(b.dataset.swiperSlideIndex) || 0)
-                    ).map(slide => {
-                        const img = slide.querySelector('img');
-                        return img ? (img.src || '') : '';
-                    }).filter(src => src.startsWith('http'));
-
-                    // 互动数据：点赞、收藏、评论
-                    const counts = Array.from(
-                        document.querySelectorAll('.engage-bar .count')
-                    ).map(el => el.innerText.trim());
-
-                    // 日期 + IP属地（如 "02-18 福建" 或 "编辑于 2025-08-16"）
-                    const dateEl = document.querySelector('.bottom-container .date');
-
-                    // 作者主页链接（去掉追踪参数）
-                    let authorUrl = '';
-                    const authorLink = document.querySelector('.author-wrapper a[href*="/user/profile/"]');
-                    if (authorLink) {
-                        try {
-                            const u = new URL(authorLink.href);
-                            authorUrl = u.origin + u.pathname;
-                        } catch(e) {}
-                    }
-
-                    return {
-                        title: title ? title.innerText.trim() : '',
-                        content: content,
-                        author: author ? author.innerText.trim().split('\\n')[0] : '',
-                        authorUrl: authorUrl,
-                        tags: tags,
-                        images: images,
-                        likes: parseInt(counts[0]) || 0,
-                        collects: parseInt(counts[1]) || 0,
-                        comments: parseInt(counts[2]) || 0,
-                        date: dateEl ? dateEl.innerText.trim() : '',
-                    };
-                }""")
-
-                result = {
-                    "title": (data["title"] or "").strip()[:200],
-                    "content": (data["content"] or "").strip(),
-                    "url": page.url,
-                    "author": (data["author"] or "").strip(),
-                    "author_url": data.get("authorUrl", ""),
-                    "tags": data.get("tags", []),
-                    "images": data.get("images", []),
-                    "likes": data.get("likes", 0),
-                    "collects": data.get("collects", 0),
-                    "comments": data.get("comments", 0),
-                    "date": data.get("date", ""),
-                }
+                result = _build_xhs_result(data, page.url)
             else:
                 # Generic fallback for non-XHS pages
                 await page.wait_for_timeout(2000)

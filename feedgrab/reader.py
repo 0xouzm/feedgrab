@@ -58,6 +58,8 @@ class UniversalReader:
         if "youtube.com" in domain or "youtu.be" in domain:
             return "youtube"
         if "xiaohongshu.com" in domain or "xhslink.com" in domain:
+            if "/user/profile/" in path:
+                return "xhs_user_notes"
             return "xhs"
         if "bilibili.com" in domain or "b23.tv" in domain:
             return "bilibili"
@@ -95,6 +97,10 @@ class UniversalReader:
         if platform == "twitter_user_tweets":
             return await self._read_user_tweets(url)
 
+        # XHS user notes batch mode: special flow, returns summary
+        if platform == "xhs_user_notes":
+            return await self._read_user_notes(url)
+
         try:
             content = await self._fetch(platform, url)
 
@@ -107,10 +113,11 @@ class UniversalReader:
             # Register in global dedup index (single fetch: always save, never skip)
             try:
                 from feedgrab.utils.dedup import load_index, save_index, add_item
-                index = load_index()
+                plat = "XHS" if content.source_type == SourceType.XIAOHONGSHU else "X"
+                index = load_index(platform=plat)
                 if content.id not in index:
                     add_item(content.id, content.url, index)
-                    save_index(index)
+                    save_index(index, platform=plat)
             except Exception:
                 pass
 
@@ -242,6 +249,34 @@ class UniversalReader:
             source_type=SourceType.TWITTER,
             source_name="user_tweets",
             title=f"账号抓取 {result['fetched']}/{result['total']}",
+            content=summary,
+            url=url,
+        )
+
+    async def _read_user_notes(self, url: str) -> UnifiedContent:
+        """Batch-fetch user notes from XHS profile, stream-save each, return summary."""
+        from feedgrab.config import xhs_user_notes_enabled
+
+        if not xhs_user_notes_enabled():
+            raise ValueError(
+                "小红书作者笔记批量抓取未启用。请在 .env 中设置 XHS_USER_NOTES_ENABLED=true"
+            )
+
+        from feedgrab.fetchers.xhs_user_notes import fetch_user_notes
+
+        result = await fetch_user_notes(url)
+
+        summary = (
+            f"小红书作者笔记批量抓取完成\n"
+            f"总数: {result['total']}, 成功: {result['fetched']}, "
+            f"跳过: {result['skipped']}, 失败: {result['failed']}\n"
+            f"批量记录: {result.get('list_path', '')}"
+        )
+
+        return UnifiedContent(
+            source_type=SourceType.XIAOHONGSHU,
+            source_name="user_notes",
+            title=f"作者笔记抓取 {result['fetched']}/{result['total']}",
             content=summary,
             url=url,
         )

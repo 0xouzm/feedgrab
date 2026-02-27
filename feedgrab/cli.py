@@ -36,6 +36,13 @@ def cmd_fetch(urls: list):
                 print(f"\n\u2705 {item.content}")
                 return
 
+            # XHS user notes batch mode or Twitter user tweets batch mode
+            if ("/user/profile/" in urls[0] and "xiaohongshu.com" in urls[0]) or \
+               ("x.com/" in urls[0] and "/status/" not in urls[0] and "/i/" not in urls[0]):
+                item = await reader.read(urls[0])
+                print(f"\n\u2705 {item.content}")
+                return
+
             item = await reader.read(urls[0])
             print(f"\u2705 [{item.source_type.value}] {item.title[:60]}")
             print(f"   {item.url}")
@@ -203,15 +210,17 @@ def cmd_reset(folder_name: str):
         print("\u274f \u5df2\u53d6\u6d88")
         return
 
-    # Remove from dedup index
+    # Remove from dedup index (platform-aware)
     from feedgrab.utils.dedup import load_index, save_index
-    index = load_index()
+    platform_name = target.parent.name  # "X" or "XHS"
+    platform_key = platform_name if platform_name in ("X", "XHS") else "X"
+    index = load_index(platform=platform_key)
     removed = 0
     for iid in item_ids:
         if iid in index:
             del index[iid]
             removed += 1
-    save_index(index)
+    save_index(index, platform=platform_key)
 
     # Delete .md files
     deleted = 0
@@ -249,6 +258,7 @@ Examples:
     feedgrab https://x.com/elonmusk/status/123456
     feedgrab https://x.com/i/bookmarks
     feedgrab https://x.com/iBigQiang
+    feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
     feedgrab login xhs
 """)
         return

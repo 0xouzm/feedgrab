@@ -109,3 +109,33 @@ def x_user_tweet_delay() -> float:
 def x_user_tweets_since() -> str:
     """Date filter for user tweets (e.g. '2025-10-01'). Empty = fetch all."""
     return os.getenv("X_USER_TWEETS_SINCE", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# XHS user notes batch fetch
+# ---------------------------------------------------------------------------
+
+def xhs_user_notes_enabled() -> bool:
+    """Whether XHS user notes batch fetching is enabled."""
+    return os.getenv("XHS_USER_NOTES_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def xhs_user_note_max_scrolls() -> int:
+    """Maximum scroll iterations on XHS profile page (default 50)."""
+    try:
+        return int(os.getenv("XHS_USER_NOTE_MAX_SCROLLS", "50"))
+    except ValueError:
+        return 50
+
+
+def xhs_user_note_delay() -> float:
+    """Delay in seconds between processing each XHS note (default 3.0)."""
+    try:
+        return float(os.getenv("XHS_USER_NOTE_DELAY", "3.0"))
+    except ValueError:
+        return 3.0
+
+
+def xhs_user_notes_since() -> str:
+    """Date filter for XHS user notes (e.g. '2025-10-01'). Empty = fetch all."""
+    return os.getenv("XHS_USER_NOTES_SINCE", "").strip()
