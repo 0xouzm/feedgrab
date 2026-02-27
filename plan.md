@@ -3,6 +3,73 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 2026-02-27 · v0.2.7 · 小红书笔记深度抓取
+
+### 背景
+小红书抓取仅提取标题、正文、作者三个基本字段，缺少图片、互动数据、标签、发布日期等关键信息。对标 Twitter 的完整抓取能力，XHS 输出质量明显不足。
+
+### 方案决策
+- **Playwright JS 扩展**：在 headless Chromium 中执行 JS 提取完整页面数据
+- **图片提取**：从 Swiper 轮播容器提取，过滤 `swiper-slide-duplicate`，按 `data-swiper-slide-index` 排序保证翻页顺序
+- **互动数据**：点赞、收藏、评论三个计数从 `.engage-bar .count` 提取
+- **日期解析**：支持两种格式 — `"02-18 福建"`（发布日期+属地）和 `"编辑于 2025-08-16"`（最后编辑日期）
+- **作者主页**：从 `.author-wrapper a[href*="/user/profile/"]` 提取干净 URL（去掉追踪参数）
+- **标签策略**：元数据取前 3 个（Obsidian 搜索用），正文保留全部 `#标签`（还原原帖风格）
+- **文件名格式**：与 Twitter 统一为 `作者名_YYYY-MM-DD：标题.md`
+- **Jina 登录页检测**：Jina 返回登录页时自动降级到 Playwright
+
+### 改动范围
+
+| 文件 | 改动 |
+|------|------|
+| `feedgrab/fetchers/browser.py` | XHS JS evaluate 扩展（图片、互动、日期、标签、作者主页 URL），result dict 新增 6 字段 |
+| `feedgrab/fetchers/xhs.py` | Tier 2 透传新字段 + Jina 登录页检测降级 |
+| `feedgrab/schema.py` | `from_xiaohongshu()` 填充完整 extra（author_url, cover_image, likes, collects, comments, images, date） |
+| `feedgrab/utils/storage.py` | `_parse_xhs_date()` 支持两种日期格式；`_parse_xhs_location()` 兼容"编辑于"格式；文件名 XHS 分支；front matter 新增 author_url/metrics/location/cover_image；正文：文字→标签→图片；元数据 tags 限前 3 个；`_resolve_filepath` head 读取 512→2048 字节 |
+
+### XHS 输出格式
+```yaml
+---
+title: "开学第一课还没思路的班主任看过来👀"
+source: "https://www.xiaohongshu.com/explore/69948f62..."
+author:
+  - "墨客老师资料库"
+author_url: "https://www.xiaohongshu.com/user/profile/5eb416f..."
+published: 2026-02-18
+created: 2026-02-27
+cover_image: "https://sns-webpic-qc.xhscdn.com/..."
+likes: 179
+collects: 242
+comments: 28
+location: "福建"
+tags:
+  - "开学第一课ppt"
+  - "开学第一课"
+  - "教师开学第一课"
+item_id: db22cbe3d9c0
+---
+
+# 开学第一课还没思路的班主任看过来👀
+
+正文内容...
+
+#开学第一课ppt #开学第一课 #教师开学第一课 #教师必备 #班主任 ...
+
+![1](https://...)
+![2](https://...)
+```
+
+文件名：`墨客老师资料库_2026-02-18：开学第一课还没思路的班主任看过来👀.md`
+
+### 验证结果
+- 帖子 1（有正文+16张图）：标题、正文、10个标签、16张图片按翻页顺序、互动数据、发布日期+属地 全部正确
+- 帖子 2（纯图文+12张图，"编辑于"格式）：日期正确解析、9个标签、12张图片、无正文（原帖无文字）
+
+### 状态：已完成 ✅
+
+
+---
+
 ## 2026-02-27 · v0.2.6b · 移除 unified_inbox.json + feedgrab list 重写
 
 ### 背景

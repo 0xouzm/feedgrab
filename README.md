@@ -126,14 +126,14 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright | — |
-| 小红书 | Jina → Playwright* | — |
+| 小红书 | Jina → **Playwright 深度抓取*** | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙播客 | — | 通过 Claude Code 技能 |
 | Apple Podcasts | — | 通过 Claude Code 技能 |
 | 任意网页 | Jina 兜底 | — |
 
-> \*小红书需要一次性登录：`feedgrab login xhs`（保存 session 供 Playwright 兜底使用）
+> \*小红书需要一次性登录：`feedgrab login xhs`（保存 session 供 Playwright 深度抓取使用，提取图片、互动数据、标签、发布日期等完整元数据）
 >
 > YouTube Whisper 转录需要 `GROQ_API_KEY` — 从 [Groq](https://console.groq.com/keys) 免费获取
 
@@ -230,7 +230,11 @@ output/
 
 文件命名格式（Twitter）：`作者名_YYYY-MM-DD：标题.md`（如 `强子手记_2026-02-24：最近看到好多新蓝V都成功✅认证了创作者身份。.md`）
 
+文件命名格式（小红书）：`作者名_YYYY-MM-DD：标题.md`（如 `墨客老师资料库_2026-02-18：开学第一课还没思路的班主任看过来👀.md`）
+
 文件使用 Obsidian 兼容的 YAML front matter：
+
+**Twitter 示例：**
 
 ```yaml
 ---
@@ -250,6 +254,30 @@ views: 426321
 tags:
   - "clippings"
   - "twitter"
+---
+```
+
+**小红书示例：**
+
+```yaml
+---
+title: "开学第一课还没思路的班主任看过来👀"
+source: "https://www.xiaohongshu.com/explore/69948f62..."
+author:
+  - "墨客老师资料库"
+author_url: "https://www.xiaohongshu.com/user/profile/5eb416f..."
+published: 2026-02-18
+created: 2026-02-27
+cover_image: "https://sns-webpic-qc.xhscdn.com/..."
+likes: 179
+collects: 242
+comments: 28
+location: "福建"
+tags:
+  - "开学第一课ppt"
+  - "开学第一课"
+  - "教师开学第一课"
+item_id: db22cbe3d9c0
 ---
 ```
 
