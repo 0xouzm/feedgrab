@@ -3,6 +3,46 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 2026-02-27 · v0.2.6b · 移除 unified_inbox.json + feedgrab list 重写
+
+### 背景
+`unified_inbox.json` 是 x-reader 原始设计的遗留产物，所有平台、所有采集方式混存到一个 JSON 文件（500 条上限），与 `.md` 文件 100% 数据冗余。每次抓取都要全量读写该文件，唯一消费方 `feedgrab list` 也几乎没人用。
+
+### 方案决策
+- **彻底移除** `unified_inbox.json` 及相关写入逻辑（`save_to_json`、`save_content`、`UnifiedInbox` 引用）
+- **重写 `feedgrab list`** 为目录扫描统计摘要，零状态文件
+- **移除** `INBOX_FILE` 环境变量和 `cmd_clear` 命令
+
+### 改动范围
+
+| 文件 | 改动 |
+|------|------|
+| `feedgrab/cli.py` | 删除 inbox 依赖，重写 `cmd_list()` 为目录统计，删除 `cmd_clear()`，帮助文档更新 |
+| `feedgrab/reader.py` | 移除 `UnifiedInbox` import 和 `self.inbox` 逻辑 |
+| `feedgrab/utils/storage.py` | 删除 `save_to_json()` 和 `save_content()` |
+| `feedgrab/config.py` | 删除 `get_inbox_path()` |
+| `feedgrab/schema.py` | `UnifiedInbox.__init__` 恢复简单默认值（类保留但不再被调用） |
+| `.env.example` | 移除 `INBOX_FILE` 配置项 |
+
+### feedgrab list 新输出
+```
+📦 feedgrab 内容统计 (E:\Obsidian\Qiang_Obsidian\inbox)
+
+  🐦 X: 609 篇
+     bookmarks_OpenClaw/  34 篇
+     bookmarks_Polymarket/  11 篇
+     status/  450 篇
+     status_强子手记/  114 篇
+
+  ───────────────
+  总计: 609 篇
+```
+
+### 状态：已完成 ✅
+
+
+---
+
 ## 2026-02-27 · v0.2.6 · 按推特账号批量抓取 + 文件名优化
 
 ### 背景

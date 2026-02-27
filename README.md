@@ -58,7 +58,7 @@ feedgrab https://url1.com https://url2.com
 # 登录某个平台（一次性操作，用于浏览器兜底）
 feedgrab login xhs
 
-# 查看收件箱
+# 查看内容统计
 feedgrab list
 ```
 
@@ -335,7 +335,6 @@ cp .env.example .env
 | `GROQ_API_KEY` | 仅 Whisper | 从 https://console.groq.com/keys 免费获取 |
 | `GEMINI_API_KEY` | 仅 AI 分析 | 从 Google AI Studio 获取 |
 | `FEEDGRAB_DATA_DIR` | 否 | Cookie/Session 存储目录（默认：`sessions`） |
-| `INBOX_FILE` | 否 | 收件箱 JSON 路径（默认：`./unified_inbox.json`） |
 | `OUTPUT_DIR` | 否 | Markdown 输出目录（默认：`./output`） |
 | `OBSIDIAN_VAULT` | 否 | Obsidian 笔记库路径（内容写入对应平台子目录） |
 
@@ -382,7 +381,7 @@ feedgrab/
 用户发送 URL
     │
     ├─ 文本内容（文章、推文、微信）
-    │   └─ Python 抓取器 → UnifiedContent → 收件箱
+    │   └─ Python 抓取器 → UnifiedContent → Markdown
     │
     ├─ X/Twitter 推文或线程
     │   └─ GraphQL（完整线程 + 媒体）→ oEmbed → Jina → Playwright
