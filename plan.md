@@ -3,6 +3,143 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 2026-02-27 · v0.2.8 · 小红书按作者批量抓取
+
+### 背景
+v0.2.7 完成了 XHS 单篇深度抓取（图片、互动数据、标签、日期、作者主页）。用户希望新增按作者主页批量抓取：给定主页 URL（如 `https://www.xiaohongshu.com/user/profile/5eb416f...`），批量抓取该博主所有笔记。参照已有的 Twitter 用户推文批量抓取 (`twitter_user_tweets.py`) 模式。
+
+### 核心挑战
+
+XHS 没有公开 API，且反爬机制严格：
+1. **无公开 API**：必须用 Playwright 浏览器打开主页 → 滚动加载瀑布流 → 收集笔记 URL → 逐一提取完整数据
+2. **461 反机器人检测**：XHS 对 Playwright 控制的浏览器返回 461 状态码，重定向到 captcha 验证页面。经测试发现这是**服务端 Session 级别**的检测——即使用纯 HTTP 请求（无浏览器）携带被标记的 Session Cookie，也会被 302 重定向到验证码页面
+3. **Session 标记**：通过 `feedgrab login xhs`（Playwright 启动 Chrome）创建的 Session 会被 XHS 在登录阶段标记为自动化 Session，后续所有请求都会触发 461
+
+### 反爬对抗历程
+
+尝试了 8+ 种方案均被检测：
+
+| 尝试 | 方案 | 结果 |
+|------|------|------|
+| 1 | `channel="chrome"` + `--disable-blink-features=AutomationControlled` | 被检测 |
+| 2 | Stealth JS 注入（`navigator.webdriver` 覆盖等） | 被检测 |
+| 3 | 先访问 explore 页面预热，再访问 profile | 被检测 |
+| 4 | `headless=False` 有头模式 | 被检测 |
+| 5 | `launch_persistent_context` 使用真实 Chrome 用户数据 | 被检测 |
+| 6 | 子进程启动 Chrome + CDP 连接 | 被检测 |
+| 7 | `undetected-chromedriver` headless | 被检测 |
+| 8 | `undetected-chromedriver` headed | 被检测 |
+| 9 | 纯 HTTP 请求（无浏览器） | 302 重定向 → 证实是 Session 级标记 |
+
+**关键发现**：问题不在浏览器指纹，而在 Session 本身。通过 Playwright 登录创建的 Session 已被服务端标记。
+
+### 最终方案：有头浏览器 + 验证码手动解决
+
+放弃绕过反爬，改为**拥抱验证码**：
+
+1. 使用真实 Chrome（`channel="chrome"`）+ 有头模式（`headless=False`）
+2. 加载已有 Session 文件打开主页
+3. **自动检测**验证码/登录重定向
+4. **CLI 提示用户**在弹出的浏览器窗口中手动完成验证码
+5. 验证通过后**自动保存更新的 Session**
+6. 继续批量抓取操作
+
+### 三层抓取策略
+
+取代原计划的单一 DOM scraping，实际实现了三层策略：
+
+| 层级 | 方式 | 说明 |
+|------|------|------|
+| Tier 0 | `__INITIAL_STATE__` 提取 | 从 Vue SSR 渲染的页面数据中直接解析笔记列表（约 30 篇），无需滚动 |
+| Tier 1 | XHR 拦截器 + 自动滚动 | `page.on("response")` 拦截 `user_posted` API 分页响应，配合自动滚动加载更多笔记 |
+| Tier 2 | 逐篇深度抓取 | 带 `xsec_token` 导航到每篇笔记详情页，复用 `evaluate_xhs_note()` 提取完整内容和元数据 |
+
+### 数据流
+
+```
+feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
+  → reader._detect_platform() → "xhs_user_notes"
+  → reader._read_user_notes(url)
+    → xhs_user_notes.fetch_user_notes(url)
+      ├─ 解析主页 URL → user_id
+      ├─ 启动 Playwright 有头 Chrome（复用 xhs.json session）
+      ├─ 检测验证码/登录 → _handle_captcha_or_login()
+      ├─ Tier 0: __INITIAL_STATE__ 提取首批笔记 (~30篇)
+      ├─ Tier 1: XHR 拦截 + 自动滚动加载更多
+      ├─ 加载 XHS 去重索引
+      ├─ Tier 2: 逐篇深度抓取：
+      │    去重检查 → 跳过已抓取
+      │    同浏览器导航到笔记页（带 xsec_token）
+      │    evaluate_xhs_note() → 提取完整数据
+      │    from_xiaohongshu() → save_to_markdown()
+      │    日期检查：< since_date → 连续 3 篇旧笔记则停止
+      │    更新去重索引 + 延迟
+      ├─ 保存去重索引
+      └─ 保存批量记录 JSON
+```
+
+### 方案决策
+
+- **有头浏览器而非 headless**：XHS 服务端检测 Session 来源，但对有头模式 + 手动验证码后的 Session 放行
+- **单浏览器复用**：整个批量过程只创建一个 browser context，避免每篇笔记 3-5s 启动开销
+- **`__INITIAL_STATE__` 优先**：Vue SSR 数据无需额外请求，直接获取约 30 篇笔记
+- **source URL 保留 `xsec_token`**：确保保存的链接可直接点击访问（无 token 会 403）
+- **连续旧笔记阈值 = 3**：主页可能有置顶笔记（日期较旧），阈值 3 跳过置顶后仍能正确停止
+- **平台独立去重索引**：XHS 和 Twitter 各自维护索引，互不干扰，reset 命令也能正确定位
+
+### 日期解析增强（第 4 种格式）
+
+v0.2.7 支持三种日期格式。批量测试中发现第 4 种格式导致 8/32 篇笔记文件名缺少日期：
+
+| 格式 | 示例 | v0.2.7 | v0.2.8 |
+|------|------|--------|--------|
+| MM-DD + 属地 | `02-18 福建` | ✅ | ✅ |
+| 全日期 | `编辑于 2025-08-16` | ✅ | ✅ |
+| 相对时间 | `3天前 江苏` | ✅ | ✅ |
+| **编辑于 + 相对时间** | `编辑于 昨天 10:17 福建` | ❌ | ✅ |
+| **编辑于 + 相对天数** | `编辑于 3天前 福建` | ❌ | ✅ |
+
+修复：在 `_parse_xhs_date()` 起始处增加 `text = re.sub(r"^编辑于\s*", "", text)` 统一剥离 "编辑于" 前缀，使后续解析逻辑能正确匹配。
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/xhs_user_notes.py` | **新建** ~250行 | 核心批量抓取：有头 Chrome + 验证码处理 + 三层抓取（`__INITIAL_STATE__` / XHR 拦截 / 逐篇深度）+ 去重 + 日期过滤 |
+| `feedgrab/fetchers/browser.py` | 重构 ~20行 | 提取 `XHS_NOTE_JS_EVALUATE` 模块级常量 + `evaluate_xhs_note()` 辅助函数供批量复用；XHS 单篇改为有头模式 |
+| `feedgrab/utils/dedup.py` | 修改 ~10行 | 所有函数新增 `platform` 参数（默认 `"X"` 保持向后兼容） |
+| `feedgrab/utils/storage.py` | 修改 ~10行 | `_parse_xhs_date()` 新增 "编辑于" 前缀剥离，支持第 4-5 种日期格式 |
+| `feedgrab/config.py` | 新增 ~25行 | 4 个 XHS 批量配置函数：`xhs_user_notes_enabled()` / `xhs_user_note_max_scrolls()` / `xhs_user_note_delay()` / `xhs_user_notes_since()` |
+| `feedgrab/reader.py` | 修改 ~30行 | URL 检测（`/user/profile/` → `xhs_user_notes`）+ `_read_user_notes()` + 单篇去重平台感知 |
+| `feedgrab/cli.py` | 修改 ~15行 | 帮助文本 + 批量输出 + reset 平台感知 |
+| `.env.example` | 新增 ~5行 | `XHS_USER_NOTES_ENABLED` / `XHS_USER_NOTE_MAX_SCROLLS` / `XHS_USER_NOTE_DELAY` / `XHS_USER_NOTES_SINCE` |
+
+### 目录结构
+
+```
+{OUTPUT_DIR}/XHS/
+├── index/
+│   ├── item_id_url.json                    ← XHS 去重索引
+│   └── notes_墨客老师资料库_all_*.json       ← 批量记录
+└── notes_墨客老师资料库/                     ← 批量笔记
+    ├── 墨客老师资料库_2026-02-22：熊出没年年有熊主题初中小学开学第一课绝了.md
+    ├── 墨客老师资料库_2026-02-18：开学第一课还没思路的班主任看过来👀.md
+    └── ...
+```
+
+### 验证结果
+- 32/32 篇笔记成功抓取（Tier 0 `__INITIAL_STATE__`，无需滚动）
+- 所有 32 个文件名均包含正确日期格式（修复第 4 种格式后）
+- source URL 包含 `xsec_token`，链接可直接点击访问
+- 去重索引正常工作（重复运行全部 skip）
+- 批量记录 JSON 正确保存到 `XHS/index/` 目录
+- front matter 完整：likes、collects、comments、images、date、tags、author_url、cover_image
+
+### 状态：已完成 ✅
+
+
+---
+
 ## 2026-02-27 · v0.2.7 · 小红书笔记深度抓取
 
 ### 背景
