@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Storage utilities — save content to JSON inbox and per-platform Markdown files.
+Storage utilities — save per-platform Markdown files.
 
-- unified_inbox.json (for AI/programmatic use)
 - output/{Platform}/{title}.md (one file per item, for human reading)
 """
 
@@ -275,32 +274,6 @@ def _format_markdown(item: UnifiedContent) -> str:
 # Public API
 # =========================================================================
 
-def save_to_json(item: UnifiedContent, filepath: str = None):
-    """Append content to JSON inbox file."""
-    if filepath is None:
-        from feedgrab.config import get_inbox_path
-        filepath = get_inbox_path()
-    path = Path(filepath)
-    data = []
-
-    if path.exists():
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, IOError):
-            data = []
-
-    data.append(item.to_dict())
-
-    # Keep last 500 entries to prevent unbounded growth
-    data = data[-500:]
-
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-    logger.info(f"Saved to JSON: {path}")
-
-
 def save_to_markdown(item: UnifiedContent, filepath: str = None):
     """Save content as a standalone Markdown file in a platform subdirectory.
 
@@ -353,10 +326,3 @@ def save_to_markdown(item: UnifiedContent, filepath: str = None):
         f.write(_format_markdown(item))
 
     logger.info(f"Saved to Markdown: {path}")
-
-
-def save_content(item: UnifiedContent, json_path: str = None, md_path: str = None):
-    """Save content to both JSON and Markdown."""
-    inbox_file = json_path or os.getenv("INBOX_FILE", "unified_inbox.json")
-    save_to_json(item, inbox_file)
-    save_to_markdown(item, md_path)

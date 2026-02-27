@@ -12,7 +12,7 @@ from loguru import logger
 from typing import Dict, Any, Optional
 
 from feedgrab.schema import (
-    UnifiedContent, UnifiedInbox, SourceType,
+    UnifiedContent, SourceType,
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
 )
@@ -26,8 +26,8 @@ class UniversalReader:
     Falls back to Jina Reader for unknown platforms.
     """
 
-    def __init__(self, inbox: Optional[UnifiedInbox] = None):
-        self.inbox = inbox
+    def __init__(self):
+        pass
 
     def _detect_platform(self, url: str) -> str:
         """Detect platform from URL."""
@@ -97,12 +97,6 @@ class UniversalReader:
 
         try:
             content = await self._fetch(platform, url)
-
-            # Save to inbox if configured
-            if self.inbox:
-                if self.inbox.add(content):
-                    self.inbox.save()
-                    logger.info(f"Saved to inbox: {content.title[:50]}")
 
             # Save to markdown output if configured
             from feedgrab.utils.storage import save_to_markdown
