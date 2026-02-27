@@ -43,6 +43,37 @@
 
 ---
 
+## 2026-02-27 · v0.2.6c · feedgrab reset 命令
+
+### 背景
+批量抓取后如需重新抓取某个子目录（如文件名格式更新后），需要同时清理 .md 文件和去重索引中对应的 item_id。手动操作容易遗漏，新增 `feedgrab reset <folder>` 命令自动化此流程。
+
+### 功能
+```bash
+feedgrab reset bookmarks_OpenClaw    # 重置书签文件夹
+feedgrab reset status_强子手记        # 重置账号推文
+```
+
+执行流程：
+1. 在 `{OUTPUT_DIR}/` 下各平台目录中查找匹配的子目录
+2. 扫描所有 .md 文件的 YAML front matter，提取 `item_id`
+3. 显示待删除文件数和 item_id 数，等待用户确认
+4. 从去重索引 `item_id_url.json` 中移除对应条目
+5. 删除 .md 文件
+
+找不到目录时自动列出所有可用子目录。
+
+### 改动范围
+
+| 文件 | 改动 |
+|------|------|
+| `feedgrab/cli.py` | 新增 `cmd_reset()` + main 路由 + 帮助文档 |
+
+### 状态：已完成 ✅
+
+
+---
+
 ## 2026-02-27 · v0.2.6 · 按推特账号批量抓取 + 文件名优化
 
 ### 背景
