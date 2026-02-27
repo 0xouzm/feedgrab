@@ -31,10 +31,14 @@ class UniversalReader:
     def _detect_platform(self, url: str) -> str:
         """Detect platform from URL."""
         domain = urlparse(url).netloc.lower()
+        path = urlparse(url).path.lower()
 
         if "mp.weixin.qq.com" in domain:
             return "wechat"
         if "x.com" in domain or "twitter.com" in domain:
+            # Bookmark URLs: x.com/i/bookmarks or x.com/i/bookmarks/{folderId}
+            if "/i/bookmarks" in path:
+                return "twitter_bookmarks"
             return "twitter"
         if "youtube.com" in domain or "youtu.be" in domain:
             return "youtube"
@@ -68,6 +72,10 @@ class UniversalReader:
         platform = self._detect_platform(url)
         logger.info(f"[{platform}] {url[:60]}...")
 
+        # Bookmark batch mode: special flow, returns summary
+        if platform == "twitter_bookmarks":
+            return await self._read_bookmarks(url)
+
         try:
             content = await self._fetch(platform, url)
 
@@ -79,7 +87,19 @@ class UniversalReader:
 
             # Save to markdown output if configured
             from feedgrab.utils.storage import save_to_markdown
+            if content.source_type == SourceType.TWITTER and not content.category:
+                content.category = "status"
             save_to_markdown(content)
+
+            # Register in global dedup index (single fetch: always save, never skip)
+            try:
+                from feedgrab.utils.dedup import load_index, save_index, add_item
+                index = load_index()
+                if content.id not in index:
+                    add_item(content.id, content.url, index)
+                    save_index(index)
+            except Exception:
+                pass
 
             return content
 
@@ -140,6 +160,41 @@ class UniversalReader:
             source_name=urlparse(url).netloc,
             title=data["title"],
             content=data["content"],
+            url=url,
+        )
+
+    async def _read_bookmarks(self, url: str) -> UnifiedContent:
+        """Batch-fetch bookmarks, stream-save each tweet, return summary."""
+        from feedgrab.config import x_bookmarks_enabled
+
+        if not x_bookmarks_enabled():
+            raise ValueError(
+                "书签批量抓取未启用。请在 .env 中设置 X_BOOKMARKS_ENABLED=true"
+            )
+
+        from feedgrab.fetchers.twitter_bookmarks import fetch_bookmarks
+        from feedgrab.fetchers.twitter_cookies import load_twitter_cookies, has_required_cookies
+
+        cookies = load_twitter_cookies()
+        if not has_required_cookies(cookies):
+            raise RuntimeError(
+                "书签抓取需要 Twitter Cookie，请先运行: feedgrab login twitter"
+            )
+
+        result = await fetch_bookmarks(url, cookies)
+
+        summary = (
+            f"书签批量抓取完成\n"
+            f"总数: {result['total']}, 成功: {result['fetched']}, "
+            f"跳过: {result['skipped']}, 失败: {result['failed']}\n"
+            f"URL 列表: {result.get('bookmark_list_path', '')}"
+        )
+
+        return UnifiedContent(
+            source_type=SourceType.TWITTER,
+            source_name="bookmarks",
+            title=f"书签抓取 {result['fetched']}/{result['total']}",
+            content=summary,
             url=url,
         )
 

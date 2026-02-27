@@ -38,6 +38,12 @@ def cmd_fetch(urls: list):
 
     async def run():
         if len(urls) == 1:
+            # Bookmark batch mode: special output
+            if "/i/bookmarks" in urls[0]:
+                item = await reader.read(urls[0])
+                print(f"\n✅ {item.content}")
+                return
+
             item = await reader.read(urls[0])
             print(f"✅ [{item.source_type.value}] {item.title[:60]}")
             print(f"   {item.url}")

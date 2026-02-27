@@ -44,6 +44,10 @@ feedgrab https://mp.weixin.qq.com/s/abc123
 # 抓取推文（配置好 Cookie 后自动走 GraphQL 深度抓取）
 feedgrab https://x.com/elonmusk/status/123456
 
+# 批量抓取书签（需要 X_BOOKMARKS_ENABLED=true）
+feedgrab https://x.com/i/bookmarks
+feedgrab https://x.com/i/bookmarks/2015311287715340624  # 指定书签文件夹
+
 # 批量抓取多个 URL
 feedgrab https://url1.com https://url2.com
 
@@ -140,6 +144,8 @@ Tier 0（GraphQL）移植自 [baoyu-danger-x-to-markdown](https://github.com/Jim
 - 完整媒体提取（图片、视频、引用推文）
 - 互动数据（likes / retweets / replies / bookmarks / views）
 - 作者回帖 + 评论区采集（可选开关）
+- **书签批量抓取**（全部书签 / 指定文件夹）
+- **全局去重索引**（跨模式统一去重）
 
 ### 输出格式
 
@@ -148,7 +154,10 @@ Tier 0（GraphQL）移植自 [baoyu-danger-x-to-markdown](https://github.com/Jim
 ```
 output/
 ├── X/                    # Twitter/X
-│   └── 鱼总聊AI：OpenClaw新手完整学习路径.md
+│   ├── index/            #   去重索引 + 批量抓取记录
+│   ├── status/           #   单篇推文
+│   ├── bookmarks/        #   全部书签
+│   └── bookmarks_xxx/    #   书签文件夹（按名称）
 ├── XHS/                  # 小红书
 ├── WeChat/               # 微信公众号
 ├── YouTube/              # YouTube
@@ -257,6 +266,9 @@ cp .env.example .env
 | `X_FETCH_AUTHOR_REPLIES` | 否 | 采集作者回帖（默认：`false`） |
 | `X_FETCH_ALL_COMMENTS` | 否 | 采集全部评论（默认：`false`） |
 | `X_MAX_COMMENTS` | 否 | 最大评论采集数（默认：`50`） |
+| `X_BOOKMARKS_ENABLED` | 否 | 启用书签批量抓取（默认：`false`） |
+| `X_BOOKMARK_MAX_PAGES` | 否 | 书签最大分页数（默认：`50`） |
+| `X_BOOKMARK_DELAY` | 否 | 书签处理间隔秒数（默认：`2.0`） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `GROQ_API_KEY` | 仅 Whisper | 从 https://console.groq.com/keys 免费获取 |
@@ -285,13 +297,15 @@ feedgrab/
 │   │   ├── telegram.py        # Telegram 频道（Telethon）
 │   │   ├── twitter.py         # X/Twitter 四级兜底调度器
 │   │   ├── twitter_cookies.py # Cookie 多源管理（环境变量/文件/Playwright/CDP）
-│   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, 动态 queryId）
+│   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, Bookmarks, 动态 queryId）
 │   │   ├── twitter_thread.py  # 线程重建 + 评论分类（分页 + 去重 + 根推文追溯）
+│   │   ├── twitter_bookmarks.py# 书签批量抓取（全部/文件夹，分页+去重+分类）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
 │   │   ├── wechat.py          # Jina → Playwright 兜底
 │   │   └── xhs.py             # Jina → Playwright + Session 兜底
 │   └── utils/
-│       └── storage.py         # 按平台分目录 Markdown + JSON 双重输出
+│       ├── storage.py         # 按平台分目录 Markdown + JSON 双重输出
+│       └── dedup.py           # 全局去重索引（跨模式统一 item_id 追踪）
 ├── sessions/                  # Cookie/Session 存储（自动创建，git 忽略）
 ├── skills/                    # Claude Code 技能
 │   ├── video/                 # 视频/播客 → 转录 + 摘要

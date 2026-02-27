@@ -54,3 +54,28 @@ def x_max_comments() -> int:
         return int(os.getenv("X_MAX_COMMENTS", "50"))
     except ValueError:
         return 50
+
+
+# ---------------------------------------------------------------------------
+# Bookmarks batch fetch
+# ---------------------------------------------------------------------------
+
+def x_bookmarks_enabled() -> bool:
+    """Whether bookmark batch fetching is enabled."""
+    return os.getenv("X_BOOKMARKS_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def x_bookmark_max_pages() -> int:
+    """Maximum bookmark pagination pages (default 50, ~1000 tweets)."""
+    try:
+        return int(os.getenv("X_BOOKMARK_MAX_PAGES", "50"))
+    except ValueError:
+        return 50
+
+
+def x_bookmark_delay() -> float:
+    """Delay in seconds between processing each bookmark tweet (default 2.0)."""
+    try:
+        return float(os.getenv("X_BOOKMARK_DELAY", "2.0"))
+    except ValueError:
+        return 2.0

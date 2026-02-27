@@ -3,6 +3,94 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 2026-02-27 · v0.2.5b · 书签文件夹 + 统一去重 + 目录扁平化
+
+### 背景
+v0.2.5 书签批量抓取只支持全部书签，文件夹 URL（`x.com/i/bookmarks/{folderId}`）降级为全量。此外去重索引仅在书签模块内部使用，单篇抓取不写入索引。目录结构嵌套过深（`X/bookmarks/OpenClaw/`）。
+
+### 方案决策
+- **书签文件夹**：新增 `BookmarkFoldersSlice` API 获取文件夹名称，`BookmarkFolderTimeline` API 获取指定文件夹推文
+- **统一去重**：抽离全局去重模块 `feedgrab/utils/dedup.py`，索引文件迁移到 `{OUTPUT_DIR}/X/index/item_id_url.json`
+- **索引格式**：`{"item_id": ["日期", "URL"]}`，每条一行，紧凑可读
+- **目录扁平化**：单篇→`status/`，全部书签→`bookmarks/`，文件夹书签→`bookmarks_{name}/`，消除嵌套
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/utils/dedup.py` | 新建 | 全局去重索引模块：load/save/add/has_item + 旧格式自动迁移 |
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增 `fetch_bookmark_folders()`、`fetch_bookmark_folder_page()`；扩展 `parse_bookmark_entries()` 多路径；扩展 `resolve_query_ids()` + `_fallback_query_ids()` |
+| `feedgrab/fetchers/twitter_bookmarks.py` | 修改 | 移除旧索引函数改用 dedup 模块；新增 `_resolve_folder_name()`；分页路由文件夹/全量；目录扁平化 |
+| `feedgrab/utils/storage.py` | 修改 | `save_to_markdown()` 支持 `category` 子目录 |
+| `feedgrab/reader.py` | 修改 | 单篇 Twitter 设置 `category="status"`；保存后写入去重索引 |
+
+### 目录结构（改动后）
+```
+{OUTPUT_DIR}/X/
+├── index/                        ← 运维数据
+│   ├── item_id_url.json          ← 全局去重索引
+│   └── bookmarks_*.json          ← 批量抓取记录
+├── status/                       ← 单篇抓取
+├── bookmarks/                    ← 全部书签（无文件夹）
+├── bookmarks_OpenClaw/           ← 书签文件夹
+└── bookmarks_撸毛课/             ← 另一个书签文件夹
+```
+
+### 去重策略
+| 模式 | 读索引 | 写索引 | 跳过重复 |
+|------|--------|--------|----------|
+| 单篇抓取 | 否 | 是 | 否（用户主动请求） |
+| 书签批量 | 是 | 是 | 是 |
+| 未来作者批量 | 是 | 是 | 是 |
+
+### 状态：已完成 ✅
+
+
+---
+
+## 2026-02-27 · v0.2.5 · Twitter 书签批量抓取
+
+### 背景
+用户需要批量抓取 Twitter 书签中收藏的推文，支持 `feedgrab https://x.com/i/bookmarks` 命令。
+
+### 方案决策
+- **方案选择**：Approach B（混合模式）—— 从书签 API 响应直接提取推文数据，仅对线程和长文章做二次 API 调用
+- **GraphQL 端点**：复用 `_execute_graphql()`，新增 `Bookmarks` 操作（queryId 从 JS bundle 动态解析，fallback `-LGfdImKeQz0xS_jjUwzlA`）
+- **响应路径**：`data.bookmark_timeline_v2.timeline.instructions`（不同于 TweetDetail 的 `threaded_conversation_with_injections_v2`）
+- **去重策略**：本地 `.item_id_index.json` 索引文件（用户建议，比扫描目录高效）
+- **URL 列表**：每次抓取保存 `output/X/bookmarks/bookmarks_all_{timestamp}.json`
+- **安全措施**：默认关闭（`X_BOOKMARKS_ENABLED=false`），分页间隔 1.5s，推文处理间隔 2.0s
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_bookmarks.py` | 新建 | 书签批量抓取核心：分页获取、分类处理（单条/线程/文章）、去重索引、URL 列表保存 |
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增 `BOOKMARK_FEATURES`/`BOOKMARK_FIELD_TOGGLES`、`fetch_bookmarks_page()`、`parse_bookmark_entries()`；扩展 `resolve_query_ids()` 和 `_fallback_query_ids()` |
+| `feedgrab/config.py` | 修改 | 新增 `x_bookmarks_enabled()`、`x_bookmark_max_pages()`、`x_bookmark_delay()` |
+| `feedgrab/reader.py` | 修改 | `_detect_platform()` 识别 `/i/bookmarks` URL；新增 `_read_bookmarks()` 批量流程 |
+| `feedgrab/cli.py` | 修改 | 书签 URL 输出汇总信息 |
+| `.env.example` | 修改 | 新增 `X_BOOKMARKS_ENABLED`、`X_BOOKMARK_MAX_PAGES`、`X_BOOKMARK_DELAY` |
+
+### 数据流
+```
+feedgrab https://x.com/i/bookmarks
+  → reader._detect_platform() → "twitter_bookmarks"
+  → reader._read_bookmarks()
+    → twitter_bookmarks.fetch_bookmarks()
+      → twitter_graphql.fetch_bookmarks_page() (分页获取全部)
+      → 逐条 extract_tweet_data() → 分类:
+          单条 → 直出 → from_twitter() → save_to_markdown()
+          线程 → fetch_tweet_thread() → 完整线程 → save
+          文章 → Jina body → save
+      → 保存 .item_id_index.json + bookmarks URL 列表
+```
+
+### 状态：已完成 ✅
+
+
+---
+
 ## 2026-02-27 · v0.2.4d · t.co 短链接展开为原始 URL
 
 ### 背景

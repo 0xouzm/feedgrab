@@ -35,6 +35,9 @@ from feedgrab.fetchers.twitter_cookies import (
 FALLBACK_TWEET_DETAIL_QUERY_ID = "_8aYOgEDz35BrBcBal1-_w"
 FALLBACK_TWEET_RESULT_QUERY_ID = "HJ9lpOL-ZlOk5CkCw0JW6Q"
 FALLBACK_ARTICLE_QUERY_ID = "id8pHQbQi7eZ6P9mA1th1Q"
+FALLBACK_BOOKMARKS_QUERY_ID = "-LGfdImKeQz0xS_jjUwzlA"
+FALLBACK_BOOKMARK_FOLDERS_QUERY_ID = "i78YDd0Tza-dV4SYs58kRg"
+FALLBACK_BOOKMARK_FOLDER_TIMELINE_QUERY_ID = "8HoabOvl7jl9IC1Aixj-vg"
 
 # ---------------------------------------------------------------------------
 # Feature switches — per-operation, from baoyu constants.ts
@@ -132,6 +135,20 @@ TWEET_RESULT_FIELD_TOGGLES = {
 
 # TweetDetail field toggles
 TWEET_DETAIL_FIELD_TOGGLES = {
+    "withArticleRichContentState": True,
+    "withArticlePlainText": False,
+    "withGrokAnalyze": False,
+    "withDisallowedReplyControls": False,
+}
+
+# ---------------------------------------------------------------------------
+# Bookmarks feature switches and field toggles
+# ---------------------------------------------------------------------------
+
+BOOKMARK_FEATURES = dict(TWEET_DETAIL_FEATURES)
+BOOKMARK_FEATURES["graphql_timeline_v2_bookmark_timeline"] = True
+
+BOOKMARK_FIELD_TOGGLES = {
     "withArticleRichContentState": True,
     "withArticlePlainText": False,
     "withGrokAnalyze": False,
@@ -246,6 +263,231 @@ def fetch_tweet_by_rest_id(tweet_id: str, cookies: dict) -> Optional[Dict[str, A
     )
 
 
+def fetch_bookmarks_page(
+    cookies: dict, cursor: str = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch one page of the authenticated user's bookmarks.
+
+    Args:
+        cookies: dict with 'auth_token' and 'ct0'.
+        cursor: Optional pagination cursor from a previous response.
+        count: Number of bookmarks per page (default 20).
+
+    Returns:
+        Raw GraphQL response dict, or None on failure.
+    """
+    query_id = _get_query_id("Bookmarks")
+    headers = build_graphql_headers(cookies)
+
+    variables = {
+        "count": count,
+        "includePromotedContent": False,
+        "withClientEventToken": False,
+        "withBirdwatchNotes": False,
+        "withVoice": True,
+        "withV2Timeline": True,
+    }
+
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name="Bookmarks",
+        variables=variables,
+        features=dict(BOOKMARK_FEATURES),
+        field_toggles=dict(BOOKMARK_FIELD_TOGGLES),
+        headers=headers,
+    )
+
+
+def fetch_bookmark_folders(cookies: dict) -> list:
+    """
+    Fetch the user's bookmark folder list via BookmarkFoldersSlice.
+
+    Returns:
+        [{"id": "...", "name": "OpenClaw"}, ...]
+        Empty list on failure.
+    """
+    query_id = _get_query_id("BookmarkFoldersSlice")
+    headers = build_graphql_headers(cookies)
+
+    response = _execute_graphql(
+        query_id=query_id,
+        operation_name="BookmarkFoldersSlice",
+        variables={},
+        features={},
+        field_toggles={},
+        headers=headers,
+    )
+
+    if not response or "data" not in response:
+        logger.warning("[BookmarkFolders] API returned empty response")
+        return []
+
+    data = response["data"]
+
+    # Response path not yet verified by packet capture — try multiple paths
+    # Path 0: data.viewer.user_results.result.bookmark_collections_slice.items (actual)
+    items = (
+        data.get("viewer", {})
+        .get("user_results", {})
+        .get("result", {})
+        .get("bookmark_collections_slice", {})
+        .get("items", [])
+    )
+    # Path 1: data.bookmark_collections_slice.items (from twikit)
+    if not items:
+        items = data.get("bookmark_collections_slice", {}).get("items", [])
+    # Path 2: data.bookmarkFoldersSlice.folders
+    if not items:
+        items = data.get("bookmarkFoldersSlice", {}).get("folders", [])
+    # Path 3: deep scan — find any list of dicts with "name" key
+    if not items:
+        def _find_folder_items(obj, depth=0):
+            if depth > 5:
+                return []
+            if isinstance(obj, list) and obj and isinstance(obj[0], dict) and "name" in obj[0]:
+                return obj
+            if isinstance(obj, dict):
+                for v in obj.values():
+                    found = _find_folder_items(v, depth + 1)
+                    if found:
+                        return found
+            return []
+        items = _find_folder_items(data)
+
+    if not items:
+        logger.warning(f"[BookmarkFolders] Could not parse folders from response keys: {list(data.keys())}")
+        logger.debug(f"[BookmarkFolders] Raw response: {json.dumps(data, ensure_ascii=False)[:500]}")
+
+    folders = []
+    for item in items:
+        fid = item.get("id", "")
+        fname = item.get("name", "")
+        if fid and fname:
+            folders.append({"id": str(fid), "name": fname})
+
+    logger.info(f"[BookmarkFolders] Found {len(folders)} folders")
+    return folders
+
+
+def fetch_bookmark_folder_page(
+    folder_id: str, cookies: dict, cursor: str = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch one page of tweets from a specific bookmark folder.
+
+    Args:
+        folder_id: The numeric bookmark folder ID.
+        cookies: dict with 'auth_token' and 'ct0'.
+        cursor: Optional pagination cursor.
+        count: Items per page (default 20).
+
+    Returns:
+        Raw GraphQL response dict, or None on failure.
+    """
+    query_id = _get_query_id("BookmarkFolderTimeline")
+    headers = build_graphql_headers(cookies)
+
+    variables = {
+        "count": count,
+        "includePromotedContent": True,
+        "bookmark_collection_id": folder_id,
+    }
+
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name="BookmarkFolderTimeline",
+        variables=variables,
+        features=dict(BOOKMARK_FEATURES),
+        field_toggles=dict(BOOKMARK_FIELD_TOGGLES),
+        headers=headers,
+    )
+
+
+def parse_bookmark_entries(response: Dict[str, Any]) -> tuple:
+    """
+    Extract tweet entries and pagination cursors from a Bookmarks GraphQL response.
+
+    Supports both Bookmarks and BookmarkFolderTimeline responses.
+    Response path: data.bookmark_timeline_v2.timeline.instructions
+    (different from TweetDetail's threaded_conversation_with_injections_v2)
+
+    Returns:
+        (entries, cursors) — entries can be passed to extract_tweet_data(),
+        cursors is a dict with optional 'top' and 'bottom' keys.
+    """
+    if not response or "data" not in response:
+        return [], {}
+
+    data = response["data"]
+
+    # Try multiple response paths:
+    # Path 1: bookmark_timeline_v2 (Bookmarks endpoint)
+    instructions = (
+        data.get("bookmark_timeline_v2", {})
+        .get("timeline", {})
+        .get("instructions", [])
+    )
+    # Path 2: bookmark_folder_timeline (BookmarkFolderTimeline endpoint)
+    if not instructions:
+        instructions = (
+            data.get("bookmark_folder_timeline", {})
+            .get("timeline", {})
+            .get("instructions", [])
+        )
+    # Path 3: generic scan for instructions in nested timeline objects
+    if not instructions:
+        for v in data.values():
+            if isinstance(v, dict):
+                timeline = v.get("timeline", {})
+                if isinstance(timeline, dict):
+                    inst = timeline.get("instructions", [])
+                    if inst:
+                        instructions = inst
+                        break
+
+    entries = []
+    cursors = {}
+
+    for instruction in instructions:
+        inst_type = instruction.get("type", "")
+
+        if inst_type == "TimelineAddEntries":
+            for entry in instruction.get("entries", []):
+                entry_id = entry.get("entryId", "")
+                content = entry.get("content", {})
+
+                # Extract cursor entries
+                if entry_id.startswith("cursor-"):
+                    cursor_type = content.get("cursorType", "")
+                    value = content.get("value", "")
+                    if cursor_type == "Top" and value:
+                        cursors["top"] = value
+                    elif cursor_type == "Bottom" and value:
+                        cursors["bottom"] = value
+                    continue
+
+                # Skip promoted content
+                if "promoted" in entry_id.lower():
+                    continue
+
+                entries.append(entry)
+
+        elif inst_type == "TimelineAddToModule":
+            for item in instruction.get("moduleItems", []):
+                entries.append(item)
+
+    return entries, cursors
+
+
 # ---------------------------------------------------------------------------
 # Dynamic queryId resolution — from baoyu graphql.ts
 # ---------------------------------------------------------------------------
@@ -298,6 +540,40 @@ def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
             if qid:
                 result["ArticleEntityResultByRestId"] = qid
                 logger.debug(f"Resolved ArticleEntityResultByRestId: queryId={qid}")
+
+        # Bookmarks — typically in main.<hash>.js (same bundle as TweetResultByRestId)
+        # Try the main bundle first, which often contains timeline-related operations
+        if main_match and "Bookmarks" not in result:
+            chunk_hash = main_match.group(1)
+            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
+            qid = _fetch_and_extract_query_id(chunk_url, "Bookmarks", ua)
+            if qid:
+                result["Bookmarks"] = qid
+                logger.debug(f"Resolved Bookmarks: queryId={qid}")
+
+        # BookmarkFoldersSlice & BookmarkFolderTimeline
+        # Try dedicated bundle.BookmarkFolders.<hash>a.js first
+        bkf_match = re.search(r'bundle\.BookmarkFolders:"([a-zA-Z0-9]+)"', html)
+        if bkf_match:
+            chunk_hash = bkf_match.group(1)
+            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.BookmarkFolders.{chunk_hash}a.js"
+            for op in ("BookmarkFoldersSlice", "BookmarkFolderTimeline"):
+                if op not in result:
+                    qid = _fetch_and_extract_query_id(chunk_url, op, ua)
+                    if qid:
+                        result[op] = qid
+                        logger.debug(f"Resolved {op}: queryId={qid}")
+
+        # Also try main bundle for bookmark folder ops (sometimes bundled together)
+        if main_match:
+            chunk_hash = main_match.group(1)
+            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
+            for op in ("BookmarkFoldersSlice", "BookmarkFolderTimeline"):
+                if op not in result:
+                    qid = _fetch_and_extract_query_id(chunk_url, op, ua)
+                    if qid:
+                        result[op] = qid
+                        logger.debug(f"Resolved {op}: queryId={qid}")
 
     except Exception as e:
         logger.warning(f"Dynamic queryId resolution failed ({e}), using fallbacks")
@@ -616,6 +892,9 @@ def _fallback_query_ids() -> Dict[str, str]:
         "TweetDetail": FALLBACK_TWEET_DETAIL_QUERY_ID,
         "TweetResultByRestId": FALLBACK_TWEET_RESULT_QUERY_ID,
         "ArticleEntityResultByRestId": FALLBACK_ARTICLE_QUERY_ID,
+        "Bookmarks": FALLBACK_BOOKMARKS_QUERY_ID,
+        "BookmarkFoldersSlice": FALLBACK_BOOKMARK_FOLDERS_QUERY_ID,
+        "BookmarkFolderTimeline": FALLBACK_BOOKMARK_FOLDER_TIMELINE_QUERY_ID,
     }
 
 

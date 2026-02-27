@@ -319,6 +319,14 @@ def save_to_markdown(item: UnifiedContent, filepath: str = None):
     # Platform subdirectory
     folder = PLATFORM_FOLDER_MAP.get(item.source_type, "Other")
     platform_dir = base_dir / folder
+
+    # Category subdirectory (e.g., "bookmarks/OpenClaw" for bookmark folders)
+    if item.category:
+        parts = item.category.split("/")
+        safe_parts = [_sanitize_filename(p) for p in parts if p]
+        if safe_parts:
+            platform_dir = platform_dir / Path(*safe_parts)
+
     platform_dir.mkdir(parents=True, exist_ok=True)
 
     # Build filename and resolve conflicts
