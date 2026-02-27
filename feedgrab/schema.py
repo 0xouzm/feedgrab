@@ -259,9 +259,14 @@ def from_xiaohongshu(note: dict) -> UnifiedContent:
         content=note.get('content', ''),
         url=note.get('url', ''),
         media_type=MediaType.IMAGE if note.get('images') else MediaType.TEXT,
+        tags=note.get('tags', []),
         extra={
+            "author_name": note.get('author', ''),
             "likes": note.get('likes', 0),
             "collects": note.get('collects', 0),
+            "comments": note.get('comments', 0),
+            "images": note.get('images', []),
+            "date": note.get('date', ''),
         },
     )
 

@@ -79,6 +79,12 @@ async def fetch_xhs(url: str) -> Dict[str, Any]:
             "author": data.get("author", ""),
             "url": url,
             "platform": "xhs",
+            "tags": data.get("tags", []),
+            "images": data.get("images", []),
+            "likes": data.get("likes", 0),
+            "collects": data.get("collects", 0),
+            "comments": data.get("comments", 0),
+            "date": data.get("date", ""),
         }
     except RuntimeError:
         # Playwright not installed

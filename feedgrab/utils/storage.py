@@ -28,6 +28,36 @@ def _format_twitter_datetime(created_at: str) -> str:
         return created_at[:16] if len(created_at) >= 16 else created_at
 
 
+def _parse_xhs_date(raw: str) -> str:
+    """Parse XHS date string like '02-18 福建' into 'YYYY-MM-DD'.
+
+    XHS only shows MM-DD without year. We assume current year,
+    but if the date is in the future, use last year.
+    """
+    if not raw:
+        return ""
+    match = re.match(r"(\d{2})-(\d{2})", raw.strip())
+    if not match:
+        return ""
+    month, day = int(match.group(1)), int(match.group(2))
+    now = datetime.now()
+    try:
+        candidate = datetime(now.year, month, day)
+        if candidate > now:
+            candidate = datetime(now.year - 1, month, day)
+        return candidate.strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+
+
+def _parse_xhs_location(raw: str) -> str:
+    """Extract location from XHS date string like '02-18 福建' → '福建'."""
+    if not raw:
+        return ""
+    match = re.match(r"\d{2}-\d{2}\s+(.+)", raw.strip())
+    return match.group(1).strip() if match else ""
+
+
 # SourceType → subdirectory name
 PLATFORM_FOLDER_MAP = {
     SourceType.TWITTER: "X",
@@ -117,6 +147,16 @@ def _generate_filename(item: UnifiedContent) -> str:
             raw = f"{author_display}：{raw_title}"
         else:
             raw = raw_title
+    elif item.source_type == SourceType.XIAOHONGSHU:
+        author_display = (extra.get("author_name", "") or item.source_name or "").strip()
+        published = _parse_xhs_date(extra.get("date", ""))
+
+        if author_display and published:
+            raw = f"{author_display}_{published}：{raw_title}"
+        elif author_display:
+            raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
     else:
         raw = raw_title
 
@@ -153,17 +193,22 @@ def _resolve_filepath(directory: Path, name: str, item_id: str) -> Path:
 def _format_markdown(item: UnifiedContent) -> str:
     """Build the full Markdown content with Obsidian-compatible YAML front matter."""
     is_twitter = item.source_type == SourceType.TWITTER
+    is_xhs = item.source_type == SourceType.XIAOHONGSHU
     extra = item.extra or {}
 
-    # --- Parse published date from Twitter's created_at ---
+    # --- Parse published date ---
     published = ""
     if extra.get("created_at"):
+        # Twitter: RFC 2822
         try:
             from email.utils import parsedate_to_datetime
             dt = parsedate_to_datetime(extra["created_at"])
             published = dt.strftime("%Y-%m-%d")
         except Exception:
             pass
+    elif is_xhs and extra.get("date"):
+        # XHS: "02-18 福建"
+        published = _parse_xhs_date(extra["date"])
     fetched_date = item.fetched_at[:10] if item.fetched_at else ""
 
     # --- Title (escape quotes for YAML) ---
@@ -196,6 +241,16 @@ def _format_markdown(item: UnifiedContent) -> str:
             val = extra.get(metric, 0)
             if val and str(val) != "0":
                 fm_lines.append(f"{metric}: {val}")
+
+    # XHS metrics
+    if is_xhs:
+        for metric in ("likes", "collects", "comments"):
+            val = extra.get(metric, 0)
+            if val:
+                fm_lines.append(f"{metric}: {val}")
+        location = _parse_xhs_location(extra.get("date", ""))
+        if location:
+            fm_lines.append(f'location: "{location}"')
 
     # Bilibili extras
     if item.source_type == SourceType.BILIBILI:
@@ -259,6 +314,21 @@ def _format_markdown(item: UnifiedContent) -> str:
                     fm_lines.append(" · ".join(meta))
                     fm_lines.append(text)
                     fm_lines.append("")
+    elif is_xhs:
+        # XHS: cover image → title → content → remaining images
+        images = extra.get("images", [])
+        if images:
+            fm_lines.append(f"![cover]({images[0]})")
+            fm_lines.append("")
+        if item.title and item.title.strip():
+            fm_lines.append(f"# {item.title.strip()}")
+            fm_lines.append("")
+        fm_lines.append(item.content)
+        if len(images) > 1:
+            fm_lines.append("")
+            for i, img in enumerate(images[1:], 2):
+                fm_lines.append(f"![{i}]({img})")
+                fm_lines.append("")
     else:
         # Non-Twitter: add a title heading + full content
         if item.title and item.title.strip():

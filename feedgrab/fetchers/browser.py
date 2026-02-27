@@ -72,16 +72,50 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
                 data = await page.evaluate("""() => {
                     const title = document.querySelector('#detail-title');
                     const desc = document.querySelector('#detail-desc');
-                    const meta = document.querySelector('.bottom-container');
                     const author = document.querySelector('.author-wrapper .username')
-                        || document.querySelector('.interaction-container');
+                        || document.querySelector('.author-container .username');
+
+                    // 正文（不含标签文本，标签单独提取）
+                    let content = '';
+                    if (desc) {
+                        const clone = desc.cloneNode(true);
+                        clone.querySelectorAll('a.tag').forEach(a => a.remove());
+                        content = clone.innerText.trim();
+                    }
+
+                    // 话题标签
+                    const tags = desc
+                        ? Array.from(desc.querySelectorAll('a.tag'))
+                            .map(a => a.innerText.trim().replace(/^#+/, ''))
+                            .filter(Boolean)
+                        : [];
+
+                    // 笔记图片（排除头像等，去重 swiper 循环副本）
+                    const images = [...new Set(
+                        Array.from(
+                            document.querySelectorAll('.swiper-wrapper .note-slider-img img')
+                        ).map(img => img.src || '')
+                         .filter(src => src.startsWith('http'))
+                    )];
+
+                    // 互动数据：点赞、收藏、评论
+                    const counts = Array.from(
+                        document.querySelectorAll('.engage-bar .count')
+                    ).map(el => el.innerText.trim());
+
+                    // 日期 + IP属地（如 "02-18 福建"）
+                    const dateEl = document.querySelector('.bottom-container .date');
+
                     return {
                         title: title ? title.innerText.trim() : '',
-                        content: [
-                            desc ? desc.innerText.trim() : '',
-                            meta ? meta.innerText.trim() : '',
-                        ].filter(Boolean).join('\\n\\n'),
+                        content: content,
                         author: author ? author.innerText.trim().split('\\n')[0] : '',
+                        tags: tags,
+                        images: images,
+                        likes: parseInt(counts[0]) || 0,
+                        collects: parseInt(counts[1]) || 0,
+                        comments: parseInt(counts[2]) || 0,
+                        date: dateEl ? dateEl.innerText.trim() : '',
                     };
                 }""")
 
@@ -90,6 +124,12 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
                     "content": (data["content"] or "").strip(),
                     "url": page.url,
                     "author": (data["author"] or "").strip(),
+                    "tags": data.get("tags", []),
+                    "images": data.get("images", []),
+                    "likes": data.get("likes", 0),
+                    "collects": data.get("collects", 0),
+                    "comments": data.get("comments", 0),
+                    "date": data.get("date", ""),
                 }
             else:
                 # Generic fallback for non-XHS pages
