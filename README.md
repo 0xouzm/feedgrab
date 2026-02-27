@@ -52,6 +52,10 @@ feedgrab https://x.com/i/bookmarks/2015311287715340624  # 指定书签文件夹
 feedgrab https://x.com/iBigQiang                        # 抓取全部推文
 X_USER_TWEETS_SINCE=2026-02-01 feedgrab https://x.com/iBigQiang  # 指定日期之后
 
+# 批量抓取小红书作者笔记（需要 XHS_USER_NOTES_ENABLED=true + feedgrab login xhs）
+feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
+XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...  # 指定日期之后
+
 # 批量抓取多个 URL
 feedgrab https://url1.com https://url2.com
 
@@ -126,14 +130,14 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright | — |
-| 小红书 | Jina → **Playwright 深度抓取*** | — |
+| 小红书 | Jina → **Playwright 深度抓取** (单篇 + **作者批量**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙播客 | — | 通过 Claude Code 技能 |
 | Apple Podcasts | — | 通过 Claude Code 技能 |
 | 任意网页 | Jina 兜底 | — |
 
-> \*小红书需要一次性登录：`feedgrab login xhs`（保存 session 供 Playwright 深度抓取使用，提取图片、互动数据、标签、发布日期等完整元数据）
+> \*小红书需要一次性登录：`feedgrab login xhs`。支持单篇抓取（图片、互动数据、标签、日期等完整元数据）和**作者主页批量抓取**（Tier 0 首页提取 + Tier 1 滚动加载 + Tier 2 逐篇深度抓取）
 >
 > YouTube Whisper 转录需要 `GROQ_API_KEY` — 从 [Groq](https://console.groq.com/keys) 免费获取
 
@@ -221,6 +225,8 @@ output/
 │   ├── bookmarks/        #   全部书签
 │   └── bookmarks_xxx/    #   书签文件夹（按名称）
 ├── XHS/                  # 小红书
+│   ├── index/            #   去重索引 + 批量抓取记录
+│   └── notes_xxx/        #   作者笔记（按作者名分目录）
 ├── WeChat/               # 微信公众号
 ├── YouTube/              # YouTube
 ├── Bilibili/             # B 站
@@ -365,6 +371,10 @@ cp .env.example .env
 | `X_USER_TWEET_MAX_PAGES` | 否 | 用户推文最大分页数（默认：`50`） |
 | `X_USER_TWEET_DELAY` | 否 | 用户推文处理间隔秒数（默认：`2.0`） |
 | `X_USER_TWEETS_SINCE` | 否 | 仅抓取该日期之后的推文（如 `2025-10-01`，留空=全部） |
+| `XHS_USER_NOTES_ENABLED` | 否 | 启用小红书作者批量抓取（默认：`false`） |
+| `XHS_USER_NOTE_MAX_SCROLLS` | 否 | 作者主页最大滚动次数（默认：`50`） |
+| `XHS_USER_NOTE_DELAY` | 否 | 笔记处理间隔秒数（默认：`3.0`） |
+| `XHS_USER_NOTES_SINCE` | 否 | 仅抓取该日期之后的笔记（如 `2026-02-01`，留空=全部） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `GROQ_API_KEY` | 仅 Whisper | 从 https://console.groq.com/keys 免费获取 |
@@ -398,7 +408,8 @@ feedgrab/
 │   │   ├── twitter_user_tweets.py# 用户推文批量抓取（分页+日期过滤+会话去重+RT跳过）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
 │   │   ├── wechat.py          # Jina → Playwright 兜底
-│   │   └── xhs.py             # Jina → Playwright + Session 兜底
+│   │   ├── xhs.py             # Jina → Playwright + Session 兜底
+│   │   └── xhs_user_notes.py  # 小红书作者批量抓取（__INITIAL_STATE__ + XHR 拦截 + 滚动加载）
 │   └── utils/
 │       ├── storage.py         # 按平台分目录 Markdown + JSON 双重输出
 │       └── dedup.py           # 全局去重索引（跨模式统一 item_id 追踪）

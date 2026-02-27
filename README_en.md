@@ -44,6 +44,10 @@ feedgrab https://mp.weixin.qq.com/s/abc123
 # Fetch a tweet (with GraphQL deep fetch if cookies configured)
 feedgrab https://x.com/elonmusk/status/123456
 
+# Batch fetch XHS author notes (requires XHS_USER_NOTES_ENABLED=true + feedgrab login xhs)
+feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
+XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...  # Only after date
+
 # Fetch multiple URLs
 feedgrab https://url1.com https://url2.com
 
@@ -111,14 +115,14 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright | — |
-| Xiaohongshu (小红书) | Jina → **Playwright deep fetch*** | — |
+| Xiaohongshu (小红书) | Jina → **Playwright deep fetch** (single + **author batch**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
 | Apple Podcasts | — | via Claude Code skill |
 | Any web page | Jina fallback | — |
 
-> \*XHS requires a one-time login: `feedgrab login xhs` (saves session for Playwright deep fetch — extracts images, engagement metrics, tags, publish dates, and full metadata)
+> \*XHS requires a one-time login: `feedgrab login xhs`. Supports single note fetch (images, engagement metrics, tags, dates, full metadata) and **author profile batch fetch** (Tier 0 initial page extraction + Tier 1 scroll loading + Tier 2 per-note deep fetch)
 >
 > YouTube Whisper transcription requires `GROQ_API_KEY` — get a free key from [Groq](https://console.groq.com/keys)
 
@@ -150,6 +154,8 @@ output/
 ├── X/                    # Twitter/X
 │   └── AuthorName_YYYY-MM-DD：Tweet Title.md
 ├── XHS/                  # Xiaohongshu
+│   ├── index/            #   Dedup index + batch fetch records
+│   └── notes_xxx/        #   Author notes (subdirectory per author)
 │   └── AuthorName_YYYY-MM-DD：Note Title.md
 ├── WeChat/               # WeChat articles
 ├── YouTube/
@@ -284,6 +290,10 @@ cp .env.example .env
 | `X_FETCH_AUTHOR_REPLIES` | No | Collect author's replies to commenters (default: `false`) |
 | `X_FETCH_ALL_COMMENTS` | No | Collect all comments under tweet (default: `false`) |
 | `X_MAX_COMMENTS` | No | Max comments to collect (default: `50`) |
+| `XHS_USER_NOTES_ENABLED` | No | Enable XHS author batch fetch (default: `false`) |
+| `XHS_USER_NOTE_MAX_SCROLLS` | No | Max scroll iterations on author profile (default: `50`) |
+| `XHS_USER_NOTE_DELAY` | No | Delay between note fetches in seconds (default: `3.0`) |
+| `XHS_USER_NOTES_SINCE` | No | Only fetch notes after this date (e.g. `2026-02-01`, empty=all) |
 | `TG_API_ID` | Telegram only | From https://my.telegram.org |
 | `TG_API_HASH` | Telegram only | From https://my.telegram.org |
 | `GROQ_API_KEY` | Whisper only | From https://console.groq.com/keys (free) |
@@ -316,7 +326,8 @@ feedgrab/
 │   │   ├── twitter_thread.py  # Thread reconstruction + comment classification
 │   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)
 │   │   ├── wechat.py          # Jina → Playwright fallback
-│   │   └── xhs.py             # Jina → Playwright + session fallback
+│   │   ├── xhs.py             # Jina → Playwright + session fallback
+│   │   └── xhs_user_notes.py  # XHS author batch fetch (__INITIAL_STATE__ + XHR intercept + scroll)
 │   └── utils/
 │       └── storage.py         # Per-platform Markdown + JSON dual output
 ├── sessions/                  # Cookie/session storage (auto-created, git-ignored)
