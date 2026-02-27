@@ -315,18 +315,15 @@ def _format_markdown(item: UnifiedContent) -> str:
                     fm_lines.append(text)
                     fm_lines.append("")
     elif is_xhs:
-        # XHS: cover image → title → content → remaining images
-        images = extra.get("images", [])
-        if images:
-            fm_lines.append(f"![cover]({images[0]})")
-            fm_lines.append("")
+        # XHS: 文字在前，图片相册在后（按翻页顺序）
         if item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
         fm_lines.append(item.content)
-        if len(images) > 1:
+        images = extra.get("images", [])
+        if images:
             fm_lines.append("")
-            for i, img in enumerate(images[1:], 2):
+            for i, img in enumerate(images, 1):
                 fm_lines.append(f"![{i}]({img})")
                 fm_lines.append("")
     else:

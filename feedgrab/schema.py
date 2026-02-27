@@ -252,20 +252,22 @@ def from_wechat(article: dict) -> UnifiedContent:
 
 
 def from_xiaohongshu(note: dict) -> UnifiedContent:
+    images = note.get('images', [])
     return UnifiedContent(
         source_type=SourceType.XIAOHONGSHU,
         source_name=note.get('author', ''),
         title=note.get('title', ''),
         content=note.get('content', ''),
         url=note.get('url', ''),
-        media_type=MediaType.IMAGE if note.get('images') else MediaType.TEXT,
+        media_type=MediaType.IMAGE if images else MediaType.TEXT,
         tags=note.get('tags', []),
         extra={
             "author_name": note.get('author', ''),
+            "cover_image": images[0] if images else "",
             "likes": note.get('likes', 0),
             "collects": note.get('collects', 0),
             "comments": note.get('comments', 0),
-            "images": note.get('images', []),
+            "images": images,
             "date": note.get('date', ''),
         },
     )
