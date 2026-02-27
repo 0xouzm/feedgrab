@@ -30,15 +30,19 @@ async def fetch_xhs(url: str) -> Dict[str, Any]:
     try:
         logger.info(f"[XHS] Tier 1 — Jina: {url}")
         data = fetch_via_jina(url)
-        if data.get("content"):
+        title = data.get("title", "")
+        content = data.get("content", "")
+        # Detect login page: Jina sometimes returns the login page instead of note
+        is_login_page = "小红书 - 你的生活" in title or "登录后推荐" in content
+        if content and not is_login_page:
             return {
-                "title": data["title"],
-                "content": data["content"],
+                "title": title,
+                "content": content,
                 "author": data.get("author", ""),
                 "url": url,
                 "platform": "xhs",
             }
-        logger.warning("[XHS] Jina returned empty content, falling back to browser")
+        logger.warning("[XHS] Jina returned empty/login page, falling back to browser")
     except Exception as e:
         logger.warning(f"[XHS] Jina failed ({e}), falling back to browser")
 
@@ -77,6 +81,7 @@ async def fetch_xhs(url: str) -> Dict[str, Any]:
             "title": data["title"],
             "content": data["content"],
             "author": data.get("author", ""),
+            "author_url": data.get("author_url", ""),
             "url": url,
             "platform": "xhs",
             "tags": data.get("tags", []),

@@ -165,7 +165,7 @@ def _generate_filename(item: UnifiedContent) -> str:
         else:
             raw = raw_title
     elif item.source_type == SourceType.XIAOHONGSHU:
-        author_display = (extra.get("author_name", "") or item.source_name or "").strip()
+        author_display = (item.source_name or "").strip()
         published = _parse_xhs_date(extra.get("date", ""))
 
         if author_display and published:
@@ -197,7 +197,7 @@ def _resolve_filepath(directory: Path, name: str, item_id: str) -> Path:
     # Check if the existing file belongs to the same item (same id → overwrite)
     try:
         with open(candidate, "r", encoding="utf-8") as f:
-            head = f.read(512)
+            head = f.read(2048)
         if f"item_id: {item_id}" in head:
             return candidate
     except OSError:
@@ -240,8 +240,10 @@ def _format_markdown(item: UnifiedContent) -> str:
         f'  - "{item.source_name}"',
     ]
 
-    if extra.get("author_name"):
+    if extra.get("author_name") and not is_xhs:
         fm_lines.append(f'author_name: "{extra["author_name"]}"')
+    if is_xhs and extra.get("author_url"):
+        fm_lines.append(f'author_url: "{extra["author_url"]}"')
 
     if published:
         fm_lines.append(f"published: {published}")
@@ -278,8 +280,10 @@ def _format_markdown(item: UnifiedContent) -> str:
 
     # Tags (from tweet hashtags or other sources)
     if item.tags:
+        # XHS: only top 3 tags in front matter (full list goes in body)
+        fm_tags = item.tags[:3] if is_xhs else item.tags
         fm_lines.append("tags:")
-        for tag in item.tags:
+        for tag in fm_tags:
             fm_lines.append(f'  - "{tag}"')
 
     # Internal tracking
@@ -332,14 +336,20 @@ def _format_markdown(item: UnifiedContent) -> str:
                     fm_lines.append(text)
                     fm_lines.append("")
     elif is_xhs:
-        # XHS: 文字在前，图片相册在后（按翻页顺序）
+        # XHS: 文字在前，标签在中，图片相册在后（按翻页顺序）
         if item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
-        fm_lines.append(item.content)
+        if item.content:
+            fm_lines.append(item.content)
+            fm_lines.append("")
+        # 全部标签（保持小红书原始 #标签 格式）
+        if item.tags:
+            tag_line = " ".join(f"#{t}" for t in item.tags)
+            fm_lines.append(tag_line)
+            fm_lines.append("")
         images = extra.get("images", [])
         if images:
-            fm_lines.append("")
             for i, img in enumerate(images, 1):
                 fm_lines.append(f"![{i}]({img})")
                 fm_lines.append("")

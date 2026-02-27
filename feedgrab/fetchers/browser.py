@@ -106,13 +106,24 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
                         document.querySelectorAll('.engage-bar .count')
                     ).map(el => el.innerText.trim());
 
-                    // 日期 + IP属地（如 "02-18 福建"）
+                    // 日期 + IP属地（如 "02-18 福建" 或 "编辑于 2025-08-16"）
                     const dateEl = document.querySelector('.bottom-container .date');
+
+                    // 作者主页链接（去掉追踪参数）
+                    let authorUrl = '';
+                    const authorLink = document.querySelector('.author-wrapper a[href*="/user/profile/"]');
+                    if (authorLink) {
+                        try {
+                            const u = new URL(authorLink.href);
+                            authorUrl = u.origin + u.pathname;
+                        } catch(e) {}
+                    }
 
                     return {
                         title: title ? title.innerText.trim() : '',
                         content: content,
                         author: author ? author.innerText.trim().split('\\n')[0] : '',
+                        authorUrl: authorUrl,
                         tags: tags,
                         images: images,
                         likes: parseInt(counts[0]) || 0,
@@ -127,6 +138,7 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
                     "content": (data["content"] or "").strip(),
                     "url": page.url,
                     "author": (data["author"] or "").strip(),
+                    "author_url": data.get("authorUrl", ""),
                     "tags": data.get("tags", []),
                     "images": data.get("images", []),
                     "likes": data.get("likes", 0),

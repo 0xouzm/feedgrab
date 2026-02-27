@@ -262,7 +262,7 @@ def from_xiaohongshu(note: dict) -> UnifiedContent:
         media_type=MediaType.IMAGE if images else MediaType.TEXT,
         tags=note.get('tags', []),
         extra={
-            "author_name": note.get('author', ''),
+            "author_url": note.get('author_url', ''),
             "cover_image": images[0] if images else "",
             "likes": note.get('likes', 0),
             "collects": note.get('collects', 0),
