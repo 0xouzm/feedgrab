@@ -291,6 +291,16 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
         item_id = item_id_from_url(tweet_url)
         title_preview = _clean_title(tweet_data.get("text", "")[:80])
 
+        # Parse published date
+        published = ""
+        if tweet_data.get("created_at"):
+            try:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(tweet_data["created_at"])
+                published = dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
         # In-batch dedup
         if tweet_id in processed_ids:
             logger.debug(f"[Bookmarks] [{idx + 1}/{total}] 批内重复: {tweet_id}")
@@ -298,8 +308,10 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
             bookmark_list.append({
                 "url": tweet_url,
                 "tweet_id": tweet_id,
+                "item_id": item_id,
                 "author": f"@{author}",
                 "author_name": author_name,
+                "published": published,
                 "title": title_preview,
                 "status": "skipped",
                 "error": "批内重复",
@@ -315,8 +327,10 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
             bookmark_list.append({
                 "url": tweet_url,
                 "tweet_id": tweet_id,
+                "item_id": item_id,
                 "author": f"@{author}",
                 "author_name": author_name,
+                "published": published,
                 "title": title_preview,
                 "status": "skipped",
                 "error": "",
@@ -383,8 +397,10 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
             bookmark_list.append({
                 "url": tweet_url,
                 "tweet_id": tweet_id,
+                "item_id": item_id,
                 "author": f"@{author}",
                 "author_name": author_name,
+                "published": published,
                 "title": title_preview,
                 "status": "fetched",
                 "error": "",
@@ -404,8 +420,10 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
             bookmark_list.append({
                 "url": tweet_url,
                 "tweet_id": tweet_id,
+                "item_id": item_id,
                 "author": f"@{author}",
                 "author_name": author_name,
+                "published": published,
                 "title": title_preview,
                 "status": "failed",
                 "error": error_msg[:200],

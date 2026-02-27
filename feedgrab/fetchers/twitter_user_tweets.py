@@ -288,6 +288,7 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
         tweet_url = f"https://x.com/{author}/status/{tweet_id}"
         item_id = item_id_from_url(tweet_url)
         title_preview = _clean_title(tweet_data.get("text", "")[:80])
+        published = _parse_tweet_date(tweet_data.get("created_at", ""))
 
         # Skip retweets (only original tweets)
         if tweet_data.get("_raw_result", {}).get("legacy", {}).get("retweeted_status_result"):
@@ -296,8 +297,10 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
             tweet_list.append({
                 "url": tweet_url,
                 "tweet_id": tweet_id,
+                "item_id": item_id,
                 "author": f"@{author}",
                 "author_name": author_name,
+                "published": published,
                 "title": title_preview,
                 "status": "skipped",
                 "error": "转推",
@@ -318,8 +321,10 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
                 tweet_list.append({
                     "url": tweet_url,
                     "tweet_id": tweet_id,
+                    "item_id": item_id,
                     "author": f"@{author}",
                     "author_name": author_name,
+                    "published": published,
                     "title": title_preview,
                     "status": "skipped",
                     "error": "自回复（线程内）",
@@ -335,8 +340,10 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
                 tweet_list.append({
                     "url": tweet_url,
                     "tweet_id": tweet_id,
+                    "item_id": item_id,
                     "author": f"@{author}",
                     "author_name": author_name,
+                    "published": published,
                     "title": title_preview,
                     "status": "skipped",
                     "error": "会话已处理",
@@ -350,8 +357,10 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
             tweet_list.append({
                 "url": tweet_url,
                 "tweet_id": tweet_id,
+                "item_id": item_id,
                 "author": f"@{author}",
                 "author_name": author_name,
+                "published": published,
                 "title": title_preview,
                 "status": "skipped",
                 "error": "批内重复",
@@ -370,8 +379,10 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
             tweet_list.append({
                 "url": tweet_url,
                 "tweet_id": tweet_id,
+                "item_id": item_id,
                 "author": f"@{author}",
                 "author_name": author_name,
+                "published": published,
                 "title": title_preview,
                 "status": "skipped",
                 "error": "",
@@ -449,8 +460,10 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
             tweet_list.append({
                 "url": tweet_url,
                 "tweet_id": tweet_id,
+                "item_id": item_id,
                 "author": f"@{author}",
                 "author_name": author_name,
+                "published": published,
                 "title": title_preview,
                 "status": "fetched",
                 "error": "",
@@ -473,8 +486,10 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
             tweet_list.append({
                 "url": tweet_url,
                 "tweet_id": tweet_id,
+                "item_id": item_id,
                 "author": f"@{author}",
                 "author_name": author_name,
+                "published": published,
                 "title": title_preview,
                 "status": "failed",
                 "error": error_msg[:200],

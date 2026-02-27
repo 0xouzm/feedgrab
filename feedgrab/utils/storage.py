@@ -83,7 +83,7 @@ def _sanitize_filename(name: str) -> str:
 def _generate_filename(item: UnifiedContent) -> str:
     """Build a clean filename (without extension) from an item.
 
-    Twitter format: "作者名：标题"
+    Twitter format: "作者名_YYYY-MM-DD：标题"
     Other platforms: title → content prefix → id
     """
     extra = item.extra or {}
@@ -96,12 +96,25 @@ def _generate_filename(item: UnifiedContent) -> str:
     else:
         raw_title = item.id
 
-    # Twitter: prepend author display name
+    # Twitter: prepend author display name + published date
     if item.source_type == SourceType.TWITTER:
         author_display = extra.get("author_name", "") or item.source_name or ""
         # Remove @ prefix for cleaner filename
         author_display = author_display.lstrip("@").strip()
-        if author_display:
+
+        # Parse published date from Twitter's created_at
+        published = ""
+        if extra.get("created_at"):
+            try:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(extra["created_at"])
+                published = dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        if author_display and published:
+            raw = f"{author_display}_{published}：{raw_title}"
+        elif author_display:
             raw = f"{author_display}：{raw_title}"
         else:
             raw = raw_title
