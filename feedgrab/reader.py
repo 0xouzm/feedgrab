@@ -6,6 +6,7 @@ The core dispatcher: give it a URL, get back structured content.
 """
 
 import asyncio
+import re
 from urllib.parse import urlparse
 from loguru import logger
 from typing import Dict, Any, Optional
@@ -39,6 +40,20 @@ class UniversalReader:
             # Bookmark URLs: x.com/i/bookmarks or x.com/i/bookmarks/{folderId}
             if "/i/bookmarks" in path:
                 return "twitter_bookmarks"
+            # Single tweet: x.com/{user}/status/{id}
+            if "/status/" in path:
+                return "twitter"
+            # Profile URL: x.com/{username} (no /status/ in path)
+            # Exclude system paths: /i/, /home, /explore, /search, /settings, /notifications
+            if re.match(r'^/[a-zA-Z0-9_]{1,15}(/.*)?$', path):
+                first_segment = path.strip("/").split("/")[0]
+                system_paths = {
+                    "i", "home", "explore", "search", "settings",
+                    "notifications", "messages", "compose", "login",
+                    "signup", "tos", "privacy", "hashtag",
+                }
+                if first_segment.lower() not in system_paths:
+                    return "twitter_user_tweets"
             return "twitter"
         if "youtube.com" in domain or "youtu.be" in domain:
             return "youtube"
@@ -75,6 +90,10 @@ class UniversalReader:
         # Bookmark batch mode: special flow, returns summary
         if platform == "twitter_bookmarks":
             return await self._read_bookmarks(url)
+
+        # User tweets batch mode: special flow, returns summary
+        if platform == "twitter_user_tweets":
+            return await self._read_user_tweets(url)
 
         try:
             content = await self._fetch(platform, url)
@@ -194,6 +213,41 @@ class UniversalReader:
             source_type=SourceType.TWITTER,
             source_name="bookmarks",
             title=f"书签抓取 {result['fetched']}/{result['total']}",
+            content=summary,
+            url=url,
+        )
+
+    async def _read_user_tweets(self, url: str) -> UnifiedContent:
+        """Batch-fetch user tweets, stream-save each tweet, return summary."""
+        from feedgrab.config import x_user_tweets_enabled
+
+        if not x_user_tweets_enabled():
+            raise ValueError(
+                "账号推文批量抓取未启用。请在 .env 中设置 X_USER_TWEETS_ENABLED=true"
+            )
+
+        from feedgrab.fetchers.twitter_user_tweets import fetch_user_tweets
+        from feedgrab.fetchers.twitter_cookies import load_twitter_cookies, has_required_cookies
+
+        cookies = load_twitter_cookies()
+        if not has_required_cookies(cookies):
+            raise RuntimeError(
+                "账号推文抓取需要 Twitter Cookie，请先运行: feedgrab login twitter"
+            )
+
+        result = await fetch_user_tweets(url, cookies)
+
+        summary = (
+            f"账号推文批量抓取完成\n"
+            f"总数: {result['total']}, 成功: {result['fetched']}, "
+            f"跳过: {result['skipped']}, 失败: {result['failed']}\n"
+            f"批量记录: {result.get('list_path', '')}"
+        )
+
+        return UnifiedContent(
+            source_type=SourceType.TWITTER,
+            source_name="user_tweets",
+            title=f"账号抓取 {result['fetched']}/{result['total']}",
             content=summary,
             url=url,
         )

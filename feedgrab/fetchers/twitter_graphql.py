@@ -38,6 +38,8 @@ FALLBACK_ARTICLE_QUERY_ID = "id8pHQbQi7eZ6P9mA1th1Q"
 FALLBACK_BOOKMARKS_QUERY_ID = "-LGfdImKeQz0xS_jjUwzlA"
 FALLBACK_BOOKMARK_FOLDERS_QUERY_ID = "i78YDd0Tza-dV4SYs58kRg"
 FALLBACK_BOOKMARK_FOLDER_TIMELINE_QUERY_ID = "8HoabOvl7jl9IC1Aixj-vg"
+FALLBACK_USER_BY_SCREEN_NAME_QUERY_ID = "k5XapwcSikNsEsILW5FvgA"
+FALLBACK_USER_TWEETS_QUERY_ID = "V7H0Ap3_Hh2FyS75OCDO3Q"
 
 # ---------------------------------------------------------------------------
 # Feature switches — per-operation, from baoyu constants.ts
@@ -154,6 +156,26 @@ BOOKMARK_FIELD_TOGGLES = {
     "withGrokAnalyze": False,
     "withDisallowedReplyControls": False,
 }
+
+# ---------------------------------------------------------------------------
+# UserByScreenName & UserTweets feature switches
+# ---------------------------------------------------------------------------
+
+USER_BY_SCREEN_NAME_FEATURES = {
+    "hidden_profile_likes_enabled": True,
+    "hidden_profile_subscriptions_enabled": True,
+    "responsive_web_graphql_exclude_directive_enabled": True,
+    "verified_phone_label_enabled": False,
+    "highlights_tweets_tab_ui_enabled": True,
+    "responsive_web_twitter_article_notes_tab_enabled": True,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "subscriptions_verification_info_is_identity_verified_enabled": True,
+}
+
+USER_TWEETS_FEATURES = dict(TWEET_DETAIL_FEATURES)
+USER_TWEETS_FEATURES["creator_subscriptions_tweet_preview_api_enabled"] = True
 
 # ---------------------------------------------------------------------------
 # Rate limiting (safety measure — original baoyu has none)
@@ -412,6 +434,159 @@ def fetch_bookmark_folder_page(
     )
 
 
+def fetch_user_by_screen_name(screen_name: str, cookies: dict) -> Dict[str, str]:
+    """
+    Resolve a screen_name to user_id and display name via UserByScreenName API.
+
+    Args:
+        screen_name: Twitter handle without '@' (e.g. 'iBigQiang').
+        cookies: dict with 'auth_token' and 'ct0'.
+
+    Returns:
+        {"user_id": "123", "screen_name": "iBigQiang", "name": "强子手记"}
+    """
+    query_id = _get_query_id("UserByScreenName")
+    headers = build_graphql_headers(cookies)
+
+    variables = {
+        "screen_name": screen_name,
+        "withSafetyModeUserFields": True,
+    }
+
+    response = _execute_graphql(
+        query_id=query_id,
+        operation_name="UserByScreenName",
+        variables=variables,
+        features=dict(USER_BY_SCREEN_NAME_FEATURES),
+        field_toggles={},
+        headers=headers,
+    )
+
+    if not response or "data" not in response:
+        logger.warning(f"[UserByScreenName] API returned empty for @{screen_name}")
+        return {"user_id": "", "screen_name": screen_name, "name": ""}
+
+    result = response.get("data", {}).get("user", {}).get("result", {})
+    return {
+        "user_id": result.get("rest_id", ""),
+        "screen_name": result.get("legacy", {}).get("screen_name", screen_name),
+        "name": result.get("legacy", {}).get("name", ""),
+    }
+
+
+def fetch_user_tweets_page(
+    user_id: str, cookies: dict, cursor: str = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch one page of a user's tweets via UserTweets GraphQL endpoint.
+
+    Args:
+        user_id: The numeric user ID (from fetch_user_by_screen_name).
+        cookies: dict with 'auth_token' and 'ct0'.
+        cursor: Optional pagination cursor from a previous response.
+        count: Number of tweets per page (default 20).
+
+    Returns:
+        Raw GraphQL response dict, or None on failure.
+    """
+    query_id = _get_query_id("UserTweets")
+    headers = build_graphql_headers(cookies)
+
+    variables = {
+        "userId": user_id,
+        "count": count,
+        "includePromotedContent": True,
+        "withQuickPromoteEligibilityTweetFields": True,
+        "withVoice": True,
+        "withV2Timeline": True,
+    }
+
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name="UserTweets",
+        variables=variables,
+        features=dict(USER_TWEETS_FEATURES),
+        field_toggles=dict(BOOKMARK_FIELD_TOGGLES),
+        headers=headers,
+    )
+
+
+def parse_user_tweets_entries(response: Dict[str, Any]) -> tuple:
+    """
+    Extract tweet entries and pagination cursors from a UserTweets GraphQL response.
+
+    Response path: data.user.result.timeline_v2.timeline.instructions
+
+    Returns:
+        (entries, cursors) — entries can be passed to extract_tweet_data(),
+        cursors is a dict with optional 'top' and 'bottom' keys.
+    """
+    if not response or "data" not in response:
+        return [], {}
+
+    data = response["data"]
+
+    # Primary path: data.user.result.timeline_v2.timeline.instructions
+    instructions = (
+        data.get("user", {})
+        .get("result", {})
+        .get("timeline_v2", {})
+        .get("timeline", {})
+        .get("instructions", [])
+    )
+    # Fallback: data.user.result.timeline.timeline.instructions
+    if not instructions:
+        instructions = (
+            data.get("user", {})
+            .get("result", {})
+            .get("timeline", {})
+            .get("timeline", {})
+            .get("instructions", [])
+        )
+
+    entries = []
+    cursors = {}
+
+    for instruction in instructions:
+        inst_type = instruction.get("type", "")
+
+        if inst_type == "TimelineAddEntries":
+            for entry in instruction.get("entries", []):
+                entry_id = entry.get("entryId", "")
+                content = entry.get("content", {})
+
+                # Extract cursor entries
+                if entry_id.startswith("cursor-"):
+                    cursor_type = content.get("cursorType", "")
+                    value = content.get("value", "")
+                    if cursor_type == "Top" and value:
+                        cursors["top"] = value
+                    elif cursor_type == "Bottom" and value:
+                        cursors["bottom"] = value
+                    continue
+
+                # Skip promoted content
+                if "promoted" in entry_id.lower():
+                    continue
+
+                # UserTweets wraps tweets in TimelineTimelineModule with items[]
+                if content.get("entryType") == "TimelineTimelineModule":
+                    for item in content.get("items", []):
+                        entries.append(item)
+                else:
+                    entries.append(entry)
+
+        elif inst_type == "TimelineAddToModule":
+            for item in instruction.get("moduleItems", []):
+                entries.append(item)
+
+    return entries, cursors
+
+
 def parse_bookmark_entries(response: Dict[str, Any]) -> tuple:
     """
     Extract tweet entries and pagination cursors from a Bookmarks GraphQL response.
@@ -569,6 +744,17 @@ def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
             chunk_hash = main_match.group(1)
             chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
             for op in ("BookmarkFoldersSlice", "BookmarkFolderTimeline"):
+                if op not in result:
+                    qid = _fetch_and_extract_query_id(chunk_url, op, ua)
+                    if qid:
+                        result[op] = qid
+                        logger.debug(f"Resolved {op}: queryId={qid}")
+
+        # UserByScreenName & UserTweets — typically in main bundle
+        if main_match:
+            chunk_hash = main_match.group(1)
+            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
+            for op in ("UserByScreenName", "UserTweets"):
                 if op not in result:
                     qid = _fetch_and_extract_query_id(chunk_url, op, ua)
                     if qid:
@@ -895,6 +1081,8 @@ def _fallback_query_ids() -> Dict[str, str]:
         "Bookmarks": FALLBACK_BOOKMARKS_QUERY_ID,
         "BookmarkFoldersSlice": FALLBACK_BOOKMARK_FOLDERS_QUERY_ID,
         "BookmarkFolderTimeline": FALLBACK_BOOKMARK_FOLDER_TIMELINE_QUERY_ID,
+        "UserByScreenName": FALLBACK_USER_BY_SCREEN_NAME_QUERY_ID,
+        "UserTweets": FALLBACK_USER_TWEETS_QUERY_ID,
     }
 
 
