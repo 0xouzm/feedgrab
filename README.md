@@ -60,7 +60,14 @@ feedgrab login xhs
 
 # 查看内容统计
 feedgrab list
+
+# 重置子目录（删除 .md 文件 + 清理去重索引，方便重新抓取）
+feedgrab reset bookmarks_OpenClaw     # 重置书签文件夹
+feedgrab reset status_强子手记         # 重置账号推文目录
+feedgrab reset bookmarks_Polymarket   # 重置指定书签文件夹
 ```
+
+> `feedgrab reset` 会扫描目标目录下所有 `.md` 文件的 YAML front matter，提取 `item_id` 并从去重索引中移除，然后删除文件。执行前会显示待删除数量并要求确认。找不到目录时会自动列出所有可用的子目录。
 
 ### 第二层：Claude Code 技能
 
