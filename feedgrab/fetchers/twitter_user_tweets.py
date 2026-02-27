@@ -196,8 +196,7 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
         for entry in entries:
             tweet_data = extract_tweet_data(entry)
             if not tweet_data:
-                page_entries.append(entry)
-                continue
+                continue  # 非推文条目（推荐关注等），直接丢弃
 
             if since_date:
                 tweet_date = _parse_tweet_date(tweet_data.get("created_at", ""))

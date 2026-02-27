@@ -576,13 +576,27 @@ def parse_user_tweets_entries(response: Dict[str, Any]) -> tuple:
                 # UserTweets wraps tweets in TimelineTimelineModule with items[]
                 if content.get("entryType") == "TimelineTimelineModule":
                     for item in content.get("items", []):
-                        entries.append(item)
+                        # Filter non-tweet items (e.g. "Who to Follow" cards)
+                        item_type = (item.get("item", {})
+                                     .get("itemContent", {})
+                                     .get("itemType", ""))
+                        if item_type == "TimelineTweet":
+                            entries.append(item)
+                elif content.get("entryType") == "TimelineTimelineItem":
+                    # Only keep tweet items, skip "who to follow" / "trends" etc.
+                    item_type = content.get("itemContent", {}).get("itemType", "")
+                    if item_type == "TimelineTweet":
+                        entries.append(entry)
                 else:
                     entries.append(entry)
 
         elif inst_type == "TimelineAddToModule":
             for item in instruction.get("moduleItems", []):
-                entries.append(item)
+                item_type = (item.get("item", {})
+                             .get("itemContent", {})
+                             .get("itemType", ""))
+                if item_type == "TimelineTweet":
+                    entries.append(item)
 
     return entries, cursors
 

@@ -3,6 +3,92 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 2026-02-27 · v0.2.6 · 按推特账号批量抓取 + 文件名优化
+
+### 背景
+v0.2.5b 完成了书签批量抓取（全量 + 文件夹）、统一去重索引、扁平目录结构。用户希望新增按推特账号批量抓取功能：给定作者主页 URL（如 `https://x.com/iBigQiang`），批量抓取该账号的所有原创推文（或指定日期之后的推文）。
+
+### 方案决策
+- **新增 API**：`UserByScreenName`（screen_name → userId + display_name）、`UserTweets`（用户推文时间线分页）
+- **目录命名**：`status_{display_name}`（如 `status_强子手记`），获取不到时降级为 `status_{screen_name}`
+- **日期过滤**：环境变量 `X_USER_TWEETS_SINCE=2025-10-01`，不设置则抓全部（API 无原生过滤，客户端逐页检查 `created_at`）
+- **功能开关**：`X_USER_TWEETS_ENABLED=false`（默认关闭，与书签批量一致）
+- **跳过转推**：仅抓原创推文，检测 `retweeted_status_result` 跳过 RT
+- **会话去重**：预扫描全部条目，识别多条目会话（自回复线程），跳过非根条目，升级根推文为线程处理，避免重复保存
+- **文件名优化**：格式从 `author_name：标题.md` 改为 `author_name_YYYY-MM-DD：标题.md`，便于按日期排序
+- **批量记录增强**：JSON 记录新增 `published`（推文发布日期）和 `item_id` 字段
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增 `UserByScreenName` + `UserTweets` API：2 个 fallback queryId 常量、2 个 features 字典、3 个函数（`fetch_user_by_screen_name()`、`fetch_user_tweets_page()`、`parse_user_tweets_entries()`）；扩展 `resolve_query_ids()` + `_fallback_query_ids()` |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 新建 | 账号批量抓取核心：URL 解析、分页获取、日期过滤、RT 跳过、会话去重（预扫描）、分类处理（复用书签的 `_classify_tweet` / `_build_single_tweet_data`）、批量记录保存 |
+| `feedgrab/config.py` | 修改 | 新增 4 个配置函数：`x_user_tweets_enabled()`、`x_user_tweet_max_pages()`、`x_user_tweet_delay()`、`x_user_tweets_since()` |
+| `feedgrab/reader.py` | 修改 | `_detect_platform()` 新增 profile URL 检测（排除 `/i/`、`/home` 等系统路径）；新增 `_read_user_tweets()` 方法 |
+| `feedgrab/utils/storage.py` | 修改 | `_generate_filename()` Twitter 文件名格式增加发布日期：`author_name_YYYY-MM-DD：标题` |
+| `feedgrab/fetchers/twitter_bookmarks.py` | 修改 | 批量记录新增 `published` 和 `item_id` 字段（5 处 `bookmark_list.append`） |
+| `.env.example` | 修改 | 新增 4 个配置项 |
+
+### 数据流
+```
+feedgrab https://x.com/iBigQiang
+  → reader._detect_platform() → "twitter_user_tweets"
+  → reader._read_user_tweets(url)
+    → twitter_user_tweets.fetch_user_tweets(url, cookies)
+      → _parse_profile_url() → screen_name = "iBigQiang"
+      → fetch_user_by_screen_name() → (user_id, display_name="强子手记")
+      → 分页: fetch_user_tweets_page() → parse_user_tweets_entries()
+        → 逐条 extract_tweet_data()
+        → 日期过滤: created_at < X_USER_TWEETS_SINCE → 停止
+        → 跳过 RT
+      → 预扫描: 构建 conversation_id → count 映射
+      → 逐条处理:
+          跳过非根自回复 | 升级根推文为线程
+          single → _build_single_tweet_data() → save
+          thread → _fetch_via_graphql() → save
+          article → _build_single_tweet_data() + Jina → save
+      → 去重: dedup.add_item() + save_index()
+      → 记录: index/status_{screen_name}_all_{ts}.json
+```
+
+### 目录结构（改动后）
+```
+{OUTPUT_DIR}/X/
+├── index/
+│   ├── item_id_url.json                         ← 全局去重索引
+│   ├── bookmarks_all_*.json                     ← 书签批量记录
+│   ├── bookmarks_OpenClaw_*.json                ← 书签文件夹记录
+│   └── status_iBigQiang_all_*.json              ← 账号抓取记录
+├── status/                                      ← 单篇抓取
+├── status_强子手记/                              ← iBigQiang 账号推文
+├── bookmarks/                                   ← 全部书签
+└── bookmarks_OpenClaw/                          ← 书签文件夹
+```
+
+### 会话去重算法
+UserTweets API 同时返回根推文和自回复，不做处理会导致重复文件：
+1. **预扫描**：遍历全部条目，构建 `conversation_id → count` 映射
+2. **识别多条目会话**：`count > 1` 的 conversation_id
+3. **跳过非根条目**：`conversation_id != tweet_id` 的自回复
+4. **升级根推文**：`single` → `thread`（触发完整线程抓取，包含所有自回复）
+5. **追踪已处理会话**：`processed_conv_ids` 集合防止重复处理
+
+### 验证结果
+- 平台检测：10/10 用例通过（profile URL / 系统路径排除 / 书签 / 单篇）
+- 用户解析：iBigQiang → user_id=1001044583273418752, display_name=强子手记
+- 分页抓取：2 页 39 条，RT 跳过正常
+- 会话去重：修复前 35 文件（7 重复），修复后 28 文件（0 重复）
+- 日期过滤：`X_USER_TWEETS_SINCE=2026-02-25` 正确过滤并停止分页
+- 去重回归：第二次运行全部 skip
+- 文件名格式：`强子手记_2026-02-24：最近看到好多新蓝V都成功✅认证了创作者身份。.md`
+- 批量记录：JSON 包含 `published` 和 `item_id` 字段
+
+### 状态：已完成 ✅
+
+
+---
+
 ## 2026-02-27 · v0.2.5b · 书签文件夹 + 统一去重 + 目录扁平化
 
 ### 背景

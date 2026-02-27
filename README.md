@@ -16,7 +16,7 @@
 ```
 任意 URL → 平台检测 → 抓取内容 → 统一输出
               ↓                ↓          ↓
-         自动识别          文本：Jina Reader    → output/X/作者：标题.md
+         自动识别          文本：Jina Reader    → output/X/作者_日期：标题.md
          7+ 平台           视频：yt-dlp 字幕    → output/YouTube/标题.md
                            音频：Whisper 转录
                            API：Bilibili / RSS / Telegram
@@ -47,6 +47,10 @@ feedgrab https://x.com/elonmusk/status/123456
 # 批量抓取书签（需要 X_BOOKMARKS_ENABLED=true）
 feedgrab https://x.com/i/bookmarks
 feedgrab https://x.com/i/bookmarks/2015311287715340624  # 指定书签文件夹
+
+# 批量抓取用户推文（需要 X_USER_TWEETS_ENABLED=true）
+feedgrab https://x.com/iBigQiang                        # 抓取全部推文
+X_USER_TWEETS_SINCE=2026-02-01 feedgrab https://x.com/iBigQiang  # 指定日期之后
 
 # 批量抓取多个 URL
 feedgrab https://url1.com https://url2.com
@@ -145,7 +149,57 @@ Tier 0（GraphQL）移植自 [baoyu-danger-x-to-markdown](https://github.com/Jim
 - 互动数据（likes / retweets / replies / bookmarks / views）
 - 作者回帖 + 评论区采集（可选开关）
 - **书签批量抓取**（全部书签 / 指定文件夹）
+- **用户推文批量抓取**（全部 / 按日期过滤，自动跳过 RT + 会话去重）
 - **全局去重索引**（跨模式统一去重）
+
+### X/Twitter Cookie 配置
+
+Tier 0（GraphQL）需要 Twitter Cookie 才能获取完整数据。**未配置 Cookie 时会自动降级**，但将导致：
+- 无法获取 likes / views / bookmarks 等互动指标
+- 无法获取作者回帖和评论
+- 无法使用书签批量抓取和账号批量抓取
+- 仅能获取基础正文内容（oEmbed + Jina 兜底）
+
+**配置方法（任选其一）：**
+
+#### 方式 1：浏览器登录（推荐）
+
+```bash
+feedgrab login twitter
+```
+
+自动打开浏览器，登录 X 账号后 Cookie 会保存到 `sessions/twitter.json`，后续自动读取。
+
+#### 方式 2：`.env` 环境变量
+
+从浏览器 DevTools 手动复制 Cookie 值：
+
+1. 打开 https://x.com 并登录
+2. 按 F12 打开开发者工具 → Application → Cookies → `https://x.com`
+3. 找到 `auth_token` 和 `ct0` 两个值
+4. 写入 `.env` 文件：
+
+```env
+X_AUTH_TOKEN=你的auth_token值
+X_CT0=你的ct0值
+```
+
+> 环境变量优先级最高，设置后会覆盖其他来源的 Cookie。
+
+#### 方式 3：手动创建 Cookie 文件
+
+创建 `sessions/x.json`（路径受 `FEEDGRAB_DATA_DIR` 控制，默认 `sessions/`）：
+
+```json
+{
+  "auth_token": "你的auth_token值",
+  "ct0": "你的ct0值"
+}
+```
+
+> 还支持方式 4：Chrome CDP 自动提取（需启动 Chrome `--remote-debugging-port=9222`），适合高级用户。
+
+**Cookie 优先级**：环境变量 > `sessions/x.json` > Playwright session > Chrome CDP
 
 ### 输出格式
 
@@ -156,6 +210,7 @@ output/
 ├── X/                    # Twitter/X
 │   ├── index/            #   去重索引 + 批量抓取记录
 │   ├── status/           #   单篇推文
+│   ├── status_xxx/       #   用户推文（按 display_name）
 │   ├── bookmarks/        #   全部书签
 │   └── bookmarks_xxx/    #   书签文件夹（按名称）
 ├── XHS/                  # 小红书
@@ -165,6 +220,8 @@ output/
 ├── Telegram/             # Telegram
 └── RSS/                  # RSS
 ```
+
+文件命名格式（Twitter）：`作者名_YYYY-MM-DD：标题.md`（如 `强子手记_2026-02-24：最近看到好多新蓝V都成功✅认证了创作者身份。.md`）
 
 文件使用 Obsidian 兼容的 YAML front matter：
 
@@ -269,6 +326,10 @@ cp .env.example .env
 | `X_BOOKMARKS_ENABLED` | 否 | 启用书签批量抓取（默认：`false`） |
 | `X_BOOKMARK_MAX_PAGES` | 否 | 书签最大分页数（默认：`50`） |
 | `X_BOOKMARK_DELAY` | 否 | 书签处理间隔秒数（默认：`2.0`） |
+| `X_USER_TWEETS_ENABLED` | 否 | 启用用户推文批量抓取（默认：`false`） |
+| `X_USER_TWEET_MAX_PAGES` | 否 | 用户推文最大分页数（默认：`50`） |
+| `X_USER_TWEET_DELAY` | 否 | 用户推文处理间隔秒数（默认：`2.0`） |
+| `X_USER_TWEETS_SINCE` | 否 | 仅抓取该日期之后的推文（如 `2025-10-01`，留空=全部） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `GROQ_API_KEY` | 仅 Whisper | 从 https://console.groq.com/keys 免费获取 |
@@ -297,9 +358,10 @@ feedgrab/
 │   │   ├── telegram.py        # Telegram 频道（Telethon）
 │   │   ├── twitter.py         # X/Twitter 四级兜底调度器
 │   │   ├── twitter_cookies.py # Cookie 多源管理（环境变量/文件/Playwright/CDP）
-│   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, Bookmarks, 动态 queryId）
+│   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, UserTweets, Bookmarks, 动态 queryId）
 │   │   ├── twitter_thread.py  # 线程重建 + 评论分类（分页 + 去重 + 根推文追溯）
 │   │   ├── twitter_bookmarks.py# 书签批量抓取（全部/文件夹，分页+去重+分类）
+│   │   ├── twitter_user_tweets.py# 用户推文批量抓取（分页+日期过滤+会话去重+RT跳过）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
 │   │   ├── wechat.py          # Jina → Playwright 兜底
 │   │   └── xhs.py             # Jina → Playwright + Session 兜底
