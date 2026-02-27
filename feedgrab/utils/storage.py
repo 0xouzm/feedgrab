@@ -29,14 +29,23 @@ def _format_twitter_datetime(created_at: str) -> str:
 
 
 def _parse_xhs_date(raw: str) -> str:
-    """Parse XHS date string like '02-18 福建' into 'YYYY-MM-DD'.
+    """Parse XHS date string into 'YYYY-MM-DD'.
 
-    XHS only shows MM-DD without year. We assume current year,
-    but if the date is in the future, use last year.
+    Two formats:
+      - "02-18 福建"       → MM-DD + location (assume current year)
+      - "编辑于 2025-08-16" → full date with year
     """
     if not raw:
         return ""
-    match = re.match(r"(\d{2})-(\d{2})", raw.strip())
+    text = raw.strip()
+
+    # Format 2: "编辑于 YYYY-MM-DD"
+    full_match = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if full_match:
+        return f"{full_match.group(1)}-{full_match.group(2)}-{full_match.group(3)}"
+
+    # Format 1: "MM-DD ..." (no year)
+    match = re.match(r"(\d{2})-(\d{2})", text)
     if not match:
         return ""
     month, day = int(match.group(1)), int(match.group(2))
@@ -51,10 +60,18 @@ def _parse_xhs_date(raw: str) -> str:
 
 
 def _parse_xhs_location(raw: str) -> str:
-    """Extract location from XHS date string like '02-18 福建' → '福建'."""
+    """Extract location from XHS date string.
+
+    '02-18 福建' → '福建'
+    '编辑于 2025-08-16' → '' (no location)
+    """
     if not raw:
         return ""
-    match = re.match(r"\d{2}-\d{2}\s+(.+)", raw.strip())
+    text = raw.strip()
+    # "编辑于" format has no location
+    if "编辑于" in text:
+        return ""
+    match = re.match(r"\d{2}-\d{2}\s+(.+)", text)
     return match.group(1).strip() if match else ""
 
 
