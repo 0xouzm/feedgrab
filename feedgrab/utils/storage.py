@@ -9,7 +9,7 @@ import json
 import os
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from loguru import logger
 
@@ -31,9 +31,10 @@ def _format_twitter_datetime(created_at: str) -> str:
 def _parse_xhs_date(raw: str) -> str:
     """Parse XHS date string into 'YYYY-MM-DD'.
 
-    Two formats:
-      - "02-18 福建"       → MM-DD + location (assume current year)
-      - "编辑于 2025-08-16" → full date with year
+    Three formats:
+      - "02-18 福建"        → MM-DD + location (assume current year)
+      - "编辑于 2025-08-16"  → full date with year
+      - "3天前 江苏"         → relative time (N天前/昨天/前天/N小时前/N分钟前)
     """
     if not raw:
         return ""
@@ -44,12 +45,23 @@ def _parse_xhs_date(raw: str) -> str:
     if full_match:
         return f"{full_match.group(1)}-{full_match.group(2)}-{full_match.group(3)}"
 
+    # Format 3: relative time → convert to absolute date
+    now = datetime.now()
+    days_match = re.match(r"(\d+)\s*天前", text)
+    if days_match:
+        return (now - timedelta(days=int(days_match.group(1)))).strftime("%Y-%m-%d")
+    if text.startswith("昨天"):
+        return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    if text.startswith("前天"):
+        return (now - timedelta(days=2)).strftime("%Y-%m-%d")
+    if re.match(r"\d+\s*小时前", text) or re.match(r"\d+\s*分钟前", text) or text.startswith("刚刚"):
+        return now.strftime("%Y-%m-%d")
+
     # Format 1: "MM-DD ..." (no year)
     match = re.match(r"(\d{2})-(\d{2})", text)
     if not match:
         return ""
     month, day = int(match.group(1)), int(match.group(2))
-    now = datetime.now()
     try:
         candidate = datetime(now.year, month, day)
         if candidate > now:
@@ -62,7 +74,8 @@ def _parse_xhs_date(raw: str) -> str:
 def _parse_xhs_location(raw: str) -> str:
     """Extract location from XHS date string.
 
-    '02-18 福建' → '福建'
+    '02-18 福建'    → '福建'
+    '3天前 江苏'    → '江苏'
     '编辑于 2025-08-16' → '' (no location)
     """
     if not raw:
@@ -71,8 +84,18 @@ def _parse_xhs_location(raw: str) -> str:
     # "编辑于" format has no location
     if "编辑于" in text:
         return ""
+    # "MM-DD location"
     match = re.match(r"\d{2}-\d{2}\s+(.+)", text)
-    return match.group(1).strip() if match else ""
+    if match:
+        return match.group(1).strip()
+    # Relative time: "3天前 江苏", "昨天 21:33北京", "N小时前广东"
+    rel_match = re.match(r"(?:\d+\s*[天小时分钟]+前|昨天.*?|前天|刚刚)\s*(\S+)$", text)
+    if rel_match:
+        loc = rel_match.group(1).strip()
+        # Filter out time strings like "21:33" that aren't locations
+        if not re.match(r"\d", loc):
+            return loc
+    return ""
 
 
 # SourceType → subdirectory name
