@@ -3,6 +3,54 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 待办 · feedgrab setup 一键部署引导
+
+### 背景
+当前首次部署需要用户手动执行多个命令（`detect-ua`、`login xhs`、`login twitter`、配置 `.env` 等），且存在隐式依赖（必须先 `detect-ua` 再 `login`，否则 UA 不一致导致 session 失效）。对普通用户门槛过高。
+
+### 方案
+新增 `feedgrab setup` 命令，一键按顺序引导完成所有部署步骤：
+
+```
+$ feedgrab setup
+
+[1/4] 检查依赖环境...
+  ✅ Python 3.10+
+  ✅ Playwright 已安装
+  ✅ Chrome 浏览器已检测到
+
+[2/4] 检测浏览器指纹...
+  🔍 读取本机 Chrome User-Agent...
+  ✅ Chrome/145.0.0.0 已写入 .env
+
+[3/4] 平台登录（可按需跳过）
+  🔑 登录小红书？(Y/n) y
+  🌐 请在弹出的浏览器窗口中扫码登录...
+  ✅ 小红书 session 已保存
+
+  🔑 登录 Twitter/X？(Y/n) n
+  ⏭ 已跳过（后续可用 feedgrab login twitter 单独登录）
+
+[4/4] 创建配置文件...
+  ✅ .env 已生成（基于 .env.example）
+
+🎉 部署完成！试试：
+  feedgrab "https://www.xiaohongshu.com/explore/xxx"
+```
+
+### 设计原则
+- **命令名 `feedgrab setup`**：语义明确，不与"启动服务"混淆
+- **顺序强绑定**：`detect-ua` 必须在所有 `login` 之前执行，确保 UA 一致
+- **每步可跳过**：用户按需选择要登录的平台
+- **幂等可重入**：重复运行时检测到已完成的步骤自动跳过（如 UA 已检测、session 未过期）
+- **Cookie 过期提示**：抓取时检测到 session 失效，提示 `feedgrab setup` 或 `feedgrab login <platform>` 重新登录
+- **依赖自动安装**：检测 Playwright 未安装时提示一键安装命令
+
+### 时机
+所有功能迭代完毕后统一实现。
+
+---
+
 ## 2026-02-28 · v0.2.9 · 小红书搜索结果批量抓取 + UA 一致性修复
 
 ### 背景
