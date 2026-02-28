@@ -7,9 +7,12 @@ from loguru import logger
 from typing import Dict, Any
 
 
+from feedgrab.config import get_user_agent
+
+
 API_URL = "https://api.bilibili.com/x/web-interface/view"
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+    "User-Agent": get_user_agent()
 }
 
 

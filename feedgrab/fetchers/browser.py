@@ -11,7 +11,7 @@ Install: pip install "feedgrab[browser]" && playwright install chromium
 from loguru import logger
 from pathlib import Path
 
-from feedgrab.config import get_session_dir
+from feedgrab.config import get_session_dir, get_user_agent
 
 SESSION_DIR = get_session_dir()
 TIMEOUT_MS = 30_000
@@ -158,9 +158,7 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
             logger.info(f"Using session: {storage_state}")
 
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/132.0.0.0 Safari/537.36",
+            user_agent=get_user_agent(),
             **context_kwargs,
         )
         page = await context.new_page()

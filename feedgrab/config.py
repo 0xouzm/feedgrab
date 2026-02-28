@@ -10,6 +10,27 @@ import os
 from pathlib import Path
 
 
+# ---------------------------------------------------------------------------
+# User-Agent — single source of truth
+# ---------------------------------------------------------------------------
+
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/132.0.0.0 Safari/537.36"
+)
+
+
+def get_user_agent() -> str:
+    """Return the User-Agent string for all browser/HTTP interactions.
+
+    Priority:
+      1. BROWSER_USER_AGENT env var (user-configured or auto-detected)
+      2. DEFAULT_USER_AGENT fallback
+    """
+    return os.getenv("BROWSER_USER_AGENT", "").strip() or DEFAULT_USER_AGENT
+
+
 def get_data_dir() -> Path:
     """Return the feedgrab data/session directory (project-local by default).
 
@@ -139,3 +160,28 @@ def xhs_user_note_delay() -> float:
 def xhs_user_notes_since() -> str:
     """Date filter for XHS user notes (e.g. '2025-10-01'). Empty = fetch all."""
     return os.getenv("XHS_USER_NOTES_SINCE", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# XHS search notes batch fetch
+# ---------------------------------------------------------------------------
+
+def xhs_search_enabled() -> bool:
+    """Whether XHS search notes batch fetching is enabled."""
+    return os.getenv("XHS_SEARCH_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def xhs_search_max_scrolls() -> int:
+    """Maximum scroll iterations on XHS search page (default 30)."""
+    try:
+        return int(os.getenv("XHS_SEARCH_MAX_SCROLLS", "30"))
+    except ValueError:
+        return 30
+
+
+def xhs_search_delay() -> float:
+    """Delay in seconds between processing each XHS search note (default 3.0)."""
+    try:
+        return float(os.getenv("XHS_SEARCH_DELAY", "3.0"))
+    except ValueError:
+        return 3.0

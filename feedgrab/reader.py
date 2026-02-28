@@ -60,6 +60,8 @@ class UniversalReader:
         if "xiaohongshu.com" in domain or "xhslink.com" in domain:
             if "/user/profile/" in path:
                 return "xhs_user_notes"
+            if "/search_result" in path or "/search" in path:
+                return "xhs_search"
             return "xhs"
         if "bilibili.com" in domain or "b23.tv" in domain:
             return "bilibili"
@@ -100,6 +102,10 @@ class UniversalReader:
         # XHS user notes batch mode: special flow, returns summary
         if platform == "xhs_user_notes":
             return await self._read_user_notes(url)
+
+        # XHS search notes batch mode: special flow, returns summary
+        if platform == "xhs_search":
+            return await self._read_search_notes(url)
 
         try:
             content = await self._fetch(platform, url)
@@ -277,6 +283,35 @@ class UniversalReader:
             source_type=SourceType.XIAOHONGSHU,
             source_name="user_notes",
             title=f"作者笔记抓取 {result['fetched']}/{result['total']}",
+            content=summary,
+            url=url,
+        )
+
+    async def _read_search_notes(self, url: str) -> UnifiedContent:
+        """Batch-fetch notes from XHS search results, stream-save each, return summary."""
+        from feedgrab.config import xhs_search_enabled
+
+        if not xhs_search_enabled():
+            raise ValueError(
+                "小红书搜索批量抓取未启用。请在 .env 中设置 XHS_SEARCH_ENABLED=true"
+            )
+
+        from feedgrab.fetchers.xhs_search_notes import fetch_search_notes
+
+        result = await fetch_search_notes(url)
+
+        keyword = result.get("keyword", "")
+        summary = (
+            f"小红书搜索批量抓取完成 (关键词: {keyword})\n"
+            f"总数: {result['total']}, 成功: {result['fetched']}, "
+            f"跳过: {result['skipped']}, 失败: {result['failed']}\n"
+            f"批量记录: {result.get('list_path', '')}"
+        )
+
+        return UnifiedContent(
+            source_type=SourceType.XIAOHONGSHU,
+            source_name="search_notes",
+            title=f"搜索抓取 '{keyword}' {result['fetched']}/{result['total']}",
             content=summary,
             url=url,
         )

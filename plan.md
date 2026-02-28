@@ -3,6 +3,103 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
+## 2026-02-28 · v0.2.9 · 小红书搜索结果批量抓取 + UA 一致性修复
+
+### 背景
+v0.2.8 完成了按作者主页批量抓取。用户希望新增按搜索关键词批量抓取：在小红书搜索关键词后，给定搜索结果页 URL，批量抓取搜索到的笔记。同时发现 `feedgrab login xhs` 创建的 session 频繁过期，根因是 User-Agent 不一致。
+
+### 方案决策
+
+#### 搜索批量抓取
+- **复用三层策略**：搜索结果页和作者主页技术架构完全一致（Vue 3 SSR + 瀑布流），复用同一套 Tier 0/1/2 策略
+- **Tier 0**：`__INITIAL_STATE__.search.feeds`（~40 篇，零 API 调用）— 与作者页的 `user.notes` 路径不同
+- **Tier 1**：XHR 拦截 `/api/sns/web/v1/search/notes`（与作者页的 `user_posted` 端点不同）
+- **Tier 2**：逐篇导航 + `evaluate_xhs_note()` 深度提取（与作者页完全复用）
+- **目录命名**：`search_{关键词}`（如 `search_开学第一课`）
+- **URL 双重解码**：搜索 URL 中 keyword 可能被双重编码（`%25E5%25BC%2580`），循环 unquote 直到稳定
+- **无日期过滤**：搜索结果按相关性排序（非时间顺序），日期过滤无意义
+
+#### User-Agent 集中管理
+- **根因**：`login.py` 硬编码 macOS + Chrome 120 UA，而批量抓取使用 Windows + Chrome 132 UA，8 处独立硬编码
+- **影响**：同一 session 的 UA 从 Mac 切换到 Windows，触发 XHS 风控导致 session 失效
+- **修复方案**：
+  - `config.py` 新增 `DEFAULT_USER_AGENT` 常量 + `get_user_agent()` 函数
+  - 优先读取 `BROWSER_USER_AGENT` 环境变量，缺省使用内置默认值
+  - **8 处硬编码**全部替换为 `get_user_agent()` 调用：`login.py`(2处)、`browser.py`、`twitter.py`、`bilibili.py`、`twitter_cookies.py`、`xhs_search_notes.py`、`xhs_user_notes.py`
+  - 新增 `feedgrab detect-ua` CLI 命令：启动本机真实 Chrome → 读取 `navigator.userAgent` → 自动写入 `.env`
+  - 首次部署时运行 `feedgrab detect-ua` 即可获取真实环境 UA，确保登录和抓取完全一致
+
+### 数据流
+
+```
+feedgrab "https://www.xiaohongshu.com/search_result?keyword=开学第一课&source=..."
+  → reader._detect_platform() → "xhs_search"
+  → reader._read_search_notes(url)
+    → xhs_search_notes.fetch_search_notes(url)
+      ├─ _parse_search_url() → keyword = "开学第一课"（双重 URL decode）
+      ├─ 启动 Playwright 有头 Chrome（复用 xhs.json session）
+      ├─ 检测验证码 → _handle_captcha_or_login()（从 xhs_user_notes 复用）
+      ├─ Tier 0: state.search.feeds → 40 篇
+      ├─ Tier 1: XHR 拦截 /api/sns/web/v1/search/notes + 滚动加载
+      ├─ Tier 2: 逐篇 evaluate_xhs_note() + save_to_markdown()
+      ├─ 去重索引更新（platform="XHS"，与作者批量共享索引）
+      └─ 批量记录 → XHS/index/search_{keyword}_all_{ts}.json
+```
+
+### 搜索页面结构（实测结果）
+
+**`__INITIAL_STATE__`**:
+- 路径：`state.search.feeds`（Array，~40 项）
+- 每项：`{id, modelType, xsecToken, noteCard: {displayTitle, type, user, interactInfo}}`
+- 注意：`noteCard.noteId` 为空，笔记 ID 在 `item.id`（与作者页 `user.notes` 不同）
+- 字段命名：camelCase（Vue 响应式对象）
+
+**XHR 分页 API**:
+- 端点：`edith.xiaohongshu.com/api/sns/web/v1/search/notes`（POST）
+- 响应：`{code: 0, data: {has_more, items}}`，每页 ~22 条
+- items 字段命名：snake_case（`note_card`, `xsec_token`, `display_title`）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/xhs_search_notes.py` | **新建** ~280行 | 搜索批量抓取核心：Tier 0 `search.feeds` + Tier 1 `search/notes` XHR 拦截 + Tier 2 逐篇深度 |
+| `feedgrab/fetchers/xhs_user_notes.py` | 修改 ~15行 | `_handle_captcha_or_login()` 通用化：参数从 `profile_url` 改为 `target_url`，URL 检查兼容 `/search_result` |
+| `feedgrab/reader.py` | 修改 ~25行 | URL 检测 `/search_result` → `xhs_search` + 路由 + `_read_search_notes()` |
+| `feedgrab/config.py` | 新增 ~20行 | `xhs_search_enabled()` / `xhs_search_max_scrolls()` / `xhs_search_delay()` |
+| `feedgrab/cli.py` | 修改 ~5行 | 帮助文本 + 搜索 URL 批量输出检测 |
+| `feedgrab/login.py` | 修改 ~4行 | UA 统一为 Windows + Chrome 132（修复 session 频繁过期） |
+| `.env.example` | 新增 ~4行 | `XHS_SEARCH_ENABLED` / `XHS_SEARCH_MAX_SCROLLS` / `XHS_SEARCH_DELAY` |
+
+### 目录结构
+
+```
+{OUTPUT_DIR}/XHS/
+├── index/
+│   ├── item_id_url.json                         ← XHS 全局去重索引（搜索+作者共享）
+│   ├── notes_墨客老师资料库_all_*.json            ← 作者批量记录
+│   └── search_开学第一课_all_*.json              ← 搜索批量记录
+├── notes_墨客老师资料库/                          ← 作者批量笔记
+└── search_开学第一课/                             ← 搜索批量笔记（多作者混合）
+    ├── 安安老师_2026-02-25：新学期开学第一课这样上🔥被校长夸爆了.md
+    ├── 沐然老师_2026-02-26：开学第一课，三年级这样上超轻松！.md
+    └── ...
+```
+
+### 验证结果
+- **Tier 0**：40 篇搜索结果提取成功
+- **Tier 2 深度抓取**：38 成功，2 去重跳过（与作者批量重叠），0 失败
+- **去重回归**：第二次运行 37 跳过 + 3 新增（搜索结果动态变化属正常）
+- **文件名**：全部包含正确日期格式 `作者_YYYY-MM-DD：标题.md`
+- **Front matter**：完整（likes/collects/comments/tags/images/location/author_url/cover_image）
+- **source URL**：含 xsec_token，链接可直接访问
+- **跨模式去重**：搜索结果中出现的笔记如果已被作者批量抓取过，正确跳过
+
+### 状态：已完成 ✅
+
+
+---
+
 ## 2026-02-27 · v0.2.8 · 小红书按作者批量抓取
 
 ### 背景

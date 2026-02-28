@@ -19,7 +19,7 @@ import shutil
 from pathlib import Path
 from loguru import logger
 
-from feedgrab.config import get_cookie_dir, get_session_dir
+from feedgrab.config import get_cookie_dir, get_session_dir, get_user_agent
 
 COOKIE_DIR = get_cookie_dir()
 SESSION_DIR = get_session_dir()
@@ -42,11 +42,7 @@ BEARER_TOKEN = (
     "%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
 )
 
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36"
-)
+DEFAULT_USER_AGENT = get_user_agent()
 
 
 def load_twitter_cookies() -> dict:

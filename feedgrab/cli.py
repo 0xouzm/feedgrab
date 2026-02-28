@@ -38,6 +38,7 @@ def cmd_fetch(urls: list):
 
             # XHS user notes batch mode or Twitter user tweets batch mode
             if ("/user/profile/" in urls[0] and "xiaohongshu.com" in urls[0]) or \
+               ("/search_result" in urls[0] and "xiaohongshu.com" in urls[0]) or \
                ("x.com/" in urls[0] and "/status/" not in urls[0] and "/i/" not in urls[0]):
                 item = await reader.read(urls[0])
                 print(f"\n\u2705 {item.content}")
@@ -237,6 +238,75 @@ def cmd_reset(folder_name: str):
     print(f"   \u73b0\u5728\u53ef\u4ee5\u91cd\u65b0\u62d3\u53d6\u4e86")
 
 
+def cmd_detect_ua():
+    """Detect real Chrome User-Agent and save to .env file."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("\u274c Playwright is not installed. Run:\n"
+              '   pip install "feedgrab[browser]"\n'
+              "   playwright install chromium")
+        return
+
+    print("\U0001f50d Detecting real Chrome User-Agent...")
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                channel="chrome",
+            )
+            page = browser.new_page()
+            ua = page.evaluate("navigator.userAgent")
+            browser.close()
+    except Exception as e:
+        print(f"\u274c Failed to detect UA: {e}")
+        print("   Falling back: trying without channel='chrome'...")
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page()
+                ua = page.evaluate("navigator.userAgent")
+                browser.close()
+        except Exception as e2:
+            print(f"\u274c Detection failed: {e2}")
+            return
+
+    # Headless mode reports "HeadlessChrome" — normalize to "Chrome"
+    ua = ua.replace("HeadlessChrome", "Chrome")
+
+    print(f"\n   Detected: {ua}")
+
+    # Write to .env
+    env_path = Path.cwd() / ".env"
+    key_line = f"BROWSER_USER_AGENT={ua}"
+
+    if env_path.exists():
+        content = env_path.read_text(encoding="utf-8")
+        if "BROWSER_USER_AGENT=" in content:
+            # Replace existing line
+            import re
+            content = re.sub(
+                r"^#?\s*BROWSER_USER_AGENT=.*$",
+                key_line,
+                content,
+                flags=re.MULTILINE,
+            )
+            env_path.write_text(content, encoding="utf-8")
+            print(f"\n\u2705 Updated BROWSER_USER_AGENT in {env_path}")
+        else:
+            # Append
+            with open(env_path, "a", encoding="utf-8") as f:
+                f.write(f"\n# Auto-detected by: feedgrab detect-ua\n{key_line}\n")
+            print(f"\n\u2705 Appended BROWSER_USER_AGENT to {env_path}")
+    else:
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.write(f"# Auto-detected by: feedgrab detect-ua\n{key_line}\n")
+        print(f"\n\u2705 Created {env_path} with BROWSER_USER_AGENT")
+
+    print(f"   All browser interactions will now use this UA.")
+
+
 def main():
     if len(sys.argv) < 2:
         print("""
@@ -246,6 +316,7 @@ Usage:
     feedgrab <url>              Fetch content from any URL
     feedgrab <url1> <url2>      Fetch multiple URLs
     feedgrab login <platform>   Login to a platform (saves session for browser fallback)
+    feedgrab detect-ua          Detect real Chrome UA and save to .env
     feedgrab list               Show content statistics
     feedgrab reset <folder>     Reset a subfolder (delete files + clear dedup index)
 
@@ -259,6 +330,7 @@ Examples:
     feedgrab https://x.com/i/bookmarks
     feedgrab https://x.com/iBigQiang
     feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
+    feedgrab "https://www.xiaohongshu.com/search_result?keyword=..."
     feedgrab login xhs
 """)
         return
@@ -272,6 +344,8 @@ Examples:
             sys.exit(1)
         headless = "--headless" in sys.argv
         cmd_login(sys.argv[2], headless=headless)
+    elif cmd == "detect-ua":
+        cmd_detect_ua()
     elif cmd == "list":
         cmd_list()
     elif cmd == "reset":

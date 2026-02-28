@@ -23,6 +23,7 @@ from typing import List, Dict, Tuple
 from loguru import logger
 
 from feedgrab.config import (
+    get_user_agent,
     xhs_user_note_max_scrolls,
     xhs_user_note_delay,
     xhs_user_notes_since,
@@ -285,26 +286,28 @@ def _save_batch_record(
 
 CAPTCHA_WAIT_TIMEOUT = 120  # seconds
 
-async def _handle_captcha_or_login(page, profile_url: str, session_path: str, context):
+async def _handle_captcha_or_login(page, target_url: str, session_path: str, context):
     """Handle captcha or login redirect by waiting for user to solve it.
 
     If captcha is detected, waits up to CAPTCHA_WAIT_TIMEOUT seconds for user
     to solve it manually in the visible browser window. After solving, saves
-    the updated session and navigates back to the profile page.
+    the updated session and navigates back to the target page.
+
+    Works for both profile pages and search result pages.
     """
     current_url = page.url
     if "captcha" in current_url:
         logger.info(
-            "[XHS-User] *** 检测到验证码，请在浏览器窗口中手动完成验证 ***"
+            "[XHS] *** 检测到验证码，请在浏览器窗口中手动完成验证 ***"
         )
         for _ in range(CAPTCHA_WAIT_TIMEOUT // 2):
             await page.wait_for_timeout(2000)
             current_url = page.url
             if "captcha" not in current_url and "login" not in current_url:
-                logger.info("[XHS-User] 验证码已通过!")
+                logger.info("[XHS] 验证码已通过!")
                 # Save updated session with captcha-verified state
                 await context.storage_state(path=session_path)
-                logger.info(f"[XHS-User] Session 已更新: {session_path}")
+                logger.info(f"[XHS] Session 已更新: {session_path}")
                 break
         else:
             raise RuntimeError(
@@ -312,30 +315,36 @@ async def _handle_captcha_or_login(page, profile_url: str, session_path: str, co
             )
     elif "login" in current_url:
         logger.info(
-            "[XHS-User] *** Session 已过期，请在浏览器窗口中重新登录 ***"
+            "[XHS] *** Session 已过期，请在浏览器窗口中重新登录 ***"
         )
         for _ in range(150):  # 5 min for login
             await page.wait_for_timeout(2000)
             current_url = page.url
             if "login" not in current_url and "captcha" not in current_url:
-                logger.info("[XHS-User] 登录成功!")
+                logger.info("[XHS] 登录成功!")
                 await context.storage_state(path=session_path)
-                logger.info(f"[XHS-User] Session 已更新: {session_path}")
+                logger.info(f"[XHS] Session 已更新: {session_path}")
                 break
         else:
             raise RuntimeError("登录等待超时 (5min)。请重试。")
 
-    # Navigate to profile page if redirected away
-    if "/user/profile/" not in page.url:
-        await page.goto(
-            profile_url, wait_until="domcontentloaded", timeout=30_000
+    # Navigate back to target page if redirected away
+    if "captcha" not in page.url and "login" not in page.url:
+        # Check if we're already on a relevant XHS page
+        on_target = (
+            "/user/profile/" in page.url or
+            "/search_result" in page.url or
+            "/search" in page.url
         )
-        await page.wait_for_timeout(3000)
-        # Check again after re-navigation
-        if "captcha" in page.url or "login" in page.url:
-            raise RuntimeError(
-                "验证后仍无法访问主页。请检查账号状态或稍后重试。"
+        if not on_target:
+            await page.goto(
+                target_url, wait_until="domcontentloaded", timeout=30_000
             )
+            await page.wait_for_timeout(3000)
+            if "captcha" in page.url or "login" in page.url:
+                raise RuntimeError(
+                    "验证后仍无法访问目标页面。请检查账号状态或稍后重试。"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -397,11 +406,7 @@ async def fetch_user_notes(profile_url: str) -> dict:
         )
         context = await browser.new_context(
             storage_state=session_path,
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/132.0.0.0 Safari/537.36"
-            ),
+            user_agent=get_user_agent(),
             viewport={"width": 1920, "height": 1080},
             locale="zh-CN",
         )

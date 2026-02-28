@@ -18,6 +18,7 @@ from loguru import logger
 from typing import Dict, Any
 
 from feedgrab.fetchers.jina import fetch_via_jina
+from feedgrab.config import get_user_agent
 
 
 OEMBED_URL = "https://publish.twitter.com/oembed"
@@ -278,9 +279,7 @@ async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
             context_kwargs["storage_state"] = session_path
 
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/120.0.0.0 Safari/537.36",
+            user_agent=get_user_agent(),
             **context_kwargs,
         )
         page = await context.new_page()

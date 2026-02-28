@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from loguru import logger
 
-from feedgrab.config import get_session_dir
+from feedgrab.config import get_session_dir, get_user_agent
 
 SESSION_DIR = get_session_dir()
 
@@ -95,9 +95,7 @@ def _login_visible(login_url: str, session_path: Path, platform: str) -> None:
             args=["--disable-blink-features=AutomationControlled"],
         )
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/120.0.0.0 Safari/537.36",
+            user_agent=get_user_agent(),
         )
         page = context.new_page()
         page.goto(login_url)
@@ -126,9 +124,7 @@ def _login_headless(login_url: str, session_path: Path, canonical: str) -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/120.0.0.0 Safari/537.36",
+            user_agent=get_user_agent(),
         )
         page = context.new_page()
         page.goto(login_url, wait_until="domcontentloaded")
