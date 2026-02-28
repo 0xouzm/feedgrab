@@ -400,7 +400,7 @@ def save_to_markdown(item: UnifiedContent, filepath: str = None):
     """Save content as a standalone Markdown file in a platform subdirectory.
 
     Directory resolution (when *filepath* is None):
-      1. OBSIDIAN_VAULT → {vault}/01-收集箱/{Platform}/
+      1. OBSIDIAN_VAULT → {vault}/{Platform}/
       2. OUTPUT_DIR     → {output_dir}/{Platform}/
       3. Neither set    → skip
 
@@ -421,7 +421,7 @@ def save_to_markdown(item: UnifiedContent, filepath: str = None):
     output_dir = os.getenv("OUTPUT_DIR", "")
 
     if vault_path:
-        base_dir = Path(vault_path) / "01-收集箱"
+        base_dir = Path(vault_path)
     elif output_dir:
         base_dir = Path(output_dir)
     else:

@@ -28,7 +28,7 @@ def _get_base_dir(platform: str = "X") -> Path:
     vault_path = os.getenv("OBSIDIAN_VAULT", "")
     output_dir = os.getenv("OUTPUT_DIR", "")
     if vault_path:
-        return Path(vault_path) / "01-收集箱" / platform
+        return Path(vault_path) / platform
     elif output_dir:
         return Path(output_dir) / platform
     else:
