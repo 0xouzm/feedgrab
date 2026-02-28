@@ -302,16 +302,22 @@ item_id: db22cbe3d9c0
 # 从 GitHub 安装（推荐）
 pip install git+https://github.com/iBigQiang/feedgrab.git
 
-# 带 Telegram 支持
-pip install "feedgrab[telegram] @ git+https://github.com/iBigQiang/feedgrab.git"
-
 # 带浏览器兜底（Playwright — 用于小红书/微信反爬）
 pip install "feedgrab[browser] @ git+https://github.com/iBigQiang/feedgrab.git"
-playwright install chromium
 
 # 安装所有可选依赖
 pip install "feedgrab[all] @ git+https://github.com/iBigQiang/feedgrab.git"
-playwright install chromium
+```
+
+### 快速开始
+
+安装完成后，运行一键部署引导：
+
+```bash
+feedgrab setup
+```
+
+按提示完成 5 个步骤：环境检查 → 配置文件 → UA 检测 → 平台登录 → 功能启用，即可开始使用。每步可跳过，重复运行自动跳过已完成项。
 ```
 
 或克隆后本地安装：

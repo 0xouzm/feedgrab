@@ -10,6 +10,9 @@ Usage:
 
 import sys
 import os
+import re
+import shutil
+import time
 import asyncio
 from pathlib import Path
 
@@ -307,12 +310,285 @@ def cmd_detect_ua():
     print(f"   All browser interactions will now use this UA.")
 
 
+# ---------------------------------------------------------------------------
+# Setup helpers
+# ---------------------------------------------------------------------------
+
+def _set_env_value(env_path: Path, key: str, value: str):
+    """Set or update a key=value in .env file."""
+    content = env_path.read_text(encoding="utf-8")
+    pattern = rf"^#?\s*{re.escape(key)}=.*$"
+    replacement = f"{key}={value}"
+    if re.search(pattern, content, re.MULTILINE):
+        content = re.sub(pattern, replacement, content, count=1, flags=re.MULTILINE)
+    else:
+        content = content.rstrip("\n") + f"\n{replacement}\n"
+    env_path.write_text(content, encoding="utf-8")
+
+
+def _get_env_value(content: str, key: str) -> str:
+    """Extract a key's value from .env content string (strips inline comments)."""
+    m = re.search(rf"^{re.escape(key)}=(.*)$", content, re.MULTILINE)
+    if not m:
+        return ""
+    val = m.group(1).strip()
+    # Strip inline comments: OUTPUT_DIR=./output  # comment → ./output
+    if "  #" in val:
+        val = val.split("  #")[0].strip()
+    return val
+
+
+def _session_age_str(session_file: Path) -> str:
+    """Return human-readable age of a session file."""
+    age_sec = time.time() - session_file.stat().st_mtime
+    if age_sec < 3600:
+        return f"{int(age_sec / 60)} 分钟前"
+    elif age_sec < 86400:
+        return f"{int(age_sec / 3600)} 小时前"
+    else:
+        return f"{int(age_sec / 86400)} 天前"
+
+
+# ---------------------------------------------------------------------------
+# Setup steps
+# ---------------------------------------------------------------------------
+
+def _step_check_env():
+    """[1/5] Check Python, feedgrab, Playwright, Chromium."""
+    print("\n[1/5] 检查运行环境...")
+
+    # Python
+    print(f"  \u2705 Python {sys.version.split()[0]}")
+
+    # feedgrab
+    try:
+        from importlib.metadata import version as pkg_version
+        v = pkg_version("feedgrab")
+        print(f"  \u2705 feedgrab {v}")
+    except Exception:
+        print("  \u2705 feedgrab (dev mode)")
+
+    # Playwright
+    pw_ok = False
+    try:
+        import playwright  # noqa: F401
+        print("  \u2705 Playwright 已安装")
+        pw_ok = True
+    except ImportError:
+        print("  \u26a0\ufe0f  Playwright 未安装")
+        ans = input("     \u2192 是否自动安装？(Y/n) ").strip().lower()
+        if ans in ("", "y", "yes"):
+            import subprocess
+            print("     \u2192 正在安装 playwright...")
+            subprocess.run([sys.executable, "-m", "pip", "install", "playwright"],
+                           check=True, capture_output=True)
+            print("     \u2192 正在安装 Chromium 浏览器...")
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                           check=True, capture_output=True)
+            print("  \u2705 Playwright + Chromium 已就绪")
+            pw_ok = True
+        else:
+            print("  \u23ed 已跳过（浏览器功能不可用）")
+
+    if not pw_ok:
+        return
+
+    # Check Chromium is installed
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, channel="chrome")
+            browser.close()
+        print("  \u2705 Chrome 浏览器可用")
+    except Exception:
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                browser.close()
+            print("  \u2705 Chromium 浏览器可用")
+        except Exception:
+            print("  \u26a0\ufe0f  Chromium 未安装")
+            ans = input("     \u2192 是否自动安装？(Y/n) ").strip().lower()
+            if ans in ("", "y", "yes"):
+                import subprocess
+                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                               check=True, capture_output=True)
+                print("  \u2705 Chromium 已安装")
+            else:
+                print("  \u23ed 已跳过")
+
+
+def _step_create_dotenv():
+    """[2/5] Create .env and set OUTPUT_DIR."""
+    print("\n[2/5] 配置文件...")
+
+    env_path = Path.cwd() / ".env"
+    example_path = Path.cwd() / ".env.example"
+
+    if env_path.exists():
+        print("  \u2705 .env 文件已存在")
+    elif example_path.exists():
+        shutil.copy(example_path, env_path)
+        print("  \u2705 已从 .env.example 创建 .env")
+    else:
+        env_path.touch()
+        print("  \u2705 已创建空 .env")
+
+    # Check OUTPUT_DIR
+    content = env_path.read_text(encoding="utf-8")
+    current = _get_env_value(content, "OUTPUT_DIR")
+    if current and current != "./output":
+        print(f"  \u2705 OUTPUT_DIR = {current}")
+    else:
+        default = "./output"
+        ans = input(f"  请输入内容输出目录 (直接回车使用默认 {default}): ").strip()
+        output_dir = ans or default
+        _set_env_value(env_path, "OUTPUT_DIR", output_dir)
+        print(f"  \u2705 OUTPUT_DIR = {output_dir}")
+
+
+def _step_detect_ua():
+    """[3/5] Detect UA — reuse cmd_detect_ua logic."""
+    print("\n[3/5] 检测浏览器指纹...")
+
+    # Reload .env to check current value
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+    current_ua = os.getenv("BROWSER_USER_AGENT", "").strip()
+    if current_ua:
+        short = current_ua.split("Chrome/")[1][:10] if "Chrome/" in current_ua else current_ua[-30:]
+        print(f"  \u2705 已配置: Chrome/{short}...")
+        return
+
+    # Run detection
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+    except ImportError:
+        print("  \u23ed Playwright 未安装，跳过 UA 检测")
+        return
+
+    cmd_detect_ua()
+
+
+_SETUP_PLATFORMS = [
+    ("xhs", "小红书", "请在弹出的浏览器窗口中扫码登录"),
+    ("twitter", "Twitter/X", "请在弹出的浏览器窗口中登录"),
+    ("wechat", "微信公众号", "请在弹出的浏览器窗口中登录"),
+]
+
+
+def _step_platform_login():
+    """[4/5] Interactive platform login."""
+    print("\n[4/5] 平台登录")
+
+    from feedgrab.config import get_session_dir
+
+    session_dir = get_session_dir()
+    canonical_map = {"xhs": "xhs", "twitter": "twitter", "wechat": "wechat"}
+
+    for key, name, desc in _SETUP_PLATFORMS:
+        canonical = canonical_map[key]
+        session_file = session_dir / f"{canonical}.json"
+
+        if session_file.exists():
+            age = _session_age_str(session_file)
+            print(f"  \u2705 {name} session 已存在 ({age})")
+            ans = input(f"     \u2192 重新登录？(y/N) ").strip().lower()
+            if ans not in ("y", "yes"):
+                continue
+        else:
+            ans = input(f"  \U0001f511 登录{name}？(Y/n) ").strip().lower()
+            if ans not in ("", "y", "yes"):
+                print(f"     \u23ed 已跳过")
+                continue
+
+        print(f"     \U0001f310 {desc}...")
+        try:
+            from feedgrab.login import login
+            login(key, headless=False)
+        except Exception as e:
+            print(f"     \u274c 登录失败: {e}")
+
+
+def _step_enable_features():
+    """[5/5] Enable batch features based on available sessions."""
+    print("\n[5/5] 启用批量功能")
+
+    from feedgrab.config import get_session_dir
+
+    env_path = Path.cwd() / ".env"
+    if not env_path.exists():
+        return
+
+    session_dir = get_session_dir()
+
+    # XHS batch
+    xhs_session = session_dir / "xhs.json"
+    if xhs_session.exists():
+        content = env_path.read_text(encoding="utf-8")
+        xhs_enabled = _get_env_value(content, "XHS_USER_NOTES_ENABLED")
+        if xhs_enabled.lower() == "true":
+            print("  \u2705 小红书批量抓取已启用")
+        else:
+            ans = input("  启用小红书批量抓取（作者主页 + 搜索）？(Y/n) ").strip().lower()
+            if ans in ("", "y", "yes"):
+                _set_env_value(env_path, "XHS_USER_NOTES_ENABLED", "true")
+                _set_env_value(env_path, "XHS_SEARCH_ENABLED", "true")
+                print("  \u2705 XHS_USER_NOTES_ENABLED=true")
+                print("  \u2705 XHS_SEARCH_ENABLED=true")
+            else:
+                print("  \u23ed 已跳过")
+    else:
+        print("  \u23ed 小红书未登录，跳过批量功能配置")
+
+    # Twitter batch
+    twitter_session = session_dir / "twitter.json"
+    if twitter_session.exists():
+        content = env_path.read_text(encoding="utf-8")
+        x_enabled = _get_env_value(content, "X_BOOKMARKS_ENABLED")
+        if x_enabled.lower() == "true":
+            print("  \u2705 Twitter 批量抓取已启用")
+        else:
+            ans = input("  启用 Twitter 批量抓取（书签 + 账号推文）？(Y/n) ").strip().lower()
+            if ans in ("", "y", "yes"):
+                _set_env_value(env_path, "X_BOOKMARKS_ENABLED", "true")
+                _set_env_value(env_path, "X_USER_TWEETS_ENABLED", "true")
+                print("  \u2705 X_BOOKMARKS_ENABLED=true")
+                print("  \u2705 X_USER_TWEETS_ENABLED=true")
+            else:
+                print("  \u23ed 已跳过")
+    else:
+        print("  \u23ed Twitter 未登录，跳过批量功能配置")
+
+
+def cmd_setup():
+    """Interactive first-time deployment guide."""
+    print("\n\U0001f4e6 feedgrab 首次部署引导")
+    print("=" * 40)
+
+    _step_check_env()
+    _step_create_dotenv()
+    _step_detect_ua()
+    _step_platform_login()
+    _step_enable_features()
+
+    print("\n" + "=" * 40)
+    print("\U0001f389 部署完成！\n")
+    print("试试：")
+    print('  feedgrab https://www.xiaohongshu.com/explore/xxx')
+    print('  feedgrab "https://www.xiaohongshu.com/search_result?keyword=..."')
+    print('  feedgrab list')
+    print()
+
+
 def main():
     if len(sys.argv) < 2:
         print("""
 \U0001f4d6 feedgrab \u2014 Universal content grabber
 
 Usage:
+    feedgrab setup              First-time deployment guide (recommended for new users)
     feedgrab <url>              Fetch content from any URL
     feedgrab <url1> <url2>      Fetch multiple URLs
     feedgrab login <platform>   Login to a platform (saves session for browser fallback)
@@ -332,12 +608,15 @@ Examples:
     feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
     feedgrab "https://www.xiaohongshu.com/search_result?keyword=..."
     feedgrab login xhs
+    feedgrab setup              # First-time setup wizard
 """)
         return
 
     cmd = sys.argv[1].lower()
 
-    if cmd == "login":
+    if cmd == "setup":
+        cmd_setup()
+    elif cmd == "login":
         if len(sys.argv) < 3:
             print("\u274c Usage: feedgrab login <platform> [--headless]")
             print("   Supported: xhs, wechat, twitter")

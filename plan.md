@@ -3,7 +3,7 @@
 本文档记录每次升级迭代的确定方案，作为项目演进的记忆文件。
 ---
 
-## 待办 · feedgrab setup 一键部署引导
+## 2026-02-28 · v0.3.0 · feedgrab setup 一键部署引导
 
 ### 背景
 当前首次部署需要用户手动执行多个命令（`detect-ua`、`login xhs`、`login twitter`、配置 `.env` 等），且存在隐式依赖（必须先 `detect-ua` 再 `login`，否则 UA 不一致导致 session 失效）。对普通用户门槛过高。
@@ -46,8 +46,7 @@ $ feedgrab setup
 - **Cookie 过期提示**：抓取时检测到 session 失效，提示 `feedgrab setup` 或 `feedgrab login <platform>` 重新登录
 - **依赖自动安装**：检测 Playwright 未安装时提示一键安装命令
 
-### 时机
-所有功能迭代完毕后统一实现。
+### 状态：已完成 ✅
 
 ---
 
