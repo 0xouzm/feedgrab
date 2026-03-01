@@ -72,7 +72,7 @@ def cmd_list():
     output_dir = os.getenv("OUTPUT_DIR", "").strip()
 
     if vault:
-        base_dir = Path(vault) / "01-\u6536\u96c6\u7bb1"
+        base_dir = Path(vault)
     elif output_dir:
         base_dir = Path(output_dir)
     else:
@@ -148,7 +148,7 @@ def cmd_reset(folder_name: str):
     output_dir = os.getenv("OUTPUT_DIR", "").strip()
 
     if vault:
-        base_dir = Path(vault) / "01-\u6536\u96c6\u7bb1"
+        base_dir = Path(vault)
     elif output_dir:
         base_dir = Path(output_dir)
     else:
