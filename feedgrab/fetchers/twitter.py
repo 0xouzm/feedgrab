@@ -369,7 +369,7 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
                             len(first_text) < 200
                             and ("https://t.co/" in first_text or first_text.startswith("http"))
                         )
-                    is_article_stub = has_article or text_is_stub
+                    is_article_stub = (has_article or text_is_stub) and not data.get("videos")
                     if is_article_stub:
                         logger.info("[Twitter] Article detected — fetching body via Jina")
                         jina_content = ""
