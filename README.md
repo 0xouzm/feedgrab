@@ -51,6 +51,7 @@ feedgrab https://x.com/i/bookmarks/2015311287715340624  # 指定书签文件夹
 # 批量抓取用户推文（需要 X_USER_TWEETS_ENABLED=true）
 feedgrab https://x.com/iBigQiang                        # 抓取全部推文
 X_USER_TWEETS_SINCE=2026-02-01 feedgrab https://x.com/iBigQiang  # 指定日期之后
+# ↑ 超过 ~800 条时自动启动浏览器搜索补充（需 feedgrab login twitter）
 
 # 批量抓取小红书作者笔记（需要 XHS_USER_NOTES_ENABLED=true + feedgrab login xhs）
 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
@@ -167,6 +168,7 @@ Tier 0（GraphQL）移植自 [baoyu-danger-x-to-markdown](https://github.com/Jim
 - 作者回帖 + 评论区采集（可选开关）
 - **书签批量抓取**（全部书签 / 指定文件夹）
 - **用户推文批量抓取**（全部 / 按日期过滤，自动跳过 RT + 会话去重）
+- **浏览器搜索补充**（突破 UserTweets ~800 条限制，自动按月分片搜索补充历史推文）
 - **全局去重索引**（跨模式统一去重）
 
 ### X/Twitter Cookie 配置
@@ -384,6 +386,8 @@ cp .env.example .env
 | `X_USER_TWEET_MAX_PAGES` | 否 | 用户推文最大分页数（默认：`50`） |
 | `X_USER_TWEET_DELAY` | 否 | 用户推文处理间隔秒数（默认：`2.0`） |
 | `X_USER_TWEETS_SINCE` | 否 | 仅抓取该日期之后的推文（如 `2025-10-01`，留空=全部） |
+| `X_SEARCH_SUPPLEMENTARY` | 否 | 搜索补充开关，UserTweets 不够时自动按月搜索补充（默认：`true`） |
+| `X_SEARCH_MAX_PAGES_PER_CHUNK` | 否 | 每个月度搜索分片最大分页数（默认：`50`） |
 | `XHS_USER_NOTES_ENABLED` | 否 | 启用小红书作者批量抓取（默认：`false`） |
 | `XHS_USER_NOTE_MAX_SCROLLS` | 否 | 作者主页最大滚动次数（默认：`50`） |
 | `XHS_USER_NOTE_DELAY` | 否 | 笔记处理间隔秒数（默认：`3.0`） |
@@ -419,10 +423,11 @@ feedgrab/
 │   │   ├── telegram.py        # Telegram 频道（Telethon）
 │   │   ├── twitter.py         # X/Twitter 四级兜底调度器
 │   │   ├── twitter_cookies.py # Cookie 多源管理（环境变量/文件/Playwright/CDP）
-│   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, UserTweets, Bookmarks, 动态 queryId）
+│   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, UserTweets, Bookmarks, SearchTimeline, 动态 queryId）
 │   │   ├── twitter_thread.py  # 线程重建 + 评论分类（分页 + 去重 + 根推文追溯）
 │   │   ├── twitter_bookmarks.py# 书签批量抓取（全部/文件夹，分页+去重+分类）
 │   │   ├── twitter_user_tweets.py# 用户推文批量抓取（分页+日期过滤+会话去重+RT跳过）
+│   │   ├── twitter_search_tweets.py# 浏览器搜索补充（突破 UserTweets 800 条限制，按月分片+响应拦截）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
 │   │   ├── wechat.py          # Jina → Playwright 兜底
 │   │   ├── xhs.py             # Jina → Playwright + Session 兜底

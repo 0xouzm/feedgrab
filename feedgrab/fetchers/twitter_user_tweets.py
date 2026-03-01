@@ -241,6 +241,18 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
     total = len(all_tweet_entries)
     logger.info(f"[UserTweets] 共获取 {total} 条推文条目")
 
+    # Detect earliest tweet date for Search API supplementary fetch
+    earliest_tweet_date = ""
+    if total > 0:
+        for entry in all_tweet_entries:
+            td = extract_tweet_data(entry)
+            if td and td.get("created_at"):
+                tweet_date = _parse_tweet_date(td["created_at"])
+                if tweet_date and (not earliest_tweet_date or tweet_date < earliest_tweet_date):
+                    earliest_tweet_date = tweet_date
+        if earliest_tweet_date:
+            logger.info(f"[UserTweets] UserTweets 最早推文日期: {earliest_tweet_date}")
+
     if total == 0:
         return {
             "total": 0,
@@ -496,6 +508,41 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
     # Persist dedup index
     save_index(saved_ids)
     logger.info(f"[UserTweets] 索引更新: {initial_count} -> {len(saved_ids)} 条")
+
+    # Search API supplementary: fill historical gap beyond UserTweets limit
+    from feedgrab.config import x_search_supplementary_enabled
+    if (since_date
+        and earliest_tweet_date
+        and earliest_tweet_date > since_date
+        and x_search_supplementary_enabled()):
+        logger.info(
+            f"[UserTweets] UserTweets 最早到 {earliest_tweet_date}，"
+            f"目标日期 {since_date}，启动浏览器搜索补充抓取"
+        )
+        try:
+            from feedgrab.fetchers.twitter_search_tweets import fetch_search_supplementary
+            search_result = await fetch_search_supplementary(
+                screen_name=screen_name,
+                display_name=display_name,
+                cookies=cookies,
+                since_date=since_date,
+                earliest_tweet_date=earliest_tweet_date,
+                subfolder=subfolder,
+                saved_ids=saved_ids,
+                is_force=is_force,
+            )
+            # Merge stats
+            fetched += search_result.get("fetched", 0)
+            skipped += search_result.get("skipped", 0)
+            failed += search_result.get("failed", 0)
+            total += search_result.get("total", 0)
+            # Persist updated index
+            save_index(saved_ids)
+            logger.info(
+                f"[UserTweets] Search 补充完成，索引更新至 {len(saved_ids)} 条"
+            )
+        except Exception as e:
+            logger.warning(f"[UserTweets] Search 补充抓取失败: {e}")
 
     # Save batch record
     list_path = _save_batch_record(tweet_list, screen_name, since_date)

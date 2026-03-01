@@ -40,6 +40,7 @@ FALLBACK_BOOKMARK_FOLDERS_QUERY_ID = "i78YDd0Tza-dV4SYs58kRg"
 FALLBACK_BOOKMARK_FOLDER_TIMELINE_QUERY_ID = "8HoabOvl7jl9IC1Aixj-vg"
 FALLBACK_USER_BY_SCREEN_NAME_QUERY_ID = "k5XapwcSikNsEsILW5FvgA"
 FALLBACK_USER_TWEETS_QUERY_ID = "V7H0Ap3_Hh2FyS75OCDO3Q"
+FALLBACK_SEARCH_TIMELINE_QUERY_ID = "9AW3D-T7t9Vkvfdmq2L-iQ"
 
 # ---------------------------------------------------------------------------
 # Feature switches — per-operation, from baoyu constants.ts
@@ -176,6 +177,59 @@ USER_BY_SCREEN_NAME_FEATURES = {
 
 USER_TWEETS_FEATURES = dict(TWEET_DETAIL_FEATURES)
 USER_TWEETS_FEATURES["creator_subscriptions_tweet_preview_api_enabled"] = True
+
+# ---------------------------------------------------------------------------
+# SearchTimeline feature switches and field toggles
+# ---------------------------------------------------------------------------
+
+SEARCH_TIMELINE_FEATURES = {
+    "rweb_video_screen_enabled": False,
+    "profile_label_improvements_pcf_label_in_post_enabled": True,
+    "responsive_web_profile_redirect_enabled": False,
+    "rweb_tipjar_consumption_enabled": False,
+    "verified_phone_label_enabled": False,
+    "creator_subscriptions_tweet_preview_api_enabled": True,
+    "responsive_web_graphql_timeline_navigation_enabled": True,
+    "responsive_web_graphql_skip_user_profile_image_extensions_enabled": False,
+    "premium_content_api_read_enabled": False,
+    "communities_web_enable_tweet_community_results_fetch": True,
+    "c9s_tweet_anatomy_moderator_badge_enabled": True,
+    "responsive_web_grok_analyze_button_fetch_trends_enabled": False,
+    "responsive_web_grok_analyze_post_followups_enabled": True,
+    "responsive_web_jetfuel_frame": True,
+    "responsive_web_grok_share_attachment_enabled": True,
+    "responsive_web_grok_annotations_enabled": True,
+    "articles_preview_enabled": True,
+    "responsive_web_edit_tweet_api_enabled": True,
+    "graphql_is_translatable_rweb_tweet_is_translatable_enabled": True,
+    "view_counts_everywhere_api_enabled": True,
+    "longform_notetweets_consumption_enabled": True,
+    "responsive_web_twitter_article_tweet_consumption_enabled": True,
+    "tweet_awards_web_tipping_enabled": False,
+    "content_disclosure_indicator_enabled": True,
+    "content_disclosure_ai_generated_indicator_enabled": True,
+    "responsive_web_grok_show_grok_translated_post": False,
+    "responsive_web_grok_analysis_button_from_backend": True,
+    "post_ctas_fetch_enabled": False,
+    "freedom_of_speech_not_reach_fetch_enabled": True,
+    "standardized_nudges_misinfo": True,
+    "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
+    "rweb_video_timestamps_enabled": True,
+    "longform_notetweets_rich_text_read_enabled": True,
+    "longform_notetweets_inline_media_enabled": True,
+    "responsive_web_enhance_cards_enabled": False,
+    "tweetypie_unmention_optimization_enabled": True,
+    "responsive_web_text_conversations_enabled": True,
+    "responsive_web_media_download_video_enabled": True,
+    "responsive_web_graphql_exclude_directive_enabled": True,
+}
+
+SEARCH_TIMELINE_FIELD_TOGGLES = {
+    "withArticleRichContentState": True,
+    "withArticlePlainText": False,
+    "withGrokAnalyze": False,
+    "withDisallowedReplyControls": False,
+}
 
 # ---------------------------------------------------------------------------
 # Rate limiting (safety measure — original baoyu has none)
@@ -677,9 +731,106 @@ def parse_bookmark_entries(response: Dict[str, Any]) -> tuple:
     return entries, cursors
 
 
-# ---------------------------------------------------------------------------
-# Dynamic queryId resolution — from baoyu graphql.ts
-# ---------------------------------------------------------------------------
+def fetch_search_timeline_page(
+    raw_query: str,
+    cookies: dict,
+    cursor: str = None,
+    count: int = 20,
+    product: str = "Latest",
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch one page of search results via SearchTimeline GraphQL endpoint.
+
+    Args:
+        raw_query: Search query string (e.g. "from:username since:2025-01-01 until:2025-02-01").
+        cookies: dict with 'auth_token' and 'ct0'.
+        cursor: Optional pagination cursor from a previous response.
+        count: Number of results per page (default 20).
+        product: Search product type — "Latest" (chronological) or "Top" (relevance).
+
+    Returns:
+        Raw GraphQL response dict, or None on failure.
+    """
+    query_id = _get_query_id("SearchTimeline")
+    headers = build_graphql_headers(cookies)
+
+    variables = {
+        "rawQuery": raw_query,
+        "count": count,
+        "querySource": "typed_query",
+        "product": product,
+        "withGrokTranslatedBio": False,
+    }
+
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name="SearchTimeline",
+        variables=variables,
+        features=dict(SEARCH_TIMELINE_FEATURES),
+        field_toggles=dict(SEARCH_TIMELINE_FIELD_TOGGLES),
+        headers=headers,
+    )
+
+
+def parse_search_entries(response: Dict[str, Any]) -> tuple:
+    """
+    Extract tweet entries and pagination cursors from a SearchTimeline GraphQL response.
+
+    Response path: data.search_by_raw_query.search_timeline.timeline.instructions
+
+    Returns:
+        (entries, cursors) — entries can be passed to extract_tweet_data(),
+        cursors is a dict with optional 'top' and 'bottom' keys.
+    """
+    if not response or "data" not in response:
+        return [], {}
+
+    data = response["data"]
+
+    # Primary path
+    instructions = (
+        data.get("search_by_raw_query", {})
+        .get("search_timeline", {})
+        .get("timeline", {})
+        .get("instructions", [])
+    )
+
+    entries = []
+    cursors = {}
+
+    for instruction in instructions:
+        inst_type = instruction.get("type", "")
+
+        if inst_type == "TimelineAddEntries":
+            for entry in instruction.get("entries", []):
+                entry_id = entry.get("entryId", "")
+                content = entry.get("content", {})
+
+                # Extract cursor entries
+                if entry_id.startswith("cursor-"):
+                    cursor_type = content.get("cursorType", "")
+                    value = content.get("value", "")
+                    if cursor_type == "Top" and value:
+                        cursors["top"] = value
+                    elif cursor_type == "Bottom" and value:
+                        cursors["bottom"] = value
+                    continue
+
+                # Skip promoted content
+                if "promoted" in entry_id.lower():
+                    continue
+
+                entries.append(entry)
+
+        elif inst_type == "TimelineAddToModule":
+            for item in instruction.get("moduleItems", []):
+                entries.append(item)
+
+    return entries, cursors
 
 def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
     """
@@ -774,6 +925,49 @@ def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
                     if qid:
                         result[op] = qid
                         logger.debug(f"Resolved {op}: queryId={qid}")
+
+        # SearchTimeline — try main bundle first, then search-related bundles
+        if "SearchTimeline" not in result:
+            # Try main bundle
+            if main_match:
+                chunk_hash = main_match.group(1)
+                chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
+                qid = _fetch_and_extract_query_id(chunk_url, "SearchTimeline", ua)
+                if qid:
+                    result["SearchTimeline"] = qid
+                    logger.debug(f"Resolved SearchTimeline from main: queryId={qid}")
+
+            # Try dedicated search bundles (bundle.search, bundle.Search, etc.)
+            if "SearchTimeline" not in result:
+                for pattern in [
+                    r'bundle\.search:"([a-zA-Z0-9]+)"',
+                    r'bundle\.Search:"([a-zA-Z0-9]+)"',
+                    r'bundle\.SearchTimeline:"([a-zA-Z0-9]+)"',
+                    r'bundle\.explore:"([a-zA-Z0-9]+)"',
+                    r'bundle\.Explore:"([a-zA-Z0-9]+)"',
+                ]:
+                    bm = re.search(pattern, html)
+                    if bm:
+                        chunk_hash = bm.group(1)
+                        bundle_name = pattern.split(r'\.')[1].split(':')[0].rstrip('\\')
+                        chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.{bundle_name}.{chunk_hash}a.js"
+                        qid = _fetch_and_extract_query_id(chunk_url, "SearchTimeline", ua)
+                        if qid:
+                            result["SearchTimeline"] = qid
+                            logger.debug(f"Resolved SearchTimeline from bundle.{bundle_name}: queryId={qid}")
+                            break
+
+            # Brute-force: scan all bundle.* entries in HTML for SearchTimeline
+            if "SearchTimeline" not in result:
+                for bm in re.finditer(r'bundle\.(\w+):"([a-zA-Z0-9]+)"', html):
+                    bundle_name = bm.group(1)
+                    chunk_hash = bm.group(2)
+                    chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.{bundle_name}.{chunk_hash}a.js"
+                    qid = _fetch_and_extract_query_id(chunk_url, "SearchTimeline", ua)
+                    if qid:
+                        result["SearchTimeline"] = qid
+                        logger.debug(f"Resolved SearchTimeline from bundle.{bundle_name}: queryId={qid}")
+                        break
 
     except Exception as e:
         logger.warning(f"Dynamic queryId resolution failed ({e}), using fallbacks")
@@ -924,6 +1118,8 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
     core = result.get("core", {})
     user_results = core.get("user_results", {}).get("result", {})
     user_legacy = user_results.get("legacy", {})
+    # New API format: screen_name/name moved to user_results.result.core
+    user_core = user_results.get("core", {})
 
     # Extract note_tweet (long text) if available — priority over legacy.full_text
     note_tweet = (
@@ -971,13 +1167,14 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
             quoted_status.get("core", {})
             .get("user_results", {})
             .get("result", {})
-            .get("legacy", {})
         )
+        q_user_legacy = q_user.get("legacy", {})
+        q_user_core = q_user.get("core", {})
         quoted_tweet = {
             "id": q_legacy.get("id_str", ""),
             "text": q_legacy.get("full_text", ""),
-            "author": q_user.get("screen_name", ""),
-            "author_name": q_user.get("name", ""),
+            "author": q_user_legacy.get("screen_name", "") or q_user_core.get("screen_name", ""),
+            "author_name": q_user_legacy.get("name", "") or q_user_core.get("name", ""),
         }
 
     # Extract article reference if present
@@ -993,9 +1190,9 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
         "id": legacy.get("id_str", result.get("rest_id", "")),
         "rest_id": result.get("rest_id", ""),
         "text": full_text,
-        "author": user_legacy.get("screen_name", ""),
-        "author_name": user_legacy.get("name", ""),
-        "user_id": user_legacy.get("id_str", legacy.get("user_id_str", "")),
+        "author": user_legacy.get("screen_name", "") or user_core.get("screen_name", ""),
+        "author_name": user_legacy.get("name", "") or user_core.get("name", ""),
+        "user_id": user_legacy.get("id_str", "") or user_results.get("rest_id", "") or legacy.get("user_id_str", ""),
         "conversation_id": legacy.get("conversation_id_str", ""),
         "in_reply_to_user_id": legacy.get("in_reply_to_user_id_str", ""),
         "in_reply_to_status_id": legacy.get("in_reply_to_status_id_str", ""),
@@ -1097,6 +1294,7 @@ def _fallback_query_ids() -> Dict[str, str]:
         "BookmarkFolderTimeline": FALLBACK_BOOKMARK_FOLDER_TIMELINE_QUERY_ID,
         "UserByScreenName": FALLBACK_USER_BY_SCREEN_NAME_QUERY_ID,
         "UserTweets": FALLBACK_USER_TWEETS_QUERY_ID,
+        "SearchTimeline": FALLBACK_SEARCH_TIMELINE_QUERY_ID,
     }
 
 

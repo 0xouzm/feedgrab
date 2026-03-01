@@ -1,6 +1,60 @@
 # feedgrab DEVLOG
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
+
+---
+
+## 2026-03-02 · v0.4.0 · 浏览器搜索补充抓取 — 突破 UserTweets 800 条限制
+
+### 背景
+`feedgrab https://x.com/dontbesilent` 按账号全量抓取受 Twitter UserTweets API 服务端限制，每次最多返回 ~800 条推文。该博主 2025 年全年活跃，但只能抓到 2025-12-08 之后的内容。需要一种补充方案获取更早的历史推文。
+
+### 方案决策
+
+#### 方案演进（3 次迭代）
+1. **SearchTimeline GraphQL API 直接调用**（最初方案）— queryId 频繁变化，即使从浏览器 DevTools 获取正确 queryId，请求仍返回 404（URL 编码差异或 headers 校验）
+2. **页面 JS 注入拦截 XHR**（第二次尝试）— `page.goto()` 导航后 JS 环境重置，注入的拦截器丢失，无法捕获首批 GraphQL 响应
+3. **Playwright `page.on("response")` 事件**（最终方案）— 在 Python 层面注册响应拦截器，跨导航持久有效，捕获所有 SearchTimeline GraphQL 响应
+
+#### 最终架构
+```
+阶段1: UserTweets GraphQL API（现有，~800条，纯 API 高速）
+         ↓ 检测到历史缺口（earliest_tweet_date > X_USER_TWEETS_SINCE）
+阶段2: Playwright 浏览器搜索补充（新增）
+         → 启动 Chrome + 加载 sessions/twitter.json
+         → 预热访问 x.com/home 激活 session
+         → 按月分片导航到 x.com/search?q=from:user since:X until:Y
+         → page.on("response") 拦截 SearchTimeline GraphQL 响应
+         → 自动滚动加载更多 → 解析推文 → 去重 → 保存 Markdown
+```
+
+#### 关键设计
+- **SearchResponseCollector 类**：Python 层面的响应拦截器，通过 `page.on("response")` 注册，解析 `data.search_by_raw_query.search_timeline.timeline.instructions` 路径
+- **Session 预热**：先访问 x.com/home 激活登录态，再导航到搜索页
+- **URL 格式**：`urllib.parse.quote()` 编码，不带 `&f=live` 参数（匹配浏览器手动搜索行为）
+- **月度分片**：从 UserTweets 最早日期往回按月分片，连续 3 个空月度提前终止
+- **去重共享**：两阶段共用同一个 `item_id_url.json` 索引
+- **API 格式兼容**：修复 `extract_tweet_data()` 兼容新版 Twitter API（`screen_name`/`name` 从 `user_legacy` 移到 `user_core`）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_search_tweets.py` | 新建 | 浏览器搜索补充模块（SearchResponseCollector + 月度分片 + 滚动采集） |
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | SearchTimeline API 常量/函数 + `extract_tweet_data()` 兼容新版 API 格式 |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 修改 | 集成搜索补充调用 + earliest_tweet_date 检测 |
+| `feedgrab/config.py` | 修改 | 新增 `x_search_supplementary_enabled()` + `x_search_max_pages_per_chunk()` |
+| `.env.example` | 修改 | 新增搜索补充配置说明 |
+
+### 验证结果
+- 测试用户 `@dontbesilent`（X_USER_TWEETS_SINCE=2025-01-01）
+- 阶段1 UserTweets API：~800 条推文（2025-12-08 ~ 2026-03-01），索引 1003 条
+- 阶段2 浏览器搜索补充：处理 774 条，新增 284 条，跳过 490 条（去重），失败 0 条
+- 最终索引：1003 → 1290 条，总增 287 条历史推文
+- 注意：后期月度分片可能因平台风控返回空结果（非数据缺失）
+
+### 状态：已完成 ✅
+
 ---
 
 ## 2026-03-01 · v0.3.2 · Article 正文抓取修复 + GraphQL 单篇重试

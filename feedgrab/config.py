@@ -132,6 +132,24 @@ def x_user_tweets_since() -> str:
     return os.getenv("X_USER_TWEETS_SINCE", "").strip()
 
 
+def x_search_supplementary_enabled() -> bool:
+    """Whether to use Search API to supplement UserTweets for older tweets.
+
+    When enabled (default), after UserTweets finishes, if X_USER_TWEETS_SINCE
+    is set and UserTweets didn't reach that far back, Search API will
+    automatically fill the gap via monthly date chunking.
+    """
+    return os.getenv("X_SEARCH_SUPPLEMENTARY", "true").lower() in ("true", "1", "yes")
+
+
+def x_search_max_pages_per_chunk() -> int:
+    """Maximum pages per monthly search chunk (default 50)."""
+    try:
+        return int(os.getenv("X_SEARCH_MAX_PAGES_PER_CHUNK", "50"))
+    except ValueError:
+        return 50
+
+
 def force_refetch() -> bool:
     """Skip dedup check and re-fetch/overwrite existing files.
 
