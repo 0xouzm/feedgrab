@@ -33,6 +33,7 @@ from feedgrab.fetchers.twitter_bookmarks import (
     _classify_tweet,
     _build_single_tweet_data,
     _sanitize_folder_name,
+    _fetch_article_body,
 )
 from feedgrab.utils.dedup import (
     load_index,
@@ -423,27 +424,11 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
                     f"长文章，获取正文: @{author}"
                 )
                 data = _build_single_tweet_data(tweet_data, tweet_url)
-                # Jina body fetch with retry
-                jina_content = ""
-                for attempt in range(2):
-                    try:
-                        jina_data = fetch_via_jina(tweet_url)
-                        jina_content = jina_data.get("content", "")
-                        if jina_content and len(jina_content.strip()) > 200:
-                            break
-                        if attempt == 0:
-                            time.sleep(2)
-                    except Exception as je:
-                        if attempt == 0:
-                            time.sleep(2)
-                        else:
-                            logger.warning(f"[UserTweets] Jina 获取失败: {je}")
-                if jina_content and len(jina_content.strip()) > 200:
-                    jina_content = re.sub(
-                        r'\[!\[[^\]]*\]\(([^)]+)\)\]\([^)]+\)',
-                        r'![image](\1)',
-                        jina_content,
-                    )
+                article = tweet_data.get("article") or {}
+                jina_content = _fetch_article_body(
+                    tweet_url, article, author, "[UserTweets]"
+                )
+                if jina_content:
                     data["text"] = jina_content
                     if data.get("thread_tweets"):
                         data["thread_tweets"][0]["text"] = jina_content

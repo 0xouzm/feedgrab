@@ -116,6 +116,79 @@ def _resolve_folder_name(folder_id: str, cookies: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Jina content quality helpers (shared by bookmarks / user_tweets / twitter)
+# ---------------------------------------------------------------------------
+
+def _is_jina_garbage(content: str) -> bool:
+    """Detect if Jina content is Twitter page chrome / login page garbage."""
+    garbage_markers = [
+        "New to X?",
+        "Sign up now to get your own personalized timeline",
+        "Sign up with Google",
+        "Create account",
+        "Terms of Service",
+        "Cookie Use",
+        "This page maybe not yet fully loaded",
+        "Trending now",
+        "What\u2019s happening",
+    ]
+    hit_count = sum(1 for m in garbage_markers if m in content)
+    return hit_count >= 2
+
+
+def _fetch_article_body(
+    tweet_url: str,
+    article_data: dict,
+    author: str,
+    log_prefix: str = "[Twitter]",
+) -> str:
+    """Fetch article body via Jina, trying article URL first.
+
+    Returns cleaned article content, or empty string if all attempts fail.
+    """
+    from feedgrab.fetchers.jina import fetch_via_jina
+
+    # Build URL candidates: article URL first, then status URL
+    urls_to_try = []
+    article_id = (article_data or {}).get("id", "")
+    clean_author = author.lstrip("@")
+    if article_id and clean_author:
+        urls_to_try.append(f"https://x.com/{clean_author}/article/{article_id}")
+    urls_to_try.append(tweet_url)
+
+    for jina_url in urls_to_try:
+        for attempt in range(2):
+            try:
+                jina_data = fetch_via_jina(jina_url)
+                jina_content = jina_data.get("content", "")
+                if jina_content and len(jina_content.strip()) > 200:
+                    if _is_jina_garbage(jina_content):
+                        logger.info(
+                            f"{log_prefix} Jina 返回页面垃圾，跳过: {jina_url}"
+                        )
+                        break  # skip to next URL candidate
+                    # Normalize nested image links [![alt](img)](link) → ![image](img)
+                    jina_content = re.sub(
+                        r'\[!\[[^\]]*\]\(([^)]+)\)\]\([^)]+\)',
+                        r'![image](\1)',
+                        jina_content,
+                    )
+                    return jina_content
+                if attempt == 0:
+                    logger.info(f"{log_prefix} Jina 内容过短，重试...")
+                    time.sleep(2)
+            except Exception as je:
+                if attempt == 0:
+                    logger.info(f"{log_prefix} Jina 失败 ({je})，重试...")
+                    time.sleep(2)
+                else:
+                    logger.warning(f"{log_prefix} Jina 重试失败: {je}")
+
+    logger.warning(f"{log_prefix} 文章正文获取失败，保留原始内容")
+    return ""
+
+
+# ---------------------------------------------------------------------------
 # Tweet classification
 # ---------------------------------------------------------------------------
 
@@ -354,29 +427,11 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
                 # Article: build base data, then fetch body via Jina
                 logger.info(f"[Bookmarks] [{idx + 1}/{total}] 长文章，获取正文: @{author}")
                 data = _build_single_tweet_data(tweet_data, tweet_url)
-                # Jina body fetch with retry
-                jina_content = ""
-                for attempt in range(2):
-                    try:
-                        jina_data = fetch_via_jina(tweet_url)
-                        jina_content = jina_data.get("content", "")
-                        if jina_content and len(jina_content.strip()) > 200:
-                            break
-                        if attempt == 0:
-                            time.sleep(2)
-                    except Exception as je:
-                        if attempt == 0:
-                            time.sleep(2)
-                        else:
-                            logger.warning(f"[Bookmarks] Jina 获取失败: {je}")
-                if jina_content and len(jina_content.strip()) > 200:
-                    # Normalize nested image links
-                    import re as _re
-                    jina_content = _re.sub(
-                        r'\[!\[[^\]]*\]\(([^)]+)\)\]\([^)]+\)',
-                        r'![image](\1)',
-                        jina_content,
-                    )
+                article = tweet_data.get("article") or {}
+                jina_content = _fetch_article_body(
+                    tweet_url, article, author, "[Bookmarks]"
+                )
+                if jina_content:
                     data["text"] = jina_content
                     if data.get("thread_tweets"):
                         data["thread_tweets"][0]["text"] = jina_content

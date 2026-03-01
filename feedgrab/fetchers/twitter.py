@@ -351,7 +351,28 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
             cookies = load_twitter_cookies()
             if has_required_cookies(cookies):
                 logger.info(f"[Twitter] Tier 0 — GraphQL: {url}")
-                data = await _fetch_via_graphql(url, tweet_id)
+                import time as _time
+                data = None
+                last_error = None
+                for attempt in range(4):  # 1 initial + 3 retries
+                    try:
+                        data = await _fetch_via_graphql(url, tweet_id)
+                        if data and data.get("text"):
+                            break
+                        last_error = "empty response"
+                    except Exception as gql_err:
+                        err_str = str(gql_err)
+                        # Don't retry auth errors — propagate immediately
+                        if "401" in err_str or "403" in err_str or "unauthorized" in err_str.lower():
+                            raise
+                        last_error = err_str
+                        data = None
+                    if attempt < 3:
+                        logger.warning(
+                            f"[Twitter] GraphQL 失败({last_error})，"
+                            f"5秒后第 {attempt + 1}/3 次重试..."
+                        )
+                        _time.sleep(5)
                 if data and data.get("text"):
                     # Check if this is a Twitter Article that needs Jina for full body
                     # Primary signal: article_data with has_content flag (from GraphQL)
@@ -372,38 +393,18 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
                     is_article_stub = (has_article or text_is_stub) and not data.get("videos")
                     if is_article_stub:
                         logger.info("[Twitter] Article detected — fetching body via Jina")
-                        jina_content = ""
-                        for attempt in range(2):
-                            try:
-                                jina_data = fetch_via_jina(url)
-                                jina_content = jina_data.get("content", "")
-                                if jina_content and len(jina_content.strip()) > 200:
-                                    break
-                                if attempt == 0:
-                                    logger.info("[Twitter] Jina returned short content, retrying...")
-                                    import time; time.sleep(2)
-                            except Exception as je:
-                                if attempt == 0:
-                                    logger.info(f"[Twitter] Jina attempt 1 failed ({je}), retrying...")
-                                    import time; time.sleep(2)
-                                else:
-                                    logger.warning(f"[Twitter] Jina retry also failed ({je})")
-                        if jina_content and len(jina_content.strip()) > 200:
-                            # Normalize nested image links [![alt](img)](link) → ![image](img)
-                            jina_content = re.sub(
-                                r'\[!\[[^\]]*\]\(([^)]+)\)\]\([^)]+\)',
-                                r'![image](\1)',
-                                jina_content,
-                            )
+                        from feedgrab.fetchers.twitter_bookmarks import _fetch_article_body
+                        article_info = data.get("article_data") or {}
+                        tweet_author = (data.get("author") or "").lstrip("@")
+                        jina_content = _fetch_article_body(
+                            url, article_info, tweet_author, "[Twitter]"
+                        )
+                        if jina_content:
                             data["text"] = jina_content
-                            # Update thread_tweets content too for schema
                             if data.get("thread_tweets"):
                                 data["thread_tweets"][0]["text"] = jina_content
-                            logger.info("[Twitter] Article body fetched successfully")
-                        else:
-                            logger.warning("[Twitter] Jina article body too short after retries, keeping original")
                     return data
-                logger.warning("[Twitter] GraphQL returned empty content")
+                logger.warning("[Twitter] GraphQL 3次重试后仍无有效数据，降级到 oEmbed")
             else:
                 logger.warning(
                     "\n"

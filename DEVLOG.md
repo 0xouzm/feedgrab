@@ -3,6 +3,41 @@
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 ---
 
+## 2026-03-01 · v0.3.2 · Article 正文抓取修复 + GraphQL 单篇重试
+
+### 背景
+批量抓取 `@dontbesilent` 全量推文时发现两个问题：
+1. **Article 正文为垃圾内容**：长文推文（如 `dontbesilent/status/2023370066734338381`）保存的 Markdown 正文是 Twitter 登录页 chrome（"New to X?", "Sign up now"...），而非文章正文。根因是 Jina 通过 `/status/` URL 抓取时返回登录页，垃圾内容 >200 字符通过了长度校验
+2. **GraphQL 单篇无重试**：单篇推文的 GraphQL 调用失败（连接重置或 RuntimeError）时直接降级到 oEmbed，丢失元数据（likes/views/bookmarks 等）
+
+### 方案决策
+
+#### Article 正文抓取：垃圾检测 + article URL 优先
+- 新增 `_is_jina_garbage()` — 匹配 9 个 Twitter 页面 chrome 特征词，命中 ≥2 个判定为垃圾
+- 新增 `_fetch_article_body()` 共享函数 — 优先用 `/article/{id}` URL（从 GraphQL 元数据中的 `article.rest_id` 构建），失败后回退 `/status/` URL，每个 URL 重试 2 次，全程带垃圾检测
+- 3 处 article 分支（`twitter.py`、`twitter_bookmarks.py`、`twitter_user_tweets.py`）统一调用共享函数，消除重复代码
+
+#### GraphQL 单篇重试：统一重试循环
+- 将 `_fetch_via_graphql` 调用包裹在 try/except 重试循环中（1 次初始 + 3 次重试，间隔 5 秒）
+- 同时覆盖"返回空数据"和"抛出 RuntimeError"两种失败模式
+- Auth 错误（401/403）不重试，直接抛出到外层降级处理
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_bookmarks.py` | 修改 | 新增 `_is_jina_garbage()` + `_fetch_article_body()` 共享函数；article 分支简化为调用共享函数 |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 修改 | article 分支简化为调用 `_fetch_article_body()`；新增 import |
+| `feedgrab/fetchers/twitter.py` | 修改 | GraphQL 单篇重试逻辑（try/except 循环）；article 分支简化为调用 `_fetch_article_body()` |
+
+### 验证结果
+- `_is_jina_garbage()` 单元验证：垃圾内容（"New to X?", "Sign up now"...）→ True，正常文章内容 → False
+- 3 个模块 import 测试通过
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-01 · v0.3.1 · 日期时区修复 + 视频嵌入 + 分页增强
 
 ### 背景
