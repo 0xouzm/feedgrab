@@ -184,6 +184,11 @@ def from_twitter(data: dict) -> UnifiedContent:
             for t in tweets:
                 for img_url in t.get("images", []):
                     content += f"\n\n![image]({img_url})"
+            # Article: append videos
+            for t in tweets:
+                for video_url in t.get("videos", []):
+                    if video_url:
+                        content += f"\n\n[▶ video]({video_url})"
             # Article: prepend cover image at the top
             article_cover = article_data.get("cover_image", "")
             if article_cover:
@@ -202,6 +207,10 @@ def from_twitter(data: dict) -> UnifiedContent:
                 # Inline images
                 for img_url in t.get("images", []):
                     part += f"\n\n![image]({img_url})"
+                # Inline videos
+                for video_url in t.get("videos", []):
+                    if video_url:
+                        part += f"\n\n[▶ video]({video_url})"
                 # Quoted tweet as blockquote
                 qt = t.get("quoted_tweet")
                 if qt and qt.get("text"):

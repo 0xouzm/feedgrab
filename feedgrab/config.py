@@ -112,11 +112,11 @@ def x_user_tweets_enabled() -> bool:
 
 
 def x_user_tweet_max_pages() -> int:
-    """Maximum user timeline pagination pages (default 50, ~1000 tweets)."""
+    """Maximum user timeline pagination pages (default 200, ~4000 tweets)."""
     try:
-        return int(os.getenv("X_USER_TWEET_MAX_PAGES", "50"))
+        return int(os.getenv("X_USER_TWEET_MAX_PAGES", "200"))
     except ValueError:
-        return 50
+        return 200
 
 
 def x_user_tweet_delay() -> float:
@@ -185,3 +185,25 @@ def xhs_search_delay() -> float:
         return float(os.getenv("XHS_SEARCH_DELAY", "3.0"))
     except ValueError:
         return 3.0
+
+
+# ---------------------------------------------------------------------------
+# Date helpers
+# ---------------------------------------------------------------------------
+
+def parse_twitter_date_local(created_at: str, fmt: str = "%Y-%m-%d") -> str:
+    """Parse Twitter RFC 2822 created_at to local timezone string.
+
+    Twitter API returns UTC timestamps. This converts to the system's
+    local timezone before formatting, so dates match what users see
+    on the Twitter web UI.
+    """
+    if not created_at:
+        return ""
+    try:
+        from email.utils import parsedate_to_datetime
+        dt = parsedate_to_datetime(created_at)
+        dt = dt.astimezone()  # UTC → system local timezone
+        return dt.strftime(fmt)
+    except Exception:
+        return ""

@@ -18,7 +18,6 @@ import json
 import re
 import time
 from datetime import datetime
-from email.utils import parsedate_to_datetime
 from pathlib import Path
 from loguru import logger
 from typing import Dict, Any, Optional
@@ -68,11 +67,8 @@ def _parse_profile_url(url: str) -> str:
 
 def _parse_tweet_date(created_at: str) -> str:
     """Parse Twitter RFC 2822 date to 'YYYY-MM-DD' for comparison."""
-    try:
-        dt = parsedate_to_datetime(created_at)
-        return dt.strftime("%Y-%m-%d")
-    except Exception:
-        return ""
+    from feedgrab.config import parse_twitter_date_local
+    return parse_twitter_date_local(created_at)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +177,15 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
 
         response = fetch_user_tweets_page(user_id, cookies, cursor=cursor)
         if not response:
-            logger.error("[UserTweets] API 返回空响应，停止分页")
+            # Retry up to 3 times (handles transient connection resets)
+            for retry in range(1, 4):
+                logger.warning(f"[UserTweets] API 返回空响应，5秒后第 {retry}/3 次重试...")
+                time.sleep(5)
+                response = fetch_user_tweets_page(user_id, cookies, cursor=cursor)
+                if response:
+                    break
+        if not response:
+            logger.error("[UserTweets] 3次重试后仍无响应，停止分页")
             break
 
         entries, cursors = parse_user_tweets_entries(response)

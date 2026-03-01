@@ -3,6 +3,54 @@
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 ---
 
+## 2026-03-01 · v0.3.1 · 日期时区修复 + 视频嵌入 + 分页增强
+
+### 背景
+真实抓取 `@dontbesilent` 全量推文时发现三个问题：
+1. **日期差一天**：推文网页显示"2025年12月26日"，但抓取结果为 `published: 2025-12-25`。根因是 Twitter API 返回 UTC 时间，代码直接 `strftime` 未转本地时区
+2. **视频丢失**：含视频的推文只保存了封面截图，没有视频 MP4 链接。`extract_tweet_data()` 正确提取了 `videos`，但 `from_twitter()` 只渲染 `images` 忽略了 `videos`
+3. **分页不全**：默认 `X_USER_TWEET_MAX_PAGES=50`（≈1000 条），高产博主不够。且分页请求失败（连接重置）时无重试直接中断
+
+### 方案决策
+
+#### 日期时区：集中化工具函数
+- 在 `config.py` 新增 `parse_twitter_date_local(created_at, fmt)` 工具函数
+- 核心逻辑：`parsedate_to_datetime()` → `dt.astimezone()`（UTC→系统本地时区）→ `strftime()`
+- 替换 4 处分散的日期解析代码，统一走此函数
+- `astimezone()` 无参数使用系统时区（Python 3.9+ 内置），无需额外依赖
+
+#### 视频嵌入：双渲染（封面图+视频链接）
+- 在 `from_twitter()` 的 Article 模式和普通线程模式两处，images 循环后追加 videos 循环
+- 格式 `[▶ video](mp4_url)`，与 `twitter_markdown.py` 一致
+- 封面图保留作为 Obsidian 内视觉预览
+
+#### 分页增强：扩容+重试
+- 默认最大页数 50→200（≈4000 条推文）
+- 分页请求失败后重试 3 次，每次间隔 5 秒
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/config.py` | 修改 | 新增 `parse_twitter_date_local()` 工具函数；`x_user_tweet_max_pages()` 默认值 50→200 |
+| `feedgrab/utils/storage.py` | 修改 | 3 处日期解析替换为 `parse_twitter_date_local()` 调用（`_format_twitter_datetime` / `_generate_filename` / `_format_markdown`） |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 修改 | `_parse_tweet_date()` 替换为 `parse_twitter_date_local()`；分页失败后重试 3 次（5 秒间隔） |
+| `feedgrab/schema.py` | 修改 | `from_twitter()` Article 模式和线程模式两处添加 videos 渲染 `[▶ video](mp4_url)` |
+| `.env.example` | 修改 | 更新 `X_USER_TWEET_MAX_PAGES` 默认值注释 50→200 |
+
+### 验证结果
+**日期修复**：推文 `dontbesilent/status/2004233380997796009`（UTC 16:50 Dec 25）
+- 修复前：文件名 `dontbesilent_2025-12-25：...`，front matter `published: 2025-12-25`
+- 修复后：文件名 `dontbesilent_2025-12-26：...`，front matter `published: 2025-12-26`（与 Twitter 网页一致）
+
+**视频嵌入**：同一推文含视频
+- 修复前：只有 `![image](...amplify_video_thumb...jpg)` 封面截图
+- 修复后：封面图 + `[▶ video](...mp4?tag=21)` 视频链接并存
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-02-28 · v0.3.0 · feedgrab setup 一键部署引导
 
 ### 背景

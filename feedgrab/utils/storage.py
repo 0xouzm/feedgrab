@@ -18,14 +18,8 @@ from feedgrab.schema import UnifiedContent, SourceType
 
 def _format_twitter_datetime(created_at: str) -> str:
     """Parse Twitter's RFC 2822 created_at into 'YYYY-MM-DD HH:MM' for display."""
-    if not created_at:
-        return ""
-    try:
-        from email.utils import parsedate_to_datetime
-        dt = parsedate_to_datetime(created_at)
-        return dt.strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        return created_at[:16] if len(created_at) >= 16 else created_at
+    from feedgrab.config import parse_twitter_date_local
+    return parse_twitter_date_local(created_at, "%Y-%m-%d %H:%M")
 
 
 def _parse_xhs_date(raw: str) -> str:
@@ -179,12 +173,8 @@ def _generate_filename(item: UnifiedContent) -> str:
         # Parse published date from Twitter's created_at
         published = ""
         if extra.get("created_at"):
-            try:
-                from email.utils import parsedate_to_datetime
-                dt = parsedate_to_datetime(extra["created_at"])
-                published = dt.strftime("%Y-%m-%d")
-            except Exception:
-                pass
+            from feedgrab.config import parse_twitter_date_local
+            published = parse_twitter_date_local(extra["created_at"])
 
         if author_display and published:
             raw = f"{author_display}_{published}：{raw_title}"
@@ -244,13 +234,9 @@ def _format_markdown(item: UnifiedContent) -> str:
     # --- Parse published date ---
     published = ""
     if extra.get("created_at"):
-        # Twitter: RFC 2822
-        try:
-            from email.utils import parsedate_to_datetime
-            dt = parsedate_to_datetime(extra["created_at"])
-            published = dt.strftime("%Y-%m-%d")
-        except Exception:
-            pass
+        # Twitter: RFC 2822 → local timezone
+        from feedgrab.config import parse_twitter_date_local
+        published = parse_twitter_date_local(extra["created_at"])
     elif is_xhs and extra.get("date"):
         # XHS: "02-18 福建"
         published = _parse_xhs_date(extra["date"])
