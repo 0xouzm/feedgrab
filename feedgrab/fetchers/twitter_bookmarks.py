@@ -21,7 +21,7 @@ from pathlib import Path
 from loguru import logger
 from typing import Dict, Any, Optional, List
 
-from feedgrab.config import x_bookmark_max_pages, x_bookmark_delay
+from feedgrab.config import x_bookmark_max_pages, x_bookmark_delay, force_refetch
 from feedgrab.fetchers.twitter_graphql import (
     fetch_bookmarks_page,
     fetch_bookmark_folder_page,
@@ -400,8 +400,8 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
 
         processed_ids.add(tweet_id)
 
-        # File-level dedup via index
-        if has_item(item_id, saved_ids):
+        # File-level dedup via index (skip when FORCE_REFETCH=true)
+        if has_item(item_id, saved_ids) and not force_refetch():
             logger.debug(f"[Bookmarks] [{idx + 1}/{total}] 已存在: @{author} - {title_preview[:30]}")
             skipped += 1
             bookmark_list.append({

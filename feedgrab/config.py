@@ -132,6 +132,15 @@ def x_user_tweets_since() -> str:
     return os.getenv("X_USER_TWEETS_SINCE", "").strip()
 
 
+def force_refetch() -> bool:
+    """Skip dedup check and re-fetch/overwrite existing files.
+
+    Set FORCE_REFETCH=true to re-fetch all items even if already saved.
+    Useful after code fixes or to update metadata (likes/views).
+    """
+    return os.getenv("FORCE_REFETCH", "false").lower() in ("true", "1", "yes")
+
+
 # ---------------------------------------------------------------------------
 # XHS user notes batch fetch
 # ---------------------------------------------------------------------------

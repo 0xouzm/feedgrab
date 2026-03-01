@@ -22,7 +22,7 @@ from pathlib import Path
 from loguru import logger
 from typing import Dict, Any, Optional
 
-from feedgrab.config import x_user_tweet_max_pages, x_user_tweet_delay, x_user_tweets_since
+from feedgrab.config import x_user_tweet_max_pages, x_user_tweet_delay, x_user_tweets_since, force_refetch
 from feedgrab.fetchers.twitter_graphql import (
     fetch_user_by_screen_name,
     fetch_user_tweets_page,
@@ -160,7 +160,11 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
     # 4. Load dedup index
     saved_ids = load_index()
     initial_count = len(saved_ids)
-    logger.info(f"[UserTweets] 已有 {initial_count} 条推文索引")
+    is_force = force_refetch()
+    logger.info(
+        f"[UserTweets] 已有 {initial_count} 条推文索引"
+        + (" (FORCE_REFETCH=true，将覆盖已有文件)" if is_force else "")
+    )
 
     # 5. Date filtering config
     since_date = x_user_tweets_since()
@@ -191,7 +195,10 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
 
         entries, cursors = parse_user_tweets_entries(response)
         if not entries:
-            logger.info("[UserTweets] 没有更多推文条目")
+            logger.info(
+                f"[UserTweets] 第 {page + 1} 页返回空条目，分页结束 "
+                f"（API 服务端限制，累计 {len(all_tweet_entries)} 条）"
+            )
             break
 
         # Date filter: check if any tweet on this page is too old
@@ -225,7 +232,10 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
         # Next page
         cursor = cursors.get("bottom")
         if not cursor:
-            logger.info("[UserTweets] 没有下一页游标，分页完成")
+            logger.info(
+                f"[UserTweets] 第 {page + 1} 页无下一页游标，分页结束 "
+                f"（API 服务端限制，累计 {len(all_tweet_entries)} 条）"
+            )
             break
 
     total = len(all_tweet_entries)
@@ -373,8 +383,8 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
 
         processed_ids.add(tweet_id)
 
-        # File-level dedup via index
-        if has_item(item_id, saved_ids):
+        # File-level dedup via index (skip when FORCE_REFETCH=true)
+        if has_item(item_id, saved_ids) and not is_force:
             logger.debug(
                 f"[UserTweets] [{idx + 1}/{total}] 已存在: "
                 f"@{author} - {title_preview[:30]}"
