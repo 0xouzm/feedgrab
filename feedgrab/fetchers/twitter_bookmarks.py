@@ -122,6 +122,7 @@ def _resolve_folder_name(folder_id: str, cookies: dict) -> str:
 def _is_jina_garbage(content: str) -> bool:
     """Detect if Jina content is Twitter page chrome / login page garbage."""
     garbage_markers = [
+        # Login page variant
         "New to X?",
         "Sign up now to get your own personalized timeline",
         "Sign up with Google",
@@ -131,6 +132,13 @@ def _is_jina_garbage(content: str) -> bool:
         "This page maybe not yet fully loaded",
         "Trending now",
         "What\u2019s happening",
+        # 404 / gate page variant
+        "Don\u2019t miss what\u2019s happening",
+        "Don't miss what's happening",
+        "People on X are the first to know",
+        "this page doesn\u2019t exist",
+        "this page doesn't exist",
+        "Try searching for something else",
     ]
     hit_count = sum(1 for m in garbage_markers if m in content)
     return hit_count >= 2
@@ -149,11 +157,10 @@ def _fetch_article_body(
     from feedgrab.fetchers.jina import fetch_via_jina
 
     # Build URL candidates: article URL first, then status URL
+    # Twitter article URL = tweet URL with /status/ replaced by /article/
     urls_to_try = []
-    article_id = (article_data or {}).get("id", "")
-    clean_author = author.lstrip("@")
-    if article_id and clean_author:
-        urls_to_try.append(f"https://x.com/{clean_author}/article/{article_id}")
+    if "/status/" in tweet_url:
+        urls_to_try.append(tweet_url.replace("/status/", "/article/"))
     urls_to_try.append(tweet_url)
 
     for jina_url in urls_to_try:
