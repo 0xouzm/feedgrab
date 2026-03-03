@@ -4,6 +4,32 @@
 
 ---
 
+## 待实现：Syndication API 作为 Tier 0.5
+
+### 背景
+调研发现 Twitter 有一个免费、无需认证的 Syndication API，数据比 oEmbed 丰富得多（含媒体 URL、互动指标、用户信息）。适合作为 GraphQL 和 oEmbed 之间的降级兜底层，尤其在 Cookie 过期/限流时。
+
+### 方案
+
+- **端点**：`https://cdn.syndication.twimg.com/tweet-result?id={tweetId}&token={token}`
+- **Token 计算**：`((id / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '')`（已被 yt-dlp 和 Vercel react-tweet 逆向）
+- **免费、无需认证**
+- **返回数据**：完整推文 JSON（文本、媒体 URL、互动数据、用户信息）
+- **限制**：仅单条推文，不支持搜索/时间线/线程上下文
+
+### 插入位置
+现有四级兜底：Tier 0 GraphQL → Tier 1 oEmbed → Tier 2 Jina → Tier 3 Playwright
+
+改为五级：Tier 0 GraphQL → **Tier 0.5 Syndication** → Tier 1 oEmbed → Tier 2 Jina → Tier 3 Playwright
+
+### 参考
+- [Vercel react-tweet](https://github.com/vercel/react-tweet) — Token 计算源码
+- [yt-dlp PR #12107](https://github.com/yt-dlp/yt-dlp/pull/12107) — Python 端 Token 计算实现
+
+### 状态：待实现 🔜
+
+---
+
 ## 2026-03-04 · v0.5.1 · 修复 API 补充搜索操作符不可靠问题
 
 ### 背景
