@@ -191,21 +191,22 @@ def _discover_tweets_via_search(
     This leverages Twitter's Snowflake IDs (monotonically increasing) for
     precise, gap-free pagination.
 
+    **Important**: TwitterAPI.io's ``since:``, ``until:``, and direct ``max_id``
+    jump operators are unreliable for historical dates. Therefore:
+    - The query uses only ``from:{screen_name}`` (no date operators)
+    - Date filtering (since_date) is done in-code after receiving results
+    - ``max_id`` is only used incrementally (from previous page's smallest ID)
+
     **Breakpoint resume**: Discovered tweets are written to a JSONL cache file
     in real-time. If interrupted, the next run loads the cache and resumes
     from the last known position (smallest cached ID).
 
-    Why not cursor pagination?
-      TwitterAPI.io's cursor returns incomplete results for prolific accounts
-      (e.g. 130/23000 for @op7418, 178/1497 for @dontbesilent).
-      max_id pagination returns complete results in all tested cases.
-
     Args:
         screen_name: Twitter handle (without @)
-        since_date: Start date filter (inclusive), format YYYY-MM-DD
-        initial_max_id: Initial upper-bound tweet ID for pagination.
-            Used by supplementary mode to start from the GraphQL boundary.
-            If None, starts from the latest tweets.
+        since_date: Start date filter (inclusive), format YYYY-MM-DD.
+            Applied in-code, not via search operator.
+        initial_max_id: Ignored (kept for API compatibility). TwitterAPI.io
+            does not support jumping to arbitrary historical IDs.
         max_pages: Safety limit on total pages (default 5000 = ~100k tweets)
 
     Returns:
@@ -243,25 +244,17 @@ def _discover_tweets_via_search(
             f"从 max_id={max_id} 继续 (缓存: {cache_path.name})"
         )
     else:
-        # Fresh start: use initial_max_id if provided (supplementary mode)
-        if initial_max_id is not None:
-            max_id = initial_max_id
-            logger.info(
-                f"[API-Search] max_id 分页: from:{screen_name} "
-                f"{since_date or '全部'}, 从 ID {max_id} 开始向前"
-            )
-        else:
-            logger.info(
-                f"[API-Search] max_id 分页: from:{screen_name} "
-                f"{since_date or '全部'} → 最新"
-            )
+        logger.info(
+            f"[API-Search] max_id 分页: from:{screen_name} "
+            f"(since_date={since_date or '全部'} 代码层过滤)"
+        )
+
+    # Track consecutive empty-after-filter pages to detect search index gap
+    consecutive_empty = 0
 
     for page in range(1, max_pages + 1):
-        # Build query with optional max_id (no until: — TwitterAPI.io
-        # does not support until: for historical dates)
+        # Build query: only from: + max_id (no since:/until: — unreliable)
         query = f"from:{screen_name}"
-        if since_date:
-            query += f" since:{since_date}"
         if max_id is not None:
             query += f" max_id:{max_id}"
 
@@ -283,18 +276,14 @@ def _discover_tweets_via_search(
         page_new = 0
         min_id_on_page = None
         page_parsed = []
+        page_too_old = 0  # tweets before since_date on this page
 
         for raw in raw_tweets:
             tweet_id = raw.get("id", "")
             if not tweet_id:
                 continue
-            if tweet_id not in seen_ids:
-                seen_ids.add(tweet_id)
-                parsed = parse_api_tweet(raw)
-                all_tweets.append(parsed)
-                page_parsed.append(parsed)
-                page_new += 1
-            # Track the smallest ID on this page for sliding
+
+            # Track smallest ID for pagination (even for filtered tweets)
             try:
                 tid_int = int(tweet_id)
                 if min_id_on_page is None or tid_int < min_id_on_page:
@@ -302,27 +291,62 @@ def _discover_tweets_via_search(
             except ValueError:
                 pass
 
+            if tweet_id in seen_ids:
+                continue
+            seen_ids.add(tweet_id)
+
+            parsed = parse_api_tweet(raw)
+
+            # In-code date filtering: skip tweets before since_date
+            if since_date:
+                tweet_date = parse_twitter_date_local(
+                    parsed.get("created_at", "")
+                )
+                if tweet_date and tweet_date < since_date:
+                    page_too_old += 1
+                    continue
+
+            all_tweets.append(parsed)
+            page_parsed.append(parsed)
+            page_new += 1
+
         # Write this page to cache immediately
         if page_parsed:
             _append_to_cache(cache_path, page_parsed)
 
         # Progress log every 50 pages + first 3 pages
         if page % 50 == 0 or page <= 3:
+            extra = f" 过早:{page_too_old}" if page_too_old else ""
             logger.info(
                 f"[API-Search] P{page}: +{page_new} 新 "
-                f"(累计 {len(all_tweets)})"
+                f"(累计 {len(all_tweets)}{extra})"
             )
 
-        # No new tweets = exhausted
+        # Pagination end conditions
         if page_new == 0:
-            logger.info(
-                f"[API-Search] P{page}: 无新推文，发现结束 "
-                f"(累计 {len(all_tweets)})"
-            )
-            _mark_cache_complete(cache_path)
-            break
+            if page_too_old > 0:
+                # All new tweets on this page are before since_date
+                consecutive_empty += 1
+                if consecutive_empty >= 3:
+                    logger.info(
+                        f"[API-Search] P{page}: 连续 {consecutive_empty} 页"
+                        f"全部早于 {since_date}，发现结束 "
+                        f"(累计 {len(all_tweets)})"
+                    )
+                    _mark_cache_complete(cache_path)
+                    break
+            else:
+                # Genuine exhaustion (all duplicates or empty)
+                logger.info(
+                    f"[API-Search] P{page}: 无新推文，发现结束 "
+                    f"(累计 {len(all_tweets)})"
+                )
+                _mark_cache_complete(cache_path)
+                break
+        else:
+            consecutive_empty = 0
 
-        # Advance: next page starts below the smallest ID we saw
+        # Advance: next page starts below smallest ID on this page
         if min_id_on_page is not None:
             max_id = min_id_on_page - 1
         else:
