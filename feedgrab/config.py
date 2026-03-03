@@ -150,6 +150,67 @@ def x_search_max_pages_per_chunk() -> int:
         return 50
 
 
+# ---------------------------------------------------------------------------
+# TwitterAPI.io paid API (supplementary / standalone)
+# ---------------------------------------------------------------------------
+
+def twitterapi_io_key() -> str:
+    """TwitterAPI.io API Key. Empty = not configured.
+
+    When configured, used as supplementary for UserTweets (replacing browser search).
+    Get your key at https://twitterapi.io
+    """
+    return os.getenv("TWITTERAPI_IO_KEY", "").strip()
+
+
+def x_api_provider() -> str:
+    """API provider for user tweet batch fetch.
+
+    'graphql' (default) — free GraphQL + optional API supplementary
+    'api' — full TwitterAPI.io paid API path (no cookie needed, server-friendly)
+    """
+    val = os.getenv("X_API_PROVIDER", "graphql").strip().lower()
+    if val not in ("graphql", "api"):
+        return "graphql"
+    return val
+
+
+def x_api_save_directly() -> bool:
+    """Whether to save API data directly without GraphQL secondary fetch.
+
+    false (default) — use tweet_id to call GraphQL for full data (images/videos/thread)
+    true — directly convert API data and save (faster, but no media)
+    """
+    return os.getenv("X_API_SAVE_DIRECTLY", "false").lower() in ("true", "1", "yes")
+
+
+def x_api_min_likes() -> int:
+    """Minimum likes filter for API fetch (OR logic). 0 = no filter."""
+    try:
+        val = os.getenv("X_API_MIN_LIKES", "").strip()
+        return int(val) if val else 0
+    except ValueError:
+        return 0
+
+
+def x_api_min_retweets() -> int:
+    """Minimum retweets filter for API fetch (OR logic). 0 = no filter."""
+    try:
+        val = os.getenv("X_API_MIN_RETWEETS", "").strip()
+        return int(val) if val else 0
+    except ValueError:
+        return 0
+
+
+def x_api_min_views() -> int:
+    """Minimum views filter for API fetch (OR logic). 0 = no filter."""
+    try:
+        val = os.getenv("X_API_MIN_VIEWS", "").strip()
+        return int(val) if val else 0
+    except ValueError:
+        return 0
+
+
 def force_refetch() -> bool:
     """Skip dedup check and re-fetch/overwrite existing files.
 

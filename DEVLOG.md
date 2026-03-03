@@ -4,6 +4,66 @@
 
 ---
 
+## 2026-03-03 · v0.5.0 · TwitterAPI.io 付费 API 接入 + Cookie 轮换 + 断点续传
+
+### 背景
+feedgrab 按账号批量抓取 X/Twitter 的两阶段方案（GraphQL UserTweets ~800 条 + Playwright 浏览器搜索补充）存在三个瓶颈：
+1. **浏览器搜索不适合服务器部署**：Playwright 依赖有头浏览器，无法在无 GUI 服务器运行
+2. **GraphQL 429 限流**：大量推文需要逐条 GraphQL 调用，单账号容易被限流
+3. **中断丢失**：发现阶段全在内存，中途崩溃（如 API 401/网络断开）所有数据丢失
+
+### 方案决策
+
+#### 1. TwitterAPI.io 付费 API（替代浏览器搜索补充）
+- **Advanced Search API**：`$0.15/千条`，支持 `from:user since:date` 等高级搜索语法
+- **两种接入模式**：
+  - `X_API_PROVIDER=graphql`（默认）：GraphQL 主流程 + API 补充（替代浏览器搜索）
+  - `X_API_PROVIDER=api`：全量走付费 API（服务器部署，无需 Cookie）
+
+#### 2. max_id 分页（而非 cursor 分页）
+实测 TwitterAPI.io 的 cursor 分页对大账号不完整（op7418 2.3 万推文只返回 130 条），而 `max_id:{last_id - 1}` 写在搜索查询中的 ID 分页方案返回完整结果：
+
+| 分页方式 | dontbesilent (1497条) | op7418 (23000条) |
+|---------|----------------------|------------------|
+| cursor | 178 条 (12%) | 130 条 (0.6%) |
+| **max_id** | **1497 条 (100%)** | **8889 条** |
+
+#### 3. Smart Direct Save（智能直保）
+`X_API_SAVE_DIRECTLY=true` 时，普通推文直接用 API 数据保存（跳过 GraphQL），仅长文(article)和线程(thread)强制走 GraphQL 获取完整媒体/正文。大幅减少 GraphQL 调用次数和 429 风险。
+
+#### 4. Cookie 多账号轮换
+- `sessions/` 目录支持多个 Cookie 文件：`twitter.json`（主）+ `x_2.json` + `x_3.json`...
+- GraphQL 429 时自动标记当前账号，下次请求切换到未限流账号
+- 15 分钟冷却期后自动恢复
+
+#### 5. 断点续传
+- **Phase 1 (发现)**：每页推文实时写入 `.api_discovery_{username}.jsonl` 缓存，中断后从最小 ID 处续传
+- **Phase 2 (处理)**：dedup 索引每 50 条自动持久化，重跑时自动跳过已保存推文
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_api.py` | 新建 | TwitterAPI.io HTTP 客户端（重试/退避/认证错误处理） |
+| `feedgrab/fetchers/twitter_api_user_tweets.py` | 新建 | API 批量抓取（发现+过滤+处理+断点续传+缓存） |
+| `feedgrab/fetchers/twitter_cookies.py` | 修改 | 多账号加载 + 429 轮换（15 分钟冷却自动恢复） |
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 429 时触发 Cookie 轮换标记 |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 修改 | 补充触发点加 API 分支（有 API Key → API 补充，否则浏览器搜索） |
+| `feedgrab/reader.py` | 修改 | `X_API_PROVIDER=api` 全量 API 路径路由 |
+| `feedgrab/config.py` | 修改 | 新增 6 个配置函数（API Key/Provider/Save Mode/互动过滤） |
+| `.env.example` | 修改 | TwitterAPI.io 配置段 + Cookie 轮换教程 + F12 获取方法 |
+| `sessions/x_2.json` | 新建 | 第二个 Cookie 账号模板文件 |
+
+### 验证结果
+- **API 发现**：op7418 测试 449 页 / 8889 条推文，max_id 分页稳定、零间隙
+- **Smart Direct Save**：8889 条推文中 ~14% 需要 GraphQL（线程/长文），其余直接 API 保存
+- **Cookie 轮换**：2 个账号环境测试，429 后自动切换，轮换逻辑正确
+- **断点续传**：缓存 JSONL 实时写入，`is_complete` 标记正常
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-02 · v0.4.0 · 浏览器搜索补充抓取 — 突破 UserTweets 800 条限制
 
 ### 背景

@@ -233,6 +233,41 @@ class UniversalReader:
                 "账号推文批量抓取未启用。请在 .env 中设置 X_USER_TWEETS_ENABLED=true"
             )
 
+        # Check if full API path is requested (server deployment)
+        from feedgrab.config import x_api_provider
+        if x_api_provider() == "api":
+            from feedgrab.config import twitterapi_io_key
+            if not twitterapi_io_key():
+                raise ValueError(
+                    "X_API_PROVIDER=api 但 TWITTERAPI_IO_KEY 未配置。\n"
+                    "请在 .env 中设置 TWITTERAPI_IO_KEY=xxx\n"
+                    "或改回 X_API_PROVIDER=graphql 使用免费 GraphQL 方案"
+                )
+
+            from feedgrab.fetchers.twitter_api_user_tweets import fetch_api_user_tweets
+            result = await fetch_api_user_tweets(url)
+
+            filtered_info = ""
+            if result.get("filtered", 0) > 0:
+                filtered_info = f", 互动过滤: {result['filtered']}"
+
+            summary = (
+                f"账号推文批量抓取完成 (via TwitterAPI.io)\n"
+                f"总数: {result['total']}, 成功: {result['fetched']}, "
+                f"跳过: {result['skipped']}, 失败: {result['failed']}"
+                f"{filtered_info}\n"
+                f"批量记录: {result.get('list_path', '')}"
+            )
+
+            return UnifiedContent(
+                source_type=SourceType.TWITTER,
+                source_name="user_tweets",
+                title=f"账号抓取(API) {result['fetched']}/{result['total']}",
+                content=summary,
+                url=url,
+            )
+
+        # Default: GraphQL path (existing behavior, unchanged)
         from feedgrab.fetchers.twitter_user_tweets import fetch_user_tweets
         from feedgrab.fetchers.twitter_cookies import load_twitter_cookies, has_required_cookies
 

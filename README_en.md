@@ -44,9 +44,21 @@ feedgrab https://mp.weixin.qq.com/s/abc123
 # Fetch a tweet (with GraphQL deep fetch if cookies configured)
 feedgrab https://x.com/elonmusk/status/123456
 
+# Batch fetch bookmarks (requires X_BOOKMARKS_ENABLED=true)
+feedgrab https://x.com/i/bookmarks
+feedgrab https://x.com/i/bookmarks/2015311287715340624  # Specific bookmark folder
+
+# Batch fetch user tweets (requires X_USER_TWEETS_ENABLED=true)
+feedgrab https://x.com/iBigQiang                        # All tweets
+X_USER_TWEETS_SINCE=2026-02-01 feedgrab https://x.com/iBigQiang  # After date
+# ↑ Automatically launches browser search when exceeding ~800 tweets (requires feedgrab login twitter)
+
 # Batch fetch XHS author notes (requires XHS_USER_NOTES_ENABLED=true + feedgrab login xhs)
 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
 XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...  # Only after date
+
+# Batch fetch XHS search results (requires XHS_SEARCH_ENABLED=true + feedgrab login xhs)
+feedgrab "https://www.xiaohongshu.com/search_result?keyword=开学第一课&source=web_explore_feed"
 
 # Fetch multiple URLs
 feedgrab https://url1.com https://url2.com
@@ -54,8 +66,14 @@ feedgrab https://url1.com https://url2.com
 # Login to a platform (one-time, for browser fallback)
 feedgrab login xhs
 
-# View inbox
+# Auto-detect local Chrome UA and write to .env (recommended on first setup)
+feedgrab detect-ua
+
+# View content stats
 feedgrab list
+
+# Reset a subdirectory (delete .md files + clean dedup index, for re-fetching)
+feedgrab reset bookmarks_OpenClaw
 ```
 
 ### Layer 2: Claude Code Skills
@@ -115,14 +133,14 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright | — |
-| Xiaohongshu (小红书) | Jina → **Playwright deep fetch** (single + **author batch**) | — |
+| Xiaohongshu (小红书) | Jina → **Playwright deep fetch** (single + **author batch** + **search batch**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
 | Apple Podcasts | — | via Claude Code skill |
 | Any web page | Jina fallback | — |
 
-> \*XHS requires a one-time login: `feedgrab login xhs`. Supports single note fetch (images, engagement metrics, tags, dates, full metadata) and **author profile batch fetch** (Tier 0 initial page extraction + Tier 1 scroll loading + Tier 2 per-note deep fetch)
+> \*XHS requires a one-time login: `feedgrab login xhs`. Supports single note fetch (images, engagement metrics, tags, dates, full metadata), **author profile batch fetch**, and **search result batch fetch** (all using Tier 0 initial page extraction + Tier 1 scroll loading + Tier 2 per-note deep fetch)
 >
 > YouTube Whisper transcription requires `GROQ_API_KEY` — get a free key from [Groq](https://console.groq.com/keys)
 
@@ -144,6 +162,102 @@ Tier 0 (GraphQL) is ported from the [baoyu-danger-x-to-markdown](https://github.
 - Full media extraction (images, videos, quoted tweets)
 - Engagement metrics (likes / retweets / replies / bookmarks / views)
 - Author replies + comments collection (opt-in toggles)
+- **Bookmark batch fetch** (all bookmarks / specific folders)
+- **User tweets batch fetch** (all / date-filtered, auto-skip RT + conversation dedup)
+- **Browser search supplement** (breaks UserTweets ~800 limit, auto month-chunked search)
+- **Global dedup index** (unified cross-mode deduplication)
+
+### X/Twitter Cookie Configuration
+
+Tier 0 (GraphQL) requires Twitter cookies for full data access. **Without cookies, it auto-degrades** but you'll lose:
+- Engagement metrics (likes / views / bookmarks)
+- Author replies and comments
+- Bookmark and user tweet batch fetch
+- Only basic text via oEmbed + Jina fallback
+
+**Setup (choose one):**
+
+#### Method 1: Browser login (recommended)
+
+```bash
+feedgrab login twitter
+```
+
+Opens a browser, saves cookies to `sessions/twitter.json` after login.
+
+#### Method 2: `.env` environment variables
+
+Copy cookie values from browser DevTools:
+
+1. Open https://x.com and log in
+2. F12 → Application → Cookies → `https://x.com`
+3. Find `auth_token` and `ct0` values
+4. Add to `.env`:
+
+```env
+X_AUTH_TOKEN=your_auth_token
+X_CT0=your_ct0
+```
+
+> Environment variables take highest priority.
+
+#### Method 3: Manual cookie file
+
+Create `sessions/x.json`:
+
+```json
+{
+  "auth_token": "your_auth_token",
+  "ct0": "your_ct0"
+}
+```
+
+> Also supports Method 4: Chrome CDP auto-extraction (requires Chrome `--remote-debugging-port=9222`).
+
+**Cookie priority**: Environment variables > Playwright session (`twitter.json`) > Cookie file (`x.json`) > Chrome CDP
+
+#### Multi-Account Cookie Rotation (Anti 429 Rate Limit)
+
+Batch fetching via GraphQL easily triggers 429 rate limits. Configure multiple X account cookies for automatic rotation:
+
+```
+sessions/
+├── twitter.json    ← Primary account (auto-generated by feedgrab login twitter)
+├── x_2.json        ← Second account (manually created)
+├── x_3.json        ← Third account...
+```
+
+Additional cookie files use the same format as Method 3. To get cookies:
+
+1. Open https://x.com in Chrome/Edge and log into the target account
+2. F12 → **Application** tab → expand **Cookies** → click `https://x.com`
+3. Find `auth_token` and `ct0` rows, copy values to `sessions/x_2.json`
+
+> Cookies are not device-bound. They work across machines as long as you don't log out in the browser.
+>
+> On 429, automatically switches to next available account. Auto-recovers after 15-minute cooldown.
+
+### TwitterAPI.io Paid API (Optional)
+
+Server-friendly alternative to browser search supplement. No tweet count limit, $0.15/1K tweets.
+
+**Use cases**:
+- Auto-replaces Playwright browser search when tweets exceed 800 (just configure API Key)
+- Server deployment: `X_API_PROVIDER=api` for full API-only path, no cookies or browser needed
+
+```env
+# .env configuration
+TWITTERAPI_IO_KEY=your_api_key       # Get from https://twitterapi.io
+# X_API_PROVIDER=graphql             # graphql(default) | api(full paid API)
+# X_API_SAVE_DIRECTLY=false          # true=save directly(fast,no images) | false=GraphQL supplement(recommended)
+# X_API_MIN_LIKES=                   # Min likes filter (empty=no filter, OR logic across all three)
+# X_API_MIN_RETWEETS=                # Min retweets filter
+# X_API_MIN_VIEWS=                   # Min views filter
+```
+
+**Smart Direct Save** (`X_API_SAVE_DIRECTLY=true`): Normal tweets save API data directly (fast), articles and threads still use GraphQL for full media.
+
+**Breakpoint Resume**: Discovery phase writes cache in real-time. Resume from where you left off after interruption without re-consuming API quota.
 
 ### Output Format
 
@@ -152,11 +266,15 @@ Each fetched item is saved as an individual Markdown file, organized by platform
 ```
 output/
 ├── X/                    # Twitter/X
-│   └── AuthorName_YYYY-MM-DD：Tweet Title.md
+│   ├── index/            #   Dedup index + batch fetch records
+│   ├── status/           #   Single tweets
+│   ├── status_xxx/       #   User tweets (by display_name)
+│   ├── bookmarks/        #   All bookmarks
+│   └── bookmarks_xxx/    #   Bookmark folders (by name)
 ├── XHS/                  # Xiaohongshu
 │   ├── index/            #   Dedup index + batch fetch records
-│   └── notes_xxx/        #   Author notes (subdirectory per author)
-│   └── AuthorName_YYYY-MM-DD：Note Title.md
+│   ├── notes_xxx/        #   Author notes (subdirectory per author)
+│   └── search_xxx/       #   Search notes (subdirectory per keyword)
 ├── WeChat/               # WeChat articles
 ├── YouTube/
 ├── Bilibili/
@@ -290,16 +408,35 @@ cp .env.example .env
 | `X_FETCH_AUTHOR_REPLIES` | No | Collect author's replies to commenters (default: `false`) |
 | `X_FETCH_ALL_COMMENTS` | No | Collect all comments under tweet (default: `false`) |
 | `X_MAX_COMMENTS` | No | Max comments to collect (default: `50`) |
+| `X_BOOKMARKS_ENABLED` | No | Enable bookmark batch fetch (default: `false`) |
+| `X_BOOKMARK_MAX_PAGES` | No | Max pagination for bookmarks (default: `50`) |
+| `X_BOOKMARK_DELAY` | No | Delay between bookmark fetches in seconds (default: `2.0`) |
+| `X_USER_TWEETS_ENABLED` | No | Enable user tweets batch fetch (default: `false`) |
+| `X_USER_TWEET_MAX_PAGES` | No | Max pagination for user tweets (default: `200`) |
+| `X_USER_TWEET_DELAY` | No | Delay between user tweet fetches in seconds (default: `2.0`) |
+| `X_USER_TWEETS_SINCE` | No | Only fetch tweets after this date (e.g. `2025-10-01`, empty=all) |
+| `X_SEARCH_SUPPLEMENTARY` | No | Search supplement when UserTweets insufficient (default: `true`) |
+| `X_SEARCH_MAX_PAGES_PER_CHUNK` | No | Max pages per monthly search chunk (default: `50`) |
+| `TWITTERAPI_IO_KEY` | No | TwitterAPI.io paid API key from https://twitterapi.io |
+| `X_API_PROVIDER` | No | `graphql` (default) or `api` (full paid API) |
+| `X_API_SAVE_DIRECTLY` | No | `true`=save API data directly / `false`=GraphQL supplement (default) |
+| `X_API_MIN_LIKES` | No | Min likes filter (empty=no filter, OR logic across all three) |
+| `X_API_MIN_RETWEETS` | No | Min retweets filter (empty=no filter) |
+| `X_API_MIN_VIEWS` | No | Min views filter (empty=no filter) |
+| `FORCE_REFETCH` | No | Force re-fetch, skip dedup and overwrite existing files (default: `false`) |
 | `XHS_USER_NOTES_ENABLED` | No | Enable XHS author batch fetch (default: `false`) |
 | `XHS_USER_NOTE_MAX_SCROLLS` | No | Max scroll iterations on author profile (default: `50`) |
 | `XHS_USER_NOTE_DELAY` | No | Delay between note fetches in seconds (default: `3.0`) |
 | `XHS_USER_NOTES_SINCE` | No | Only fetch notes after this date (e.g. `2026-02-01`, empty=all) |
+| `XHS_SEARCH_ENABLED` | No | Enable XHS search batch fetch (default: `false`) |
+| `XHS_SEARCH_MAX_SCROLLS` | No | Max scroll iterations on search page (default: `30`) |
+| `XHS_SEARCH_DELAY` | No | Delay between search note fetches in seconds (default: `3.0`) |
+| `BROWSER_USER_AGENT` | No | Global browser UA (recommend `feedgrab detect-ua` for auto-detection) |
 | `TG_API_ID` | Telegram only | From https://my.telegram.org |
 | `TG_API_HASH` | Telegram only | From https://my.telegram.org |
 | `GROQ_API_KEY` | Whisper only | From https://console.groq.com/keys (free) |
 | `GEMINI_API_KEY` | AI analysis only | From Google AI Studio |
 | `FEEDGRAB_DATA_DIR` | No | Cookie/session storage directory (default: `sessions`) |
-| `INBOX_FILE` | No | Path to inbox JSON (default: `./unified_inbox.json`) |
 | `OUTPUT_DIR` | No | Directory for Markdown output (default: `./output`) |
 | `OBSIDIAN_VAULT` | No | Path to Obsidian vault (writes to platform subdirectories) |
 
@@ -321,15 +458,22 @@ feedgrab/
 │   │   ├── rss.py             # RSS (feedparser)
 │   │   ├── telegram.py        # Telegram (Telethon)
 │   │   ├── twitter.py         # X/Twitter four-tier dispatcher
-│   │   ├── twitter_cookies.py # Cookie multi-source management (env/file/Playwright/CDP)
-│   │   ├── twitter_graphql.py # X GraphQL API client (TweetDetail, dynamic queryId)
+│   │   ├── twitter_cookies.py # Cookie multi-source management + rotation
+│   │   ├── twitter_graphql.py # X GraphQL API client (TweetDetail, UserTweets, Bookmarks, SearchTimeline)
 │   │   ├── twitter_thread.py  # Thread reconstruction + comment classification
+│   │   ├── twitter_bookmarks.py  # Bookmark batch fetch
+│   │   ├── twitter_user_tweets.py # User tweets batch fetch
+│   │   ├── twitter_search_tweets.py # Browser search supplement (breaks 800 limit)
+│   │   ├── twitter_api.py     # TwitterAPI.io paid API client
+│   │   ├── twitter_api_user_tweets.py # Paid API supplement/full fetch
 │   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)
 │   │   ├── wechat.py          # Jina → Playwright fallback
 │   │   ├── xhs.py             # Jina → Playwright + session fallback
-│   │   └── xhs_user_notes.py  # XHS author batch fetch (__INITIAL_STATE__ + XHR intercept + scroll)
+│   │   ├── xhs_user_notes.py  # XHS author batch fetch (__INITIAL_STATE__ + XHR intercept + scroll)
+│   │   └── xhs_search_notes.py # XHS search batch fetch
 │   └── utils/
-│       └── storage.py         # Per-platform Markdown + JSON dual output
+│       ├── storage.py         # Per-platform Markdown + JSON dual output
+│       └── dedup.py           # Global dedup index (cross-mode unified tracking)
 ├── sessions/                  # Cookie/session storage (auto-created, git-ignored)
 ├── skills/                    # Claude Code skills
 │   ├── video/                 # Video/podcast → transcript + summary

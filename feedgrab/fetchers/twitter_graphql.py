@@ -1244,6 +1244,9 @@ def _execute_graphql(
             return None
         if resp.status_code == 429:
             logger.error("GraphQL 429 Rate Limited — too many requests")
+            # Notify cookie rotation system
+            from feedgrab.fetchers.twitter_cookies import mark_cookie_rate_limited
+            mark_cookie_rate_limited()
             return None
 
         resp.raise_for_status()

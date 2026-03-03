@@ -218,7 +218,50 @@ X_CT0=你的ct0值
 
 > 还支持方式 4：Chrome CDP 自动提取（需启动 Chrome `--remote-debugging-port=9222`），适合高级用户。
 
-**Cookie 优先级**：环境变量 > `sessions/x.json` > Playwright session > Chrome CDP
+**Cookie 优先级**：环境变量 > Playwright session (`twitter.json`) > Cookie 文件 (`x.json`) > Chrome CDP
+
+#### 多账号 Cookie 轮换（防 429 限流）
+
+批量抓取时 GraphQL 容易触发 429 限流。配置多个 X 账号的 Cookie 可自动轮换：
+
+```
+sessions/
+├── twitter.json    ← 主账号（feedgrab login twitter 自动生成）
+├── x_2.json        ← 第二个账号（手动创建）
+├── x_3.json        ← 第三个账号...
+```
+
+额外账号的 Cookie 文件格式同方式 3。获取方法：
+
+1. 用 Chrome/Edge 打开 https://x.com 并登录目标账号
+2. 按 F12 → **Application** 标签 → 左侧展开 **Cookies** → 点击 `https://x.com`
+3. 找到 `auth_token` 和 `ct0` 两行，复制值填入 `sessions/x_2.json`
+
+> Cookie 不绑定 IP/设备，可跨电脑使用。只要不在浏览器上退出登录，Cookie 就一直有效。
+>
+> 429 时自动切换到下一个未限流账号，15 分钟冷却后自动恢复。
+
+### TwitterAPI.io 付费 API（可选）
+
+替代浏览器搜索补充的服务器友好方案，无推文数量限制，$0.15/千条。
+
+**使用场景**：
+- 推文超过 800 条时自动替代 Playwright 浏览器搜索（配置 API Key 即可）
+- 服务器部署：`X_API_PROVIDER=api` 全量走付费 API，无需 Cookie 和浏览器
+
+```env
+# .env 配置
+TWITTERAPI_IO_KEY=your_api_key       # 从 https://twitterapi.io 获取
+# X_API_PROVIDER=graphql             # graphql(默认) | api(全量付费API)
+# X_API_SAVE_DIRECTLY=false          # true=直接保存(快,无图片) | false=GraphQL补全(推荐)
+# X_API_MIN_LIKES=                   # 最低点赞数（留空=不过滤，三项为 OR 关系）
+# X_API_MIN_RETWEETS=                # 最低转发数
+# X_API_MIN_VIEWS=                   # 最低阅读量
+```
+
+**智能直保模式** (`X_API_SAVE_DIRECTLY=true`)：普通推文用 API 数据直接保存（快速），长文(article)和线程(thread)仍走 GraphQL 获取完整媒体。
+
+**断点续传**：发现阶段实时写入缓存文件，中断后重新运行从断点继续，不重复消耗 API 额度。
 
 ### 输出格式
 
@@ -388,6 +431,13 @@ cp .env.example .env
 | `X_USER_TWEETS_SINCE` | 否 | 仅抓取该日期之后的推文（如 `2025-10-01`，留空=全部） |
 | `X_SEARCH_SUPPLEMENTARY` | 否 | 搜索补充开关，UserTweets 不够时自动按月搜索补充（默认：`true`） |
 | `X_SEARCH_MAX_PAGES_PER_CHUNK` | 否 | 每个月度搜索分片最大分页数（默认：`50`） |
+| `TWITTERAPI_IO_KEY` | 否 | TwitterAPI.io 付费 API Key，从 https://twitterapi.io 获取 |
+| `X_API_PROVIDER` | 否 | `graphql`（默认）或 `api`（全量走付费 API） |
+| `X_API_SAVE_DIRECTLY` | 否 | `true`=直接保存 API 数据 / `false`=GraphQL 补全（默认） |
+| `X_API_MIN_LIKES` | 否 | 最低点赞数过滤（留空=不过滤，三项 OR 关系） |
+| `X_API_MIN_RETWEETS` | 否 | 最低转发数过滤（留空=不过滤） |
+| `X_API_MIN_VIEWS` | 否 | 最低阅读量过滤（留空=不过滤） |
+| `FORCE_REFETCH` | 否 | 强制重新抓取，跳过去重并覆盖已有文件（默认：`false`） |
 | `XHS_USER_NOTES_ENABLED` | 否 | 启用小红书作者批量抓取（默认：`false`） |
 | `XHS_USER_NOTE_MAX_SCROLLS` | 否 | 作者主页最大滚动次数（默认：`50`） |
 | `XHS_USER_NOTE_DELAY` | 否 | 笔记处理间隔秒数（默认：`3.0`） |
@@ -428,6 +478,8 @@ feedgrab/
 │   │   ├── twitter_bookmarks.py# 书签批量抓取（全部/文件夹，分页+去重+分类）
 │   │   ├── twitter_user_tweets.py# 用户推文批量抓取（分页+日期过滤+会话去重+RT跳过）
 │   │   ├── twitter_search_tweets.py# 浏览器搜索补充（突破 UserTweets 800 条限制，按月分片+响应拦截）
+│   │   ├── twitter_api.py       # TwitterAPI.io 付费 API 客户端（搜索+用户推文）
+│   │   ├── twitter_api_user_tweets.py# 付费 API 补充/全量抓取（替代浏览器搜索）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
 │   │   ├── wechat.py          # Jina → Playwright 兜底
 │   │   ├── xhs.py             # Jina → Playwright + Session 兜底

@@ -8,6 +8,13 @@ Cookie sources (priority order):
     3. Playwright session: sessions/twitter.json
     4. Chrome CDP: auto-extract from running Chrome (requires --remote-debugging-port)
 
+Multi-account rotation:
+    Place additional cookie files in sessions/:
+      x.json, x_2.json, x_3.json, ...
+      OR twitter.json, twitter_2.json, twitter_3.json, ...
+    When 429 rate limit is hit, call mark_cookie_rate_limited()
+    to rotate to the next available account.
+
 Required cookies for GraphQL API:
     - auth_token: session authentication token
     - ct0: CSRF protection token
@@ -16,6 +23,7 @@ Required cookies for GraphQL API:
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 from loguru import logger
 
@@ -44,45 +52,165 @@ BEARER_TOKEN = (
 
 DEFAULT_USER_AGENT = get_user_agent()
 
+# ---------------------------------------------------------------------------
+# Multi-account cookie rotation state
+# ---------------------------------------------------------------------------
+
+# Rate limit tracking: {auth_token_prefix: expiry_timestamp}
+_rate_limited_accounts: dict[str, float] = {}
+
+# Cooldown period: 15 minutes (Twitter rate limit window)
+RATE_LIMIT_COOLDOWN = 15 * 60
+
+# Currently active account key (for logging)
+_current_account_key: str = ""
+
 
 def load_twitter_cookies() -> dict:
     """
     Load Twitter cookies from multiple sources with priority fallback.
+    Supports multi-account rotation: skips 429-rate-limited accounts.
 
     Returns:
         dict with 'auth_token' and 'ct0' keys, or empty dict if none found.
     """
-    # Source 1: Environment variables (highest priority, good for CI/servers)
+    global _current_account_key
+
+    # Collect all available cookie sets
+    all_cookie_sets = _load_all_cookie_sets()
+
+    if not all_cookie_sets:
+        logger.warning("No valid Twitter cookies found from any source")
+        return {}
+
+    # Clean expired rate limits
+    now = time.time()
+    expired = [k for k, v in _rate_limited_accounts.items() if now >= v]
+    for k in expired:
+        del _rate_limited_accounts[k]
+        logger.info(f"[CookieRotation] 账号 {k} 限流已过期，重新可用")
+
+    # Find first non-rate-limited cookie set
+    for source_label, cookies in all_cookie_sets:
+        account_key = cookies.get("auth_token", "")[:8]
+        if account_key in _rate_limited_accounts:
+            remaining = int(_rate_limited_accounts[account_key] - now)
+            logger.debug(
+                f"[CookieRotation] 跳过 {source_label} ({account_key}...) "
+                f"限流中，剩余 {remaining}s"
+            )
+            continue
+
+        _current_account_key = account_key
+        if len(all_cookie_sets) > 1:
+            logger.info(
+                f"Twitter cookies loaded from {source_label} "
+                f"(auth_token={account_key}...) "
+                f"[{_count_available()}/{len(all_cookie_sets)} 可用]"
+            )
+        else:
+            logger.info(
+                f"Twitter cookies loaded from {source_label} "
+                f"(auth_token={account_key}...)"
+            )
+        return cookies
+
+    # All accounts are rate limited — use the one expiring soonest
+    soonest_key = min(_rate_limited_accounts, key=_rate_limited_accounts.get)
+    for source_label, cookies in all_cookie_sets:
+        if cookies.get("auth_token", "")[:8] == soonest_key:
+            remaining = int(_rate_limited_accounts[soonest_key] - now)
+            logger.warning(
+                f"[CookieRotation] 所有账号均限流中，使用即将解封的 "
+                f"{source_label} ({soonest_key}...) 剩余 {remaining}s"
+            )
+            _current_account_key = soonest_key
+            return cookies
+
+    return all_cookie_sets[0][1]
+
+
+def _count_available() -> int:
+    """Count non-rate-limited accounts."""
+    now = time.time()
+    return sum(
+        1 for k, v in _rate_limited_accounts.items()
+        if now < v
+    )
+
+
+def _load_all_cookie_sets() -> list[tuple[str, dict]]:
+    """Load all available cookie sets from all sources.
+
+    Returns:
+        List of (source_label, cookies_dict) tuples.
+    """
+    results = []
+
+    # Source 1: Environment variables (highest priority)
     cookies = _load_from_env()
     if has_required_cookies(cookies):
-        logger.info(f"Twitter cookies loaded from env (auth_token={cookies['auth_token'][:8]}...)")
-        return cookies
+        results.append(("env", cookies))
 
-    # Source 2: Dedicated cookie file
-    cookies = _load_from_cookie_file()
-    if has_required_cookies(cookies):
-        logger.info(f"Twitter cookies loaded from cookie file (auth_token={cookies['auth_token'][:8]}...)")
-        return cookies
+    # Source 2: Playwright sessions — primary account first (twitter.json, twitter_2.json, ...)
+    for label, cookies in _load_all_playwright_sessions():
+        results.append((label, cookies))
 
-    # Source 3: Playwright session (bridge from `feedgrab login twitter`)
-    cookies = _load_from_playwright_session()
-    if has_required_cookies(cookies):
-        logger.info(f"Twitter cookies loaded from Playwright session (auth_token={cookies['auth_token'][:8]}...)")
-        return cookies
+    # Source 3: Extra cookie files (x.json, x_2.json, x_3.json, ...)
+    for label, cookies in _load_all_cookie_files():
+        results.append((label, cookies))
 
-    # Source 4: Chrome CDP auto-extract
-    cookies = _load_from_chrome_cdp()
-    if has_required_cookies(cookies):
-        logger.info(f"Twitter cookies loaded from Chrome CDP (auth_token={cookies['auth_token'][:8]}...)")
-        return cookies
+    # Source 4: Chrome CDP (fallback, single source)
+    if not results:
+        cookies = _load_from_chrome_cdp()
+        if has_required_cookies(cookies):
+            results.append(("chrome_cdp", cookies))
 
-    logger.warning("No valid Twitter cookies found from any source")
-    return {}
+    # Deduplicate by auth_token
+    seen_tokens = set()
+    unique = []
+    for label, cookies in results:
+        token = cookies.get("auth_token", "")
+        if token not in seen_tokens:
+            seen_tokens.add(token)
+            unique.append((label, cookies))
+
+    return unique
+
+
+def mark_cookie_rate_limited(cookies: dict = None):
+    """Mark current cookie account as rate-limited (429).
+
+    Called by GraphQL layer when 429 is received. The account will be
+    skipped for RATE_LIMIT_COOLDOWN seconds (default 15 min).
+    Next call to load_twitter_cookies() will return a different account.
+    """
+    if cookies:
+        account_key = cookies.get("auth_token", "")[:8]
+    else:
+        account_key = _current_account_key
+
+    if not account_key:
+        return
+
+    expiry = time.time() + RATE_LIMIT_COOLDOWN
+    _rate_limited_accounts[account_key] = expiry
+    logger.warning(
+        f"[CookieRotation] 账号 {account_key}... 被标记限流，"
+        f"{RATE_LIMIT_COOLDOWN // 60} 分钟后自动恢复"
+    )
 
 
 def has_required_cookies(cookies: dict) -> bool:
-    """Check if cookies contain both auth_token and ct0."""
-    return all(cookies.get(k) for k in REQUIRED_COOKIES)
+    """Check if cookies contain both auth_token and ct0 with valid values."""
+    for k in REQUIRED_COOKIES:
+        val = cookies.get(k, "")
+        if not val:
+            return False
+        # Filter out template placeholders (real tokens are 20+ hex chars)
+        if len(val) < 20:
+            return False
+    return True
 
 
 def save_twitter_cookies(cookies: dict) -> None:
@@ -138,7 +266,18 @@ def _load_from_env() -> dict:
 
 
 def _load_from_cookie_file() -> dict:
-    """Source 2: Load cookies from cookie file (sessions/x.json)."""
+    """Source 2: Load cookies from primary cookie file (sessions/x.json)."""
+    results = _load_all_cookie_files()
+    if results:
+        return results[0][1]
+    return {}
+
+
+def _load_all_cookie_files() -> list[tuple[str, dict]]:
+    """Load cookies from all cookie files: x.json, x_2.json, x_3.json, ..."""
+    results = []
+
+    # Primary file
     cookie_path = COOKIE_DIR / "x.json"
     if not cookie_path.exists():
         # Backward compat: search legacy cookie dirs and migrate
@@ -153,29 +292,48 @@ def _load_from_cookie_file() -> dict:
             else:
                 continue
             break
-        else:
-            return {}
 
+    # Load x.json and x_{N}.json files
+    if COOKIE_DIR.exists():
+        cookie_files = sorted(COOKIE_DIR.glob("x*.json"))
+        for cf in cookie_files:
+            # Match x.json, x_2.json, x_3.json but not xhs.json etc
+            name = cf.stem
+            if name == "x" or (name.startswith("x_") and name[2:].isdigit()):
+                cookies = _read_cookie_json(cf)
+                if has_required_cookies(cookies):
+                    results.append((f"cookie_file({cf.name})", cookies))
+
+    return results
+
+
+def _read_cookie_json(path: Path) -> dict:
+    """Read a cookie JSON file and return {auth_token, ct0}."""
     try:
-        with open(cookie_path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return {
             "auth_token": data.get("auth_token", ""),
             "ct0": data.get("ct0", ""),
         }
     except (json.JSONDecodeError, IOError) as e:
-        logger.warning(f"Failed to read cookie file: {e}")
+        logger.warning(f"Failed to read cookie file {path}: {e}")
         return {}
 
 
 def _load_from_playwright_session() -> dict:
-    """
-    Source 3: Extract auth_token and ct0 from Playwright storage_state JSON.
+    """Source 3: Load from primary Playwright session."""
+    results = _load_all_playwright_sessions()
+    if results:
+        return results[0][1]
+    return {}
 
-    This bridges the existing `feedgrab login twitter` flow with GraphQL:
-    users login once via Playwright, both browser and GraphQL paths work.
-    """
-    # Try new path first, then legacy session dirs
+
+def _load_all_playwright_sessions() -> list[tuple[str, dict]]:
+    """Load cookies from all Playwright sessions: twitter.json, twitter_2.json, ..."""
+    results = []
+
+    # Primary file migration
     session_path = SESSION_DIR / "twitter.json"
     if not session_path.exists():
         for legacy_dir in _LEGACY_SESSION_DIRS:
@@ -185,11 +343,24 @@ def _load_from_playwright_session() -> dict:
                 shutil.copy2(str(legacy_path), str(session_path))
                 logger.info(f"Migrated session: {legacy_path} -> {session_path}")
                 break
-        else:
-            return {}
 
+    # Load twitter.json and twitter_{N}.json files
+    if SESSION_DIR.exists():
+        session_files = sorted(SESSION_DIR.glob("twitter*.json"))
+        for sf in session_files:
+            name = sf.stem
+            if name == "twitter" or (name.startswith("twitter_") and name[8:].isdigit()):
+                cookies = _read_playwright_session(sf)
+                if has_required_cookies(cookies):
+                    results.append((f"playwright({sf.name})", cookies))
+
+    return results
+
+
+def _read_playwright_session(path: Path) -> dict:
+    """Extract auth_token and ct0 from a Playwright storage_state JSON."""
     try:
-        with open(session_path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             state = json.load(f)
 
         cookie_map = {}
@@ -201,7 +372,7 @@ def _load_from_playwright_session() -> dict:
 
         return cookie_map
     except (json.JSONDecodeError, IOError, KeyError) as e:
-        logger.warning(f"Failed to extract cookies from Playwright session: {e}")
+        logger.warning(f"Failed to extract cookies from {path}: {e}")
         return {}
 
 
