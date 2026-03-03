@@ -241,8 +241,9 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
     total = len(all_tweet_entries)
     logger.info(f"[UserTweets] 共获取 {total} 条推文条目")
 
-    # Detect earliest tweet date for Search API supplementary fetch
+    # Detect earliest tweet date + ID for Search API supplementary fetch
     earliest_tweet_date = ""
+    earliest_tweet_id = ""
     if total > 0:
         for entry in all_tweet_entries:
             td = extract_tweet_data(entry)
@@ -250,8 +251,12 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
                 tweet_date = _parse_tweet_date(td["created_at"])
                 if tweet_date and (not earliest_tweet_date or tweet_date < earliest_tweet_date):
                     earliest_tweet_date = tweet_date
+                    earliest_tweet_id = td.get("rest_id", "")
         if earliest_tweet_date:
-            logger.info(f"[UserTweets] UserTweets 最早推文日期: {earliest_tweet_date}")
+            logger.info(
+                f"[UserTweets] UserTweets 最早推文日期: {earliest_tweet_date}"
+                f" (ID: {earliest_tweet_id})"
+            )
 
     if total == 0:
         return {
@@ -529,6 +534,7 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
                     display_name=display_name,
                     since_date=since_date,
                     earliest_tweet_date=earliest_tweet_date,
+                    earliest_tweet_id=earliest_tweet_id,
                     subfolder=subfolder,
                     saved_ids=saved_ids,
                     is_force=is_force,

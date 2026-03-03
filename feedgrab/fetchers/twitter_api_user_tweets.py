@@ -179,7 +179,7 @@ def _mark_cache_complete(cache_path: Path):
 def _discover_tweets_via_search(
     screen_name: str,
     since_date: str = "",
-    until_date: str = "",
+    initial_max_id: int = None,
     max_pages: int = 5000,
 ) -> List[dict]:
     """Discover all tweets via Advanced Search API with max_id pagination.
@@ -203,8 +203,9 @@ def _discover_tweets_via_search(
     Args:
         screen_name: Twitter handle (without @)
         since_date: Start date filter (inclusive), format YYYY-MM-DD
-        until_date: End date filter (exclusive), format YYYY-MM-DD.
-                    If empty, no upper bound.
+        initial_max_id: Initial upper-bound tweet ID for pagination.
+            Used by supplementary mode to start from the GraphQL boundary.
+            If None, starts from the latest tweets.
         max_pages: Safety limit on total pages (default 5000 = ~100k tweets)
 
     Returns:
@@ -242,18 +243,25 @@ def _discover_tweets_via_search(
             f"从 max_id={max_id} 继续 (缓存: {cache_path.name})"
         )
     else:
-        logger.info(
-            f"[API-Search] max_id 分页: from:{screen_name} "
-            f"{since_date or '全部'} → {until_date or '最新'}"
-        )
+        # Fresh start: use initial_max_id if provided (supplementary mode)
+        if initial_max_id is not None:
+            max_id = initial_max_id
+            logger.info(
+                f"[API-Search] max_id 分页: from:{screen_name} "
+                f"{since_date or '全部'}, 从 ID {max_id} 开始向前"
+            )
+        else:
+            logger.info(
+                f"[API-Search] max_id 分页: from:{screen_name} "
+                f"{since_date or '全部'} → 最新"
+            )
 
     for page in range(1, max_pages + 1):
-        # Build query with optional max_id
+        # Build query with optional max_id (no until: — TwitterAPI.io
+        # does not support until: for historical dates)
         query = f"from:{screen_name}"
         if since_date:
             query += f" since:{since_date}"
-        if until_date:
-            query += f" until:{until_date}"
         if max_id is not None:
             query += f" max_id:{max_id}"
 
@@ -605,6 +613,7 @@ async def fetch_api_supplementary(
     subfolder: str,
     saved_ids: dict,
     is_force: bool,
+    earliest_tweet_id: str = "",
 ) -> dict:
     """Fetch historical tweets via paid API to supplement UserTweets.
 
@@ -620,6 +629,9 @@ async def fetch_api_supplementary(
         subfolder: Save subdirectory (e.g. "status_强子手记")
         saved_ids: Shared dedup index dict
         is_force: Whether FORCE_REFETCH is enabled
+        earliest_tweet_id: Tweet ID of the earliest UserTweets entry (used as
+            initial max_id upper bound). Required because TwitterAPI.io's
+            ``until:`` operator does not work for historical dates.
 
     Returns:
         dict with: total, fetched, skipped, failed
@@ -628,6 +640,7 @@ async def fetch_api_supplementary(
     logger.info(
         f"{log_prefix} 补充抓取 @{screen_name}，"
         f"范围: {since_date} → {earliest_tweet_date}"
+        f" (boundary ID: {earliest_tweet_id})"
     )
 
     delay = x_user_tweet_delay()
@@ -639,10 +652,19 @@ async def fetch_api_supplementary(
     )
 
     # Phase 1: Discover tweets via API
+    # Use earliest_tweet_id as initial max_id (TwitterAPI.io's until: operator
+    # does not work for historical dates, so we use real tweet ID as upper bound)
+    initial_max_id = None
+    if earliest_tweet_id:
+        try:
+            initial_max_id = int(earliest_tweet_id) - 1
+        except ValueError:
+            pass
+
     all_tweets = _discover_tweets_via_search(
         screen_name,
         since_date=since_date,
-        until_date=earliest_tweet_date,
+        initial_max_id=initial_max_id,
     )
 
     if not all_tweets:
