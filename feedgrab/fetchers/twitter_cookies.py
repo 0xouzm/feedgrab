@@ -106,7 +106,7 @@ def load_twitter_cookies() -> dict:
             logger.info(
                 f"Twitter cookies loaded from {source_label} "
                 f"(auth_token={account_key}...) "
-                f"[{_count_available()}/{len(all_cookie_sets)} 可用]"
+                f"[{_count_available(len(all_cookie_sets))}/{len(all_cookie_sets)} 可用]"
             )
         else:
             logger.info(
@@ -130,13 +130,11 @@ def load_twitter_cookies() -> dict:
     return all_cookie_sets[0][1]
 
 
-def _count_available() -> int:
+def _count_available(total: int) -> int:
     """Count non-rate-limited accounts."""
     now = time.time()
-    return sum(
-        1 for k, v in _rate_limited_accounts.items()
-        if now < v
-    )
+    limited = sum(1 for k, v in _rate_limited_accounts.items() if now < v)
+    return total - limited
 
 
 def _load_all_cookie_sets() -> list[tuple[str, dict]]:
