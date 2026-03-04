@@ -20,7 +20,7 @@
          7+ 平台           视频：yt-dlp 字幕    → output/YouTube/标题.md
                            音频：Whisper 转录
                            API：Bilibili / RSS / Telegram
-                           X/Twitter：GraphQL → oEmbed → Jina → Playwright
+                           X/Twitter：GraphQL → Syndication → oEmbed → Jina → Playwright
 ```
 
 Python 层负责文本抓取和 YouTube 字幕提取。**Claude Code 技能**（可选）提供完整的 Whisper 视频/播客转录和 AI 内容分析功能。
@@ -135,7 +135,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 |------|---------|-------------|
 | YouTube | Jina | yt-dlp 字幕 → Groq Whisper 兜底 |
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
-| X / Twitter | **GraphQL** → oEmbed → Jina → Playwright | — |
+| X / Twitter | **GraphQL** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright | — |
 | 小红书 | Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量**) | — |
 | Telegram | Telethon | — |
@@ -148,16 +148,19 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 >
 > YouTube Whisper 转录需要 `GROQ_API_KEY` — 从 [Groq](https://console.groq.com/keys) 免费获取
 
-### X/Twitter 四级兜底策略
+### X/Twitter 五级兜底策略
 
-feedgrab 对 X/Twitter 内容采用先进的四级兜底策略：
+feedgrab 对 X/Twitter 内容采用先进的五级兜底策略：
 
 | 层级 | 方式 | 是否需要认证 | 能力 |
 |------|------|-------------|------|
 | 0 | **GraphQL API** | 需要 Cookie（`auth_token` + `ct0`） | 完整线程、图片、视频、引用推文、长文章 |
+| 0.5 | **Syndication API** | 不需要 | 文本、图片、视频、互动数据（likes/replies）、article 检测 |
 | 1 | oEmbed API | 不需要 | 单条推文文本（仅公开推文） |
 | 2 | Jina Reader | 不需要 | 个人主页、非推文页面 |
 | 3 | Playwright | 可选 session | 需要登录的内容，最后兜底 |
+
+> **Syndication API 的价值**：有 Cookie 时 GraphQL 自动切换，正常使用基本不会降级到 Syndication。Syndication 的价值在于：当 Cookie 全部过期/失效时，用户不需要立刻重新登录，仍能拿到 80% 的数据（缺 retweets/bookmarks/views 三项），而不是降级到只有纯文本的 oEmbed。
 
 Tier 0（GraphQL）移植自 [baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown) 技能，特性包括：
 - 动态 `queryId` 解析（从 X 前端 JS bundle 中提取）
@@ -471,7 +474,7 @@ feedgrab/
 │   │   ├── youtube.py         # yt-dlp 字幕提取
 │   │   ├── rss.py             # RSS 解析（feedparser）
 │   │   ├── telegram.py        # Telegram 频道（Telethon）
-│   │   ├── twitter.py         # X/Twitter 四级兜底调度器
+│   │   ├── twitter.py         # X/Twitter 五级兜底调度器
 │   │   ├── twitter_cookies.py # Cookie 多源管理（环境变量/文件/Playwright/CDP）
 │   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, UserTweets, Bookmarks, SearchTimeline, 动态 queryId）
 │   │   ├── twitter_thread.py  # 线程重建 + 评论分类（分页 + 去重 + 根推文追溯）
@@ -505,7 +508,7 @@ feedgrab/
     │   └─ Python 抓取器 → UnifiedContent → Markdown
     │
     ├─ X/Twitter 推文或线程
-    │   └─ GraphQL（完整线程 + 媒体）→ oEmbed → Jina → Playwright
+    │   └─ GraphQL（完整线程 + 媒体）→ Syndication → oEmbed → Jina → Playwright
     │
     ├─ 视频（YouTube、B站、X 视频）
     │   ├─ Python 抓取器 → 元数据（标题、描述）

@@ -220,8 +220,12 @@ def from_twitter(data: dict) -> UnifiedContent:
     else:
         content = data.get("text", "")
 
-    # cover_image: only for articles (from article cover_media)
+    # cover_image: article cover > explicit cover_image > first image
     cover_image = article_data.get("cover_image", "") if is_article else ""
+    if not cover_image:
+        cover_image = data.get("cover_image", "")
+    if not cover_image and data.get("images"):
+        cover_image = data["images"][0]
 
     return UnifiedContent(
         source_type=SourceType.TWITTER,

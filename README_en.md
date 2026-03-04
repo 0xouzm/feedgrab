@@ -20,7 +20,7 @@ Any URL → Platform Detection → Fetch Content → Unified Output
          7+ platforms          video: yt-dlp subs    → output/YouTube/Title.md
                                audio: Whisper transcription
                                API: Bilibili / RSS / Telegram
-                               X/Twitter: GraphQL → oEmbed → Jina → Playwright
+                               X/Twitter: GraphQL → Syndication → oEmbed → Jina → Playwright
 ```
 
 The Python layer handles text fetching and YouTube subtitle extraction. The **Claude Code skills** (optional) add full Whisper transcription for video/podcast and AI-powered content analysis.
@@ -131,7 +131,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 |----------|-----------|----------------------|
 | YouTube | Jina | yt-dlp subtitles → Groq Whisper fallback |
 | Bilibili (B站) | API | via Claude Code skill |
-| X / Twitter | **GraphQL** → oEmbed → Jina → Playwright | — |
+| X / Twitter | **GraphQL** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright | — |
 | Xiaohongshu (小红书) | Jina → **Playwright deep fetch** (single + **author batch** + **search batch**) | — |
 | Telegram | Telethon | — |
@@ -144,16 +144,19 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 >
 > YouTube Whisper transcription requires `GROQ_API_KEY` — get a free key from [Groq](https://console.groq.com/keys)
 
-### X/Twitter Four-Tier Fallback
+### X/Twitter Five-Tier Fallback
 
-feedgrab uses an advanced four-tier strategy for X/Twitter content:
+feedgrab uses an advanced five-tier strategy for X/Twitter content:
 
 | Tier | Method | Auth Required | Capabilities |
 |------|--------|--------------|-------------|
 | 0 | **GraphQL API** | Cookie (`auth_token` + `ct0`) | Complete threads, images, videos, quoted tweets, articles |
+| 0.5 | **Syndication API** | None | Text, images, videos, engagement (likes/replies), article detection |
 | 1 | oEmbed API | None | Single tweet text (public tweets only) |
 | 2 | Jina Reader | None | Profiles, non-tweet pages |
 | 3 | Playwright | Optional session | Login-required content, last resort |
+
+> **Value of the Syndication tier**: When cookies are valid, GraphQL handles everything automatically and Syndication is rarely needed. Its real value is when all cookies expire — users can still get 80% of the data (missing only retweets/bookmarks/views) without immediately re-logging in, instead of degrading to text-only oEmbed.
 
 Tier 0 (GraphQL) is ported from the [baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown) skill, featuring:
 - Dynamic `queryId` resolution from X's frontend JS bundles
@@ -457,7 +460,7 @@ feedgrab/
 │   │   ├── youtube.py         # yt-dlp subtitle extraction
 │   │   ├── rss.py             # RSS (feedparser)
 │   │   ├── telegram.py        # Telegram (Telethon)
-│   │   ├── twitter.py         # X/Twitter four-tier dispatcher
+│   │   ├── twitter.py         # X/Twitter five-tier dispatcher
 │   │   ├── twitter_cookies.py # Cookie multi-source management + rotation
 │   │   ├── twitter_graphql.py # X GraphQL API client (TweetDetail, UserTweets, Bookmarks, SearchTimeline)
 │   │   ├── twitter_thread.py  # Thread reconstruction + comment classification
@@ -491,7 +494,7 @@ User sends URL
     │   └─ Python fetcher → UnifiedContent → inbox
     │
     ├─ X/Twitter tweet or thread
-    │   └─ GraphQL (full thread + media) → oEmbed → Jina → Playwright
+    │   └─ GraphQL (full thread + media) → Syndication → oEmbed → Jina → Playwright
     │
     ├─ Video (YouTube, Bilibili, X video)
     │   ├─ Python fetcher → metadata (title, description)

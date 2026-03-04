@@ -4,29 +4,39 @@
 
 ---
 
-## 待实现：Syndication API 作为 Tier 0.5
+## 2026-03-04 · v0.5.2 · Syndication API 作为 Tier 0.5 兜底
 
 ### 背景
-调研发现 Twitter 有一个免费、无需认证的 Syndication API，数据比 oEmbed 丰富得多（含媒体 URL、互动指标、用户信息）。适合作为 GraphQL 和 oEmbed 之间的降级兜底层，尤其在 Cookie 过期/限流时。
+Twitter 有一个免费、无需认证的 Syndication API（`cdn.syndication.twimg.com`），数据比 oEmbed 丰富得多（含媒体 URL、互动指标、用户信息）。作为 GraphQL 和 oEmbed 之间的降级兜底层，在 Cookie 过期/限流时仍能获取 80% 的数据。
 
-### 方案
-
+### 方案决策
 - **端点**：`https://cdn.syndication.twimg.com/tweet-result?id={tweetId}&token={token}`
-- **Token 计算**：`((id / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '')`（已被 yt-dlp 和 Vercel react-tweet 逆向）
-- **免费、无需认证**
-- **返回数据**：完整推文 JSON（文本、媒体 URL、互动数据、用户信息）
-- **限制**：仅单条推文，不支持搜索/时间线/线程上下文
+- **Token 计算**：`((id / 1e15) * Math.PI).toString(36).replace(/(0+|\.)/g, '')`（参考 yt-dlp 和 Vercel react-tweet 逆向实现）
+- **五级兜底**：Tier 0 GraphQL → **Tier 0.5 Syndication** → Tier 1 oEmbed → Tier 2 Jina → Tier 3 Playwright
+- **数据能力**：文本、图片、视频、hashtags、likes、replies、article 检测（缺 retweets/bookmarks/views）
+- **Article 检测**：Syndication 返回 article 字段时，复用 `_try_fetch_article_body()` 走 Jina 获取正文
+- **cover_image 增强**：article cover > 显式 cover_image > 首张图片（三级回退）
+- **日期解析**：`parse_twitter_date_local()` 新增 ISO 8601 支持（Syndication 返回 `2022-10-28T03:49:11.000Z` 格式）
 
-### 插入位置
-现有四级兜底：Tier 0 GraphQL → Tier 1 oEmbed → Tier 2 Jina → Tier 3 Playwright
+### 改动范围
 
-改为五级：Tier 0 GraphQL → **Tier 0.5 Syndication** → Tier 1 oEmbed → Tier 2 Jina → Tier 3 Playwright
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter.py` | 修改 | 新增 `_fetch_via_syndication()`、`_syndication_token()`；提取 `_try_fetch_article_body()` 公共函数；调度器插入 Tier 0.5 |
+| `feedgrab/config.py` | 修改 | `parse_twitter_date_local()` 新增 ISO 8601 格式支持 |
+| `feedgrab/schema.py` | 修改 | `from_twitter()` cover_image 三级回退逻辑 |
+
+### 验证结果
+- Syndication API 成功获取推文文本、图片、视频 URL、互动数据
+- Article 推文正确检测并通过 Jina 获取完整正文
+- Token 计算与 yt-dlp/react-tweet 实现一致
+- 有 Cookie 时正常走 GraphQL，Syndication 作为 GraphQL 失败后的第一降级层
 
 ### 参考
 - [Vercel react-tweet](https://github.com/vercel/react-tweet) — Token 计算源码
 - [yt-dlp PR #12107](https://github.com/yt-dlp/yt-dlp/pull/12107) — Python 端 Token 计算实现
 
-### 状态：待实现 🔜
+### 状态：已完成 ✅
 
 ---
 

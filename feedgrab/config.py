@@ -280,15 +280,24 @@ def xhs_search_delay() -> float:
 # ---------------------------------------------------------------------------
 
 def parse_twitter_date_local(created_at: str, fmt: str = "%Y-%m-%d") -> str:
-    """Parse Twitter RFC 2822 created_at to local timezone string.
+    """Parse Twitter created_at to local timezone string.
 
-    Twitter API returns UTC timestamps. This converts to the system's
-    local timezone before formatting, so dates match what users see
-    on the Twitter web UI.
+    Supports both:
+    - RFC 2822 from GraphQL: "Thu Oct 28 03:49:11 +0000 2022"
+    - ISO 8601 from Syndication API: "2022-10-28T03:49:11.000Z"
+
+    Converts UTC to system local timezone so dates match the Twitter web UI.
     """
     if not created_at:
         return ""
     try:
+        # Try ISO 8601 first (Syndication API format)
+        if "T" in created_at:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            dt = dt.astimezone()  # UTC → system local timezone
+            return dt.strftime(fmt)
+        # Fallback to RFC 2822 (GraphQL format)
         from email.utils import parsedate_to_datetime
         dt = parsedate_to_datetime(created_at)
         dt = dt.astimezone()  # UTC → system local timezone

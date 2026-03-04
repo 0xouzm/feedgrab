@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-X/Twitter fetcher — four-tier fallback:
+X/Twitter fetcher — five-tier fallback:
 
-0. GraphQL API (complete thread + media, requires cookie auth)
-1. X oEmbed API (fast, reliable for individual tweets, no login needed)
-2. Jina Reader (handles non-tweet X pages like profiles)
-3. Playwright + saved session (handles login-required content)
+0.  GraphQL API (complete thread + media, requires cookie auth)
+0.5 Syndication API (text + media + metrics, no auth, single tweet only)
+1.  X oEmbed API (fast, reliable for individual tweets, no login needed)
+2.  Jina Reader (handles non-tweet X pages like profiles)
+3.  Playwright + saved session (handles login-required content)
 
 Install browser tier: pip install "feedgrab[browser]" && playwright install chromium
 Save X session:       feedgrab login twitter
 """
 
+import math
 import os
 import re
 import requests
@@ -22,6 +24,41 @@ from feedgrab.config import get_user_agent
 
 
 OEMBED_URL = "https://publish.twitter.com/oembed"
+SYNDICATION_URL = "https://cdn.syndication.twimg.com/tweet-result"
+
+
+def _try_fetch_article_body(data: Dict[str, Any], url: str, tier_label: str) -> None:
+    """Detect article stub and fetch full body via Jina (mutates data in-place).
+
+    Used by both Tier 0 (GraphQL) and Tier 0.5 (Syndication) to supplement
+    article tweets whose text is just a t.co link.
+    """
+    article_data = data.get("article_data") or {}
+    has_article = article_data.get("has_content", False)
+    text = data["text"].strip()
+    text_is_stub = (
+        "https://t.co/" in text or text.startswith("http")
+    ) and len(text) < 200
+    # For multi-tweet threads, check first tweet individually
+    if not text_is_stub and data.get("thread_tweets"):
+        first_text = (data["thread_tweets"][0].get("text") or "").strip()
+        text_is_stub = (
+            len(first_text) < 200
+            and ("https://t.co/" in first_text or first_text.startswith("http"))
+        )
+    is_article_stub = (has_article or text_is_stub) and not data.get("videos")
+    if is_article_stub:
+        logger.info(f"{tier_label} Article detected — fetching body via Jina")
+        from feedgrab.fetchers.twitter_bookmarks import _fetch_article_body
+        article_info = data.get("article_data") or {}
+        tweet_author = (data.get("author") or "").lstrip("@")
+        jina_content = _fetch_article_body(
+            url, article_info, tweet_author, tier_label
+        )
+        if jina_content:
+            data["text"] = jina_content
+            if data.get("thread_tweets"):
+                data["thread_tweets"][0]["text"] = jina_content
 
 # Sentence-ending punctuation for smart title truncation
 _SENTENCE_ENDS = set("。！？.!?")
@@ -211,6 +248,157 @@ def _join_thread_text(tweets: list) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Tier 0.5: Syndication API (free, no auth, richer than oEmbed)
+# ---------------------------------------------------------------------------
+
+def _syndication_token(tweet_id: str) -> str:
+    """Calculate syndication API token.
+
+    JS original: ((id / 1e15) * Math.PI).toString(36).replace(/(0+|\\.)/g, '')
+    Token validation is not strict — server accepts longer strings.
+    """
+    num = (int(tweet_id) / 1e15) * math.pi
+    # Convert integer part to base-36
+    n = int(num)
+    digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    int_str = "0" if n == 0 else ""
+    while n > 0:
+        int_str = digits[n % 36] + int_str
+        n //= 36
+    # Convert fractional part to base-36 (15 digits for double precision)
+    frac = num - int(num)
+    frac_chars = []
+    for _ in range(15):
+        frac *= 36
+        d = int(frac)
+        frac_chars.append(digits[d])
+        frac -= d
+    b36 = f"{int_str}.{''.join(frac_chars)}"
+    return re.sub(r"[0.]", "", b36)
+
+
+def _fetch_via_syndication(url: str, tweet_id: str) -> Dict[str, Any]:
+    """Fetch tweet via Twitter's Syndication API.
+
+    Free, no auth required. Returns text, metrics, media, user info.
+    Richer than oEmbed but no thread/quoted tweet/views/bookmarks/note_tweet.
+    """
+    token = _syndication_token(tweet_id)
+    resp = requests.get(
+        SYNDICATION_URL,
+        params={"id": tweet_id, "token": token},
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=15,
+    )
+    if resp.status_code == 404:
+        raise RuntimeError(f"Syndication: tweet {tweet_id} not found")
+    resp.raise_for_status()
+    if not resp.text.strip():
+        raise RuntimeError(f"Syndication: empty response for {tweet_id}")
+
+    data = resp.json()
+    if data.get("__typename") == "TweetTombstone":
+        raise RuntimeError("Syndication: tweet is tombstoned")
+    if not data.get("text"):
+        raise RuntimeError("Syndication: no text in response")
+
+    # Parse text and expand t.co URLs
+    text = data.get("text", "")
+    for url_ent in data.get("entities", {}).get("urls", []):
+        short = url_ent.get("url", "")
+        expanded = url_ent.get("expanded_url", "")
+        if short and expanded and short in text:
+            text = text.replace(short, expanded)
+    # Remove trailing media t.co URLs
+    for media in data.get("entities", {}).get("media", []):
+        short = media.get("url", "")
+        if short and short in text:
+            text = text.replace(short, "").strip()
+
+    # User info
+    user = data.get("user", {})
+    screen_name = user.get("screen_name", "")
+    display_name = user.get("name", "")
+
+    # Media extraction
+    images = []
+    videos = []
+    for media in data.get("mediaDetails", []):
+        media_type = media.get("type", "")
+        if media_type == "photo":
+            images.append(media.get("media_url_https", ""))
+        elif media_type in ("video", "animated_gif"):
+            variants = media.get("video_info", {}).get("variants", [])
+            mp4s = [v for v in variants if v.get("content_type") == "video/mp4"]
+            if mp4s:
+                best = max(mp4s, key=lambda v: v.get("bitrate", 0))
+                videos.append(best.get("url", ""))
+            images.append(media.get("media_url_https", ""))
+
+    # Hashtags
+    hashtags = [
+        h.get("text", "")
+        for h in data.get("entities", {}).get("hashtags", [])
+        if h.get("text")
+    ]
+
+    # Cover image: article cover > first photo > first mediaDetail
+    cover_image = ""
+    article = data.get("article") or {}
+    article_cover = (article.get("cover_media") or {}).get("media_info") or {}
+    if article_cover.get("original_img_url"):
+        cover_image = article_cover["original_img_url"]
+    elif images:
+        cover_image = images[0]
+
+    # Article data (for downstream article body fetching)
+    article_data = {}
+    if article:
+        article_data = {
+            "id": article.get("rest_id", ""),
+            "title": article.get("title", ""),
+            "cover_image": cover_image,
+            "has_content": bool(article.get("preview_text")),
+        }
+
+    # Build tweet dict compatible with Markdown renderer
+    tweet_data = {
+        "id": data.get("id_str", tweet_id),
+        "text": text,
+        "images": images,
+        "videos": videos,
+        "quoted_tweet": None,
+        "hashtags": hashtags,
+    }
+
+    # Use article title if available (article tweets have t.co stub as text)
+    display_title = article.get("title") or text
+    title = _clean_title(display_title)
+
+    return {
+        "text": text,
+        "author": f"@{screen_name}" if screen_name else "",
+        "author_name": display_name,
+        "url": url,
+        "title": title,
+        "platform": "twitter",
+        "thread_tweets": [tweet_data],
+        "has_thread": False,
+        "article_data": article_data,
+        "likes": data.get("favorite_count", 0),
+        "retweets": 0,  # not available via Syndication
+        "replies": data.get("conversation_count", 0),
+        "bookmarks": 0,  # not available via Syndication
+        "views": "0",  # not available via Syndication
+        "created_at": data.get("created_at", ""),
+        "images": images,
+        "videos": videos,
+        "hashtags": hashtags,
+        "cover_image": cover_image,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Tier 1: oEmbed API (original)
 # ---------------------------------------------------------------------------
 
@@ -316,29 +504,30 @@ async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Main dispatcher — four-tier fallback
+# Main dispatcher — five-tier fallback
 # ---------------------------------------------------------------------------
 
 async def fetch_twitter(url: str) -> Dict[str, Any]:
     """
-    Fetch a tweet or X post with four-tier fallback.
+    Fetch a tweet or X post with five-tier fallback.
 
-    Tier 0: GraphQL API (needs cookie, most complete — thread + media)
-    Tier 1: oEmbed API (free, no auth, single tweet text only)
-    Tier 2: Jina Reader (no auth, handles profiles/non-tweet pages)
-    Tier 3: Playwright browser (last resort, handles login-required content)
+    Tier 0:   GraphQL API (needs cookie, most complete — thread + media)
+    Tier 0.5: Syndication API (free, no auth, text + metrics + media)
+    Tier 1:   oEmbed API (free, no auth, single tweet text only)
+    Tier 2:   Jina Reader (no auth, handles profiles/non-tweet pages)
+    Tier 3:   Playwright browser (last resort, handles login-required content)
 
     Logic:
         - Has cookies + is tweet URL → try Tier 0 first (GraphQL)
-        - No cookies → skip Tier 0, go straight to Tier 1
-        - GraphQL fails → auto-degrade to Tier 1/2/3
+        - No cookies → skip Tier 0, try Tier 0.5 (Syndication)
+        - GraphQL/Syndication fail → auto-degrade to Tier 1/2/3
 
     Args:
         url: Tweet URL (x.com or twitter.com)
 
     Returns:
         Dict with: text, author, url, title, platform,
-        and optionally: thread_tweets, has_thread (from Tier 0)
+        and optionally: thread_tweets, has_thread (from Tier 0/0.5)
     """
     url = url.replace("twitter.com", "x.com")
     author = _extract_author(url)
@@ -374,35 +563,7 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
                         )
                         _time.sleep(5)
                 if data and data.get("text"):
-                    # Check if this is a Twitter Article that needs Jina for full body
-                    # Primary signal: article_data with has_content flag (from GraphQL)
-                    # Secondary signal: text is short stub with t.co link
-                    article_data = data.get("article_data") or {}
-                    has_article = article_data.get("has_content", False)
-                    text = data["text"].strip()
-                    text_is_stub = (
-                        "https://t.co/" in text or text.startswith("http")
-                    ) and len(text) < 200
-                    # For multi-tweet threads, check first tweet individually
-                    if not text_is_stub and data.get("thread_tweets"):
-                        first_text = (data["thread_tweets"][0].get("text") or "").strip()
-                        text_is_stub = (
-                            len(first_text) < 200
-                            and ("https://t.co/" in first_text or first_text.startswith("http"))
-                        )
-                    is_article_stub = (has_article or text_is_stub) and not data.get("videos")
-                    if is_article_stub:
-                        logger.info("[Twitter] Article detected — fetching body via Jina")
-                        from feedgrab.fetchers.twitter_bookmarks import _fetch_article_body
-                        article_info = data.get("article_data") or {}
-                        tweet_author = (data.get("author") or "").lstrip("@")
-                        jina_content = _fetch_article_body(
-                            url, article_info, tweet_author, "[Twitter]"
-                        )
-                        if jina_content:
-                            data["text"] = jina_content
-                            if data.get("thread_tweets"):
-                                data["thread_tweets"][0]["text"] = jina_content
+                    _try_fetch_article_body(data, url, "[Twitter]")
                     return data
                 logger.warning("[Twitter] GraphQL 3次重试后仍无有效数据，降级到 oEmbed")
             else:
@@ -431,6 +592,18 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
                 )
             else:
                 logger.warning(f"[Twitter] GraphQL failed ({e}), falling back")
+
+    # Tier 0.5: Syndication API (richer than oEmbed, no auth)
+    if tweet_id and _is_tweet_url(url):
+        try:
+            logger.info(f"[Twitter] Tier 0.5 — Syndication: {url}")
+            data = _fetch_via_syndication(url, tweet_id)
+            if data and data.get("text"):
+                _try_fetch_article_body(data, url, "[Twitter]")
+                return data
+            logger.warning("[Twitter] Syndication returned empty data")
+        except Exception as e:
+            logger.warning(f"[Twitter] Syndication failed ({e})")
 
     # Tier 1: oEmbed API (best for individual tweets, no auth)
     if _is_tweet_url(url):
