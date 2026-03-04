@@ -36,16 +36,20 @@ def _try_fetch_article_body(data: Dict[str, Any], url: str, tier_label: str) -> 
     article_data = data.get("article_data") or {}
     has_article = article_data.get("has_content", False)
     text = data["text"].strip()
+    # True article stubs are almost entirely a t.co link with minimal surrounding text.
+    # Strip all t.co URLs and check remaining text length — real articles have <30 chars left.
+    import re as _re
+    text_without_urls = _re.sub(r'https?://t\.co/\S+', '', text).strip()
     text_is_stub = (
         "https://t.co/" in text or text.startswith("http")
-    ) and len(text) < 200
+    ) and len(text_without_urls) < 30
     # For multi-tweet threads, check first tweet individually
     if not text_is_stub and data.get("thread_tweets"):
         first_text = (data["thread_tweets"][0].get("text") or "").strip()
+        first_without_urls = _re.sub(r'https?://t\.co/\S+', '', first_text).strip()
         text_is_stub = (
-            len(first_text) < 200
-            and ("https://t.co/" in first_text or first_text.startswith("http"))
-        )
+            "https://t.co/" in first_text or first_text.startswith("http")
+        ) and len(first_without_urls) < 30
     is_article_stub = (has_article or text_is_stub) and not data.get("videos")
     if is_article_stub:
         logger.info(f"{tier_label} Article detected — fetching body via Jina")

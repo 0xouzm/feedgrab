@@ -375,7 +375,11 @@ def _format_markdown(item: UnifiedContent) -> str:
         fm_lines.append(item.content)
 
     fm_lines.append("")  # trailing newline
-    return "\n".join(fm_lines)
+    result = "\n".join(fm_lines)
+    # Strip Twitter emoji SVG images (displayed oversized in Obsidian)
+    # e.g. ![Image 1: 😄](https://abs-0.twimg.com/emoji/v2/svg/1f604.svg)
+    result = re.sub(r'!\[[^\]]*\]\(https://abs-0\.twimg\.com/emoji/[^)]+\)', '', result)
+    return result
 
 
 # =========================================================================
