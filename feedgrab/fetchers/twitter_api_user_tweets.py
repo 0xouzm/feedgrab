@@ -828,7 +828,7 @@ async def fetch_api_user_tweets(profile_url: str) -> dict:
                 break
     display_name = first_author_name or screen_name
     folder_label = _sanitize_folder_name(display_name)
-    subfolder = f"author_name/{folder_label}"
+    subfolder = f"status_author/{folder_label}"
     logger.info(f"{log_prefix} 保存目录: {subfolder}")
 
     # 5. Load dedup index

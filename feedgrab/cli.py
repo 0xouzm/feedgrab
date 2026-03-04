@@ -708,7 +708,7 @@ Examples:
         if len(sys.argv) < 3:
             print("\u274c Usage: feedgrab reset <folder>")
             print("   Example: feedgrab reset bookmarks/OpenClaw")
-            print("   Example: feedgrab reset author_name/强子手记")
+            print("   Example: feedgrab reset status_author/强子手记")
             sys.exit(1)
         cmd_reset(sys.argv[2])
     elif cmd == "clean-index":
