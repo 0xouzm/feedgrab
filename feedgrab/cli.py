@@ -243,8 +243,78 @@ def cmd_reset(folder_name: str):
 
     print(f"\n\u2705 \u91cd\u7f6e\u5b8c\u6210:")
     print(f"   \u5220\u9664 {deleted} \u4e2a .md \u6587\u4ef6")
-    print(f"   \u79fb\u9664 {removed} \u4e2a\u53bb\u91cd\u7d22\u5f15\u6761\u76ee")
-    print(f"   \u73b0\u5728\u53ef\u4ee5\u91cd\u65b0\u62d3\u53d6\u4e86")
+    print(f"   移除 {removed} 个去重索引条目")
+    print(f"   现在可以重新拓取了")
+
+
+def cmd_clean_index(skip_confirm: bool = False):
+    """Clean up batch records and cache files from index directories.
+
+    Preserves item_id_url.json (global dedup index), removes everything else:
+    - status_*.json       (UserTweets batch records)
+    - api_status_*.json   (API batch records)
+    - bookmarks_*.json    (Bookmarks batch records)
+    - list_*.json         (List batch records)
+    - .api_discovery_*.jsonl (API checkpoint caches)
+    """
+    from feedgrab.utils.dedup import get_index_path
+
+    # Collect index dirs from all platforms
+    platforms = ["X", "XHS"]
+    cleaned_files = 0
+    cleaned_bytes = 0
+    index_dirs_checked = []
+
+    for plat in platforms:
+        index_dir = get_index_path(platform=plat).parent
+        if not index_dir.exists():
+            continue
+        index_dirs_checked.append(index_dir)
+
+        for f in index_dir.iterdir():
+            if f.name == "item_id_url.json":
+                continue  # preserve global dedup index
+            if f.is_file():
+                size = f.stat().st_size
+                cleaned_files += 1
+                cleaned_bytes += size
+
+    if cleaned_files == 0:
+        print("✅ 索引目录已经很干净，无需清理")
+        return
+
+    # Show summary before confirming
+    print(f"🗂  扫描到 {cleaned_files} 个可清理文件 ({cleaned_bytes / 1024 / 1024:.1f} MB)")
+    print(f"   保留: item_id_url.json (全局去重索引)")
+    print(f"   清理: 批量记录 + 断点缓存")
+    for d in index_dirs_checked:
+        print(f"   目录: {d}")
+
+    confirm = "y" if skip_confirm else input("\n确认清理? (y/N) ")
+    if confirm.lower() != "y":
+        print("✗ 已取消")
+        return
+
+    # Delete files
+    deleted = 0
+    freed = 0
+    for plat in platforms:
+        index_dir = get_index_path(platform=plat).parent
+        if not index_dir.exists():
+            continue
+        for f in index_dir.iterdir():
+            if f.name == "item_id_url.json":
+                continue
+            if f.is_file():
+                size = f.stat().st_size
+                try:
+                    f.unlink()
+                    deleted += 1
+                    freed += size
+                except OSError as e:
+                    print(f"   ⚠ 无法删除 {f.name}: {e}")
+
+    print(f"\n✅ 清理完成: 删除 {deleted} 个文件，释放 {freed / 1024 / 1024:.1f} MB")
 
 
 def cmd_detect_ua():
@@ -601,6 +671,7 @@ Usage:
     feedgrab detect-ua          Detect real Chrome UA and save to .env
     feedgrab list               Show content statistics
     feedgrab reset <folder>     Reset a subfolder (delete files + clear dedup index)
+    feedgrab clean-index        Clean up batch records and cache files from index
 
 Supported platforms:
     WeChat, Telegram, X/Twitter, YouTube,
@@ -640,6 +711,9 @@ Examples:
             print("   Example: feedgrab reset status_\u5f3a\u5b50\u624b\u8bb0")
             sys.exit(1)
         cmd_reset(sys.argv[2])
+    elif cmd == "clean-index":
+        skip = "--yes" in sys.argv or "-y" in sys.argv
+        cmd_clean_index(skip_confirm=skip)
     elif cmd.startswith("http") or cmd.startswith("www.") or "." in cmd:
         urls = [arg for arg in sys.argv[1:] if arg.startswith(("http", "www.")) or "." in arg]
         cmd_fetch(urls)

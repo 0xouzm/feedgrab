@@ -146,8 +146,9 @@ async def fetch_list_tweets(
     since_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     logger.info(f"[ListTweets] 抓取最近 {days} 天的推文 (since: {since_date})")
 
-    # Step 3: Determine output subfolder
-    subfolder = f"lists_{days}day_{_sanitize_folder_name(list_name)}"
+    # Step 3: Determine output subfolder — lists_{N}day/{date}/{list_name}
+    today = datetime.now().strftime("%Y%m%d")
+    subfolder = f"lists_{days}day/{today}/{_sanitize_folder_name(list_name)}"
 
     # Step 4: Load dedup index
     saved_ids = load_index()

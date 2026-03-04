@@ -80,9 +80,15 @@ feedgrab list
 feedgrab reset bookmarks_OpenClaw     # 重置书签文件夹
 feedgrab reset status_强子手记         # 重置账号推文目录
 feedgrab reset bookmarks_Polymarket   # 重置指定书签文件夹
+
+# 清理索引目录中的批量记录和缓存文件（保留去重索引）
+feedgrab clean-index                  # 交互确认后清理
+feedgrab clean-index --yes            # 跳过确认直接清理
 ```
 
 > `feedgrab reset` 会扫描目标目录下所有 `.md` 文件的 YAML front matter，提取 `item_id` 并从去重索引中移除，然后删除文件。执行前会显示待删除数量并要求确认。找不到目录时会自动列出所有可用的子目录。
+
+> `feedgrab clean-index` 清理索引目录中除 `item_id_url.json`（全局去重索引）以外的所有文件，包括批量记录（`status_*.json`、`list_*.json` 等）和 API 断点缓存（`.api_discovery_*.jsonl`）。这些文件在采集完成后不再需要，定期清理可释放磁盘空间。
 
 ### 第二层：Claude Code 技能
 
