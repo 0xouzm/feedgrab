@@ -290,8 +290,8 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
 
     logger.info("[Bookmarks] 开始批量抓取书签...")
 
-    # Subfolder path for save_to_markdown (e.g., "bookmarks_OpenClaw")
-    subfolder = f"bookmarks_{_sanitize_folder_name(folder_name)}" if folder_name else "bookmarks"
+    # Subfolder path for save_to_markdown (e.g., "bookmarks/OpenClaw")
+    subfolder = f"bookmarks/{_sanitize_folder_name(folder_name)}" if folder_name else "bookmarks/all"
 
     # Load dedup index
     saved_ids = load_index()

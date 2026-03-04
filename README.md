@@ -77,9 +77,9 @@ feedgrab detect-ua
 feedgrab list
 
 # 重置子目录（删除 .md 文件 + 清理去重索引，方便重新抓取）
-feedgrab reset bookmarks_OpenClaw     # 重置书签文件夹
-feedgrab reset status_强子手记         # 重置账号推文目录
-feedgrab reset bookmarks_Polymarket   # 重置指定书签文件夹
+feedgrab reset bookmarks/OpenClaw      # 重置书签文件夹
+feedgrab reset author_name/向阳乔木    # 重置账号推文目录
+feedgrab reset bookmarks/all           # 重置全部书签
 
 # 清理索引目录中的批量记录和缓存文件（保留去重索引）
 feedgrab clean-index                  # 交互确认后清理

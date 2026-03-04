@@ -152,9 +152,9 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
         f"ID: {user_id}"
     )
 
-    # 3. Determine subfolder: status_{display_name} or status_{screen_name}
+    # 3. Determine subfolder: author_name/{display_name} or author_name/{screen_name}
     folder_label = _sanitize_folder_name(display_name) if display_name else screen_name
-    subfolder = f"status_{folder_label}"
+    subfolder = f"author_name/{folder_label}"
     logger.info(f"[UserTweets] 保存目录: {subfolder}")
 
     # 4. Load dedup index

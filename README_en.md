@@ -53,6 +53,10 @@ feedgrab https://x.com/iBigQiang                        # All tweets
 X_USER_TWEETS_SINCE=2026-02-01 feedgrab https://x.com/iBigQiang  # After date
 # ↑ Automatically launches browser search when exceeding ~800 tweets (requires feedgrab login twitter)
 
+# Batch fetch Twitter List tweets (requires X_LIST_TWEETS_ENABLED=true)
+feedgrab https://x.com/i/lists/2002743803959300263               # Last 1 day (default)
+X_LIST_TWEETS_DAYS=3 feedgrab https://x.com/i/lists/2002743803959300263  # Last 3 days
+
 # Batch fetch XHS author notes (requires XHS_USER_NOTES_ENABLED=true + feedgrab login xhs)
 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
 XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...  # Only after date
@@ -73,7 +77,12 @@ feedgrab detect-ua
 feedgrab list
 
 # Reset a subdirectory (delete .md files + clean dedup index, for re-fetching)
-feedgrab reset bookmarks_OpenClaw
+feedgrab reset bookmarks/OpenClaw       # Reset a bookmark folder
+feedgrab reset author_name/geekbb      # Reset a user tweets folder
+
+# Clean up batch records and cache files from index directories (preserves dedup index)
+feedgrab clean-index                  # Interactive confirmation
+feedgrab clean-index --yes            # Skip confirmation
 ```
 
 ### Layer 2: Claude Code Skills
@@ -167,6 +176,7 @@ Tier 0 (GraphQL) is ported from the [baoyu-danger-x-to-markdown](https://github.
 - Author replies + comments collection (opt-in toggles)
 - **Bookmark batch fetch** (all bookmarks / specific folders)
 - **User tweets batch fetch** (all / date-filtered, auto-skip RT + conversation dedup)
+- **List tweets batch fetch** (day-filtered 1/2/3/7 days, conversation dedup, thread deep fetch)
 - **Browser search supplement** (breaks UserTweets ~800 limit, auto month-chunked search)
 - **Global dedup index** (unified cross-mode deduplication)
 
@@ -418,6 +428,10 @@ cp .env.example .env
 | `X_USER_TWEET_MAX_PAGES` | No | Max pagination for user tweets (default: `200`) |
 | `X_USER_TWEET_DELAY` | No | Delay between user tweet fetches in seconds (default: `2.0`) |
 | `X_USER_TWEETS_SINCE` | No | Only fetch tweets after this date (e.g. `2025-10-01`, empty=all) |
+| `X_LIST_TWEETS_ENABLED` | No | Enable Twitter List batch fetch (default: `false`) |
+| `X_LIST_TWEETS_DAYS` | No | Fetch tweets from last N days (default: `1`, supports 1/2/3/7) |
+| `X_LIST_TWEET_MAX_PAGES` | No | Max pagination for list tweets (default: `50`) |
+| `X_LIST_TWEET_DELAY` | No | Delay between list tweet fetches in seconds (default: `2`) |
 | `X_SEARCH_SUPPLEMENTARY` | No | Search supplement when UserTweets insufficient (default: `true`) |
 | `X_SEARCH_MAX_PAGES_PER_CHUNK` | No | Max pages per monthly search chunk (default: `50`) |
 | `TWITTERAPI_IO_KEY` | No | TwitterAPI.io paid API key from https://twitterapi.io |
@@ -466,6 +480,7 @@ feedgrab/
 │   │   ├── twitter_thread.py  # Thread reconstruction + comment classification
 │   │   ├── twitter_bookmarks.py  # Bookmark batch fetch
 │   │   ├── twitter_user_tweets.py # User tweets batch fetch
+│   │   ├── twitter_list_tweets.py # List tweets batch fetch (day-filtered + conversation dedup)
 │   │   ├── twitter_search_tweets.py # Browser search supplement (breaks 800 limit)
 │   │   ├── twitter_api.py     # TwitterAPI.io paid API client
 │   │   ├── twitter_api_user_tweets.py # Paid API supplement/full fetch
