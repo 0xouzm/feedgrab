@@ -266,21 +266,17 @@ def _format_markdown(item: UnifiedContent) -> str:
     if extra.get("cover_image"):
         fm_lines.append(f'cover_image: "{extra["cover_image"]}"')
 
-    # Twitter metrics (only non-zero values)
+    # Twitter metrics (always show, including 0)
     if is_twitter:
         fm_lines.append(f"tweet_count: {extra.get('tweet_count', 1)}")
         fm_lines.append(f"has_thread: {str(extra.get('has_thread', False)).lower()}")
         for metric in ("likes", "retweets", "replies", "bookmarks", "views"):
-            val = extra.get(metric, 0)
-            if val and str(val) != "0":
-                fm_lines.append(f"{metric}: {val}")
+            fm_lines.append(f"{metric}: {extra.get(metric, 0)}")
 
-    # XHS metrics
+    # XHS metrics (always show, including 0)
     if is_xhs:
         for metric in ("likes", "collects", "comments"):
-            val = extra.get(metric, 0)
-            if val:
-                fm_lines.append(f"{metric}: {val}")
+            fm_lines.append(f"{metric}: {extra.get(metric, 0)}")
         location = _parse_xhs_location(extra.get("date", ""))
         if location:
             fm_lines.append(f'location: "{location}"')

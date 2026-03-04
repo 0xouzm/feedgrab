@@ -78,7 +78,7 @@ feedgrab list
 
 # Reset a subdirectory (delete .md files + clean dedup index, for re-fetching)
 feedgrab reset bookmarks/OpenClaw       # Reset a bookmark folder
-feedgrab reset author_name/geekbb      # Reset a user tweets folder
+feedgrab reset status_author/geekbb    # Reset a user tweets folder
 
 # Clean up batch records and cache files from index directories (preserves dedup index)
 feedgrab clean-index                  # Interactive confirmation

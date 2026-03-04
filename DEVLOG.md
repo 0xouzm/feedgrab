@@ -4,6 +4,40 @@
 
 ---
 
+## 2026-03-04 · v0.6.1 · 元数据完整性优化
+
+### 背景
+保存的 Markdown 文件中，当 likes/bookmarks/replies 等指标值为 0 时会被省略，导致元数据缺失和"值为 0"无法区分，影响 Obsidian Dataview 查询准确性。
+
+### 方案决策
+- **全量输出指标**：Twitter（likes/retweets/replies/bookmarks/views）和小红书（likes/collects/comments）的指标无条件输出，包括值为 0 的字段
+- **保持纯英文 key**：评估了中英双语 key 方案（如 `喜欢_likes`），因 Dataview 兼容性问题决定不采用，改为待实现的 Obsidian CSS/Types 用户侧方案
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/utils/storage.py` | 修改 | Twitter/XHS 指标去掉 `if val` 判断，全量输出 |
+| `DEVLOG.md` | 修改 | 新增"待实现计划"区块（Obsidian 中文别名方案） |
+
+### 状态：已完成 ✅
+
+---
+
+## 待实现计划
+
+### Obsidian 元数据中文别名方案
+
+**背景**：front matter key 保持纯英文（`likes`、`bookmarks`）以确保 Dataview 等插件兼容性，但中文用户阅读时希望能直观看到中文含义。
+
+**方案**：通过 Obsidian 用户侧配置实现，不修改代码：
+1. **CSS snippet** — 给 Properties 面板的 key 加中文 tooltip 或替换显示文字
+2. **Obsidian Types** — 利用属性类型系统给 key 设置中文别名
+
+**状态**：待实现。确定方案后编写用户教程，写入 README 文档。
+
+---
+
 ## 2026-03-04 · v0.6.0 · Twitter List 列表批量抓取 + 目录结构优化
 
 ### 背景
