@@ -4,34 +4,43 @@
 
 ---
 
-## 2026-03-04 · v0.6.0 · Twitter List 列表批量抓取
+## 2026-03-04 · v0.6.0 · Twitter List 列表批量抓取 + 目录结构优化
 
 ### 背景
-用户订阅了 Twitter List（如 AI KOL 列表），希望定期批量抓取列表中最近 N 天的推文。与书签/用户推文批量模式类似，但数据源是 List Timeline。
+用户订阅了 Twitter List（如 AI KOL 列表），希望定期批量抓取列表中最近 N 天的推文。同时优化所有批量模式的输出目录结构，使其更清晰易管理。
 
 ### 方案决策
 - **GraphQL API**：复用 `ListByRestId`（列表元数据）+ `ListLatestTweetsTimeline`（列表推文分页），动态 queryId 解析 + 硬编码 fallback
 - **日期过滤**：`X_LIST_TWEETS_DAYS`（默认1天），代码层按 `parse_twitter_date_local()` 过滤
 - **会话去重**：预扫描 `conversation_id` 计数，多条目会话只处理根推文（`conv_id == tweet_id`），根推文自动升级为 thread 类型走 GraphQL 深度抓取
-- **输出目录**：`lists_{N}day_{列表名称}`，如 `lists_1day_中推圈AI KOL`
-- **复用现有基础设施**：`_classify_tweet`、`_build_single_tweet_data`、`_fetch_article_body`、`_sanitize_folder_name`（from twitter_bookmarks），全局去重索引
+- **输出目录三层结构**：`lists_{N}day/{YYYYMMDD}/{列表名}/`，同一天的多个列表聚合在日期目录下
+- **全模式目录优化**：用户推文 `status_author/{昵称}/`、书签 `bookmarks/{名称}/`、全部书签 `bookmarks/all/`
+- **clean-index 命令**：清理索引目录中的批量记录和断点缓存，保留全局去重索引
+- **Article 误判修复**：收紧 stub 判定（去掉 t.co 后剩余 < 30字符），防止正常推文误走 Jina
+- **emoji SVG 过滤**：`_format_markdown()` 统一过滤 `abs-0.twimg.com/emoji/` 图片标签
 
 ### 改动范围
 
 | 文件 | 类型 | 改动 |
 |------|------|------|
-| `feedgrab/config.py` | 修改 | 新增 `x_list_tweets_enabled()`、`x_list_tweet_max_pages()`、`x_list_tweet_delay()`、`x_list_tweets_days()` |
-| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增 `fetch_list_by_rest_id()`、`fetch_list_tweets_page()`、`parse_list_tweets_entries()`；fallback queryId + features 常量 |
-| `feedgrab/fetchers/twitter_list_tweets.py` | **新建** | List 批量抓取主逻辑（分页、日期过滤、会话去重、逐条处理） |
-| `feedgrab/reader.py` | 修改 | URL 路由识别 `/i/lists/\d+` + `_read_list_tweets()` 方法 |
-| `feedgrab/cli.py` | 修改 | CLI 批量模式识别 `/i/lists/` |
+| `feedgrab/config.py` | 修改 | 新增 List 相关配置函数 |
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增 List GraphQL API 支持 |
+| `feedgrab/fetchers/twitter_list_tweets.py` | **新建** | List 批量抓取主逻辑 |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 修改 | 输出目录改为 `status_author/{昵称}` |
+| `feedgrab/fetchers/twitter_api_user_tweets.py` | 修改 | 输出目录改为 `status_author/{昵称}` |
+| `feedgrab/fetchers/twitter_bookmarks.py` | 修改 | 输出目录改为 `bookmarks/{名称}` |
+| `feedgrab/fetchers/twitter.py` | 修改 | 收紧 article stub 判定逻辑 |
+| `feedgrab/utils/storage.py` | 修改 | emoji SVG 图片过滤 |
+| `feedgrab/reader.py` | 修改 | URL 路由识别 `/i/lists/` |
+| `feedgrab/cli.py` | 修改 | 新增 `clean-index` 命令 + List 批量模式 |
 | `.env.example` | 修改 | 新增 List 配置项文档 |
 
 ### 验证结果
-- "中推圈AI KOL" 列表：190 条推文成功抓取，输出目录 `lists_1day_中推圈AI KOL`
+- "中推圈AI KOL" 列表：190 条推文成功抓取
 - "虚拟资源" 列表：31 条条目 → 28 条保存 + 3 条会话去重跳过，0 重复文件
-- 二次运行去重正常：188/191 条跳过（仅3条新推文）
-- 线程推文正确识别并走 GraphQL 深度抓取
+- 目录结构：`lists_1day/20260304/软件工具/`、`bookmarks/OpenClaw/`、`status_author/Geek/` 验证通过
+- `feedgrab clean-index --yes`：42 个文件 28.7MB 清理成功
+- Article 误判修复：含链接的正常推文不再误走 Jina
 
 ### 状态：已完成 ✅
 
