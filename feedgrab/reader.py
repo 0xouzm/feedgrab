@@ -40,6 +40,9 @@ class UniversalReader:
             # Bookmark URLs: x.com/i/bookmarks or x.com/i/bookmarks/{folderId}
             if "/i/bookmarks" in path:
                 return "twitter_bookmarks"
+            # List URLs: x.com/i/lists/{listId}
+            if re.match(r'^/i/lists/\d+', path):
+                return "twitter_list_tweets"
             # Single tweet: x.com/{user}/status/{id}
             if "/status/" in path:
                 return "twitter"
@@ -94,6 +97,10 @@ class UniversalReader:
         # Bookmark batch mode: special flow, returns summary
         if platform == "twitter_bookmarks":
             return await self._read_bookmarks(url)
+
+        # List tweets batch mode: special flow, returns summary
+        if platform == "twitter_list_tweets":
+            return await self._read_list_tweets(url)
 
         # User tweets batch mode: special flow, returns summary
         if platform == "twitter_user_tweets":
@@ -220,6 +227,42 @@ class UniversalReader:
             source_type=SourceType.TWITTER,
             source_name="bookmarks",
             title=f"书签抓取 {result['fetched']}/{result['total']}",
+            content=summary,
+            url=url,
+        )
+
+    async def _read_list_tweets(self, url: str) -> UnifiedContent:
+        """Batch-fetch tweets from a Twitter List, stream-save each, return summary."""
+        from feedgrab.config import x_list_tweets_enabled
+
+        if not x_list_tweets_enabled():
+            raise ValueError(
+                "列表推文批量抓取未启用。请在 .env 中设置 X_LIST_TWEETS_ENABLED=true"
+            )
+
+        from feedgrab.fetchers.twitter_list_tweets import fetch_list_tweets
+        from feedgrab.fetchers.twitter_cookies import load_twitter_cookies, has_required_cookies
+
+        cookies = load_twitter_cookies()
+        if not has_required_cookies(cookies):
+            raise RuntimeError(
+                "列表推文抓取需要 Twitter Cookie，请先运行: feedgrab login twitter"
+            )
+
+        result = await fetch_list_tweets(url, cookies)
+
+        list_name = result.get("list_name", "")
+        summary = (
+            f"列表推文批量抓取完成 (列表: {list_name})\n"
+            f"总数: {result['total']}, 成功: {result['fetched']}, "
+            f"跳过: {result['skipped']}, 失败: {result['failed']}\n"
+            f"批量记录: {result.get('list_path', '')}"
+        )
+
+        return UnifiedContent(
+            source_type=SourceType.TWITTER,
+            source_name="list_tweets",
+            title=f"列表抓取 '{list_name}' {result['fetched']}/{result['total']}",
             content=summary,
             url=url,
         )

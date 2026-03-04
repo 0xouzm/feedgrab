@@ -132,6 +132,39 @@ def x_user_tweets_since() -> str:
     return os.getenv("X_USER_TWEETS_SINCE", "").strip()
 
 
+# ---------------------------------------------------------------------------
+# List tweets batch fetch
+# ---------------------------------------------------------------------------
+
+def x_list_tweets_enabled() -> bool:
+    """Whether list tweets batch fetching is enabled."""
+    return os.getenv("X_LIST_TWEETS_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def x_list_tweet_max_pages() -> int:
+    """Maximum list timeline pagination pages (default 50)."""
+    try:
+        return int(os.getenv("X_LIST_TWEET_MAX_PAGES", "50"))
+    except ValueError:
+        return 50
+
+
+def x_list_tweet_delay() -> float:
+    """Delay in seconds between processing each list tweet (default 2.0)."""
+    try:
+        return float(os.getenv("X_LIST_TWEET_DELAY", "2.0"))
+    except ValueError:
+        return 2.0
+
+
+def x_list_tweets_days() -> int:
+    """Number of days to fetch from list (default: 1 = last 24h)."""
+    try:
+        return int(os.getenv("X_LIST_TWEETS_DAYS", "1"))
+    except ValueError:
+        return 1
+
+
 def x_search_supplementary_enabled() -> bool:
     """Whether to use Search API to supplement UserTweets for older tweets.
 

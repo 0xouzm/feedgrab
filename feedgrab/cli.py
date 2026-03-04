@@ -39,6 +39,12 @@ def cmd_fetch(urls: list):
                 print(f"\n\u2705 {item.content}")
                 return
 
+            # List tweets batch mode: special output
+            if "/i/lists/" in urls[0] and "x.com" in urls[0]:
+                item = await reader.read(urls[0])
+                print(f"\n\u2705 {item.content}")
+                return
+
             # XHS user notes batch mode or Twitter user tweets batch mode
             if ("/user/profile/" in urls[0] and "xiaohongshu.com" in urls[0]) or \
                ("/search_result" in urls[0] and "xiaohongshu.com" in urls[0]) or \

@@ -53,6 +53,10 @@ feedgrab https://x.com/iBigQiang                        # 抓取全部推文
 X_USER_TWEETS_SINCE=2026-02-01 feedgrab https://x.com/iBigQiang  # 指定日期之后
 # ↑ 超过 ~800 条时自动启动浏览器搜索补充（需 feedgrab login twitter）
 
+# 批量抓取 Twitter 列表推文（需要 X_LIST_TWEETS_ENABLED=true）
+feedgrab https://x.com/i/lists/2002743803959300263               # 抓取最近 1 天
+X_LIST_TWEETS_DAYS=3 feedgrab https://x.com/i/lists/2002743803959300263  # 抓取最近 3 天
+
 # 批量抓取小红书作者笔记（需要 XHS_USER_NOTES_ENABLED=true + feedgrab login xhs）
 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
 XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...  # 指定日期之后
@@ -171,6 +175,7 @@ Tier 0（GraphQL）移植自 [baoyu-danger-x-to-markdown](https://github.com/Jim
 - 作者回帖 + 评论区采集（可选开关）
 - **书签批量抓取**（全部书签 / 指定文件夹）
 - **用户推文批量抓取**（全部 / 按日期过滤，自动跳过 RT + 会话去重）
+- **列表推文批量抓取**（按天数过滤 1/2/3/7 天，会话去重，线程自动深度抓取）
 - **浏览器搜索补充**（突破 UserTweets ~800 条限制，自动按月分片搜索补充历史推文）
 - **全局去重索引**（跨模式统一去重）
 
@@ -432,6 +437,10 @@ cp .env.example .env
 | `X_USER_TWEET_MAX_PAGES` | 否 | 用户推文最大分页数（默认：`50`） |
 | `X_USER_TWEET_DELAY` | 否 | 用户推文处理间隔秒数（默认：`2.0`） |
 | `X_USER_TWEETS_SINCE` | 否 | 仅抓取该日期之后的推文（如 `2025-10-01`，留空=全部） |
+| `X_LIST_TWEETS_ENABLED` | 否 | 启用 Twitter List 列表批量抓取（默认：`false`） |
+| `X_LIST_TWEETS_DAYS` | 否 | 抓取最近 N 天的推文（默认：`1`，支持 1/2/3/7） |
+| `X_LIST_TWEET_MAX_PAGES` | 否 | 列表推文最大分页数（默认：`50`） |
+| `X_LIST_TWEET_DELAY` | 否 | 列表推文处理间隔秒数（默认：`2`） |
 | `X_SEARCH_SUPPLEMENTARY` | 否 | 搜索补充开关，UserTweets 不够时自动按月搜索补充（默认：`true`） |
 | `X_SEARCH_MAX_PAGES_PER_CHUNK` | 否 | 每个月度搜索分片最大分页数（默认：`50`） |
 | `TWITTERAPI_IO_KEY` | 否 | TwitterAPI.io 付费 API Key，从 https://twitterapi.io 获取 |
@@ -480,6 +489,7 @@ feedgrab/
 │   │   ├── twitter_thread.py  # 线程重建 + 评论分类（分页 + 去重 + 根推文追溯）
 │   │   ├── twitter_bookmarks.py# 书签批量抓取（全部/文件夹，分页+去重+分类）
 │   │   ├── twitter_user_tweets.py# 用户推文批量抓取（分页+日期过滤+会话去重+RT跳过）
+│   │   ├── twitter_list_tweets.py# List 列表批量抓取（按天数过滤+会话去重+线程深度抓取）
 │   │   ├── twitter_search_tweets.py# 浏览器搜索补充（突破 UserTweets 800 条限制，按月分片+响应拦截）
 │   │   ├── twitter_api.py       # TwitterAPI.io 付费 API 客户端（搜索+用户推文）
 │   │   ├── twitter_api_user_tweets.py# 付费 API 补充/全量抓取（替代浏览器搜索）

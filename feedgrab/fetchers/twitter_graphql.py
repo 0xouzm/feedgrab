@@ -41,6 +41,8 @@ FALLBACK_BOOKMARK_FOLDER_TIMELINE_QUERY_ID = "8HoabOvl7jl9IC1Aixj-vg"
 FALLBACK_USER_BY_SCREEN_NAME_QUERY_ID = "k5XapwcSikNsEsILW5FvgA"
 FALLBACK_USER_TWEETS_QUERY_ID = "V7H0Ap3_Hh2FyS75OCDO3Q"
 FALLBACK_SEARCH_TIMELINE_QUERY_ID = "9AW3D-T7t9Vkvfdmq2L-iQ"
+FALLBACK_LIST_BY_REST_ID_QUERY_ID = "BpXQqi3VImT8bR7pAf26rg"
+FALLBACK_LIST_LATEST_TWEETS_QUERY_ID = "vtC97Oo9d09Axx-NDuTaAA"
 
 # ---------------------------------------------------------------------------
 # Feature switches — per-operation, from baoyu constants.ts
@@ -177,6 +179,13 @@ USER_BY_SCREEN_NAME_FEATURES = {
 
 USER_TWEETS_FEATURES = dict(TWEET_DETAIL_FEATURES)
 USER_TWEETS_FEATURES["creator_subscriptions_tweet_preview_api_enabled"] = True
+
+# ---------------------------------------------------------------------------
+# ListLatestTweetsTimeline feature switches
+# ---------------------------------------------------------------------------
+
+LIST_TWEETS_FEATURES = dict(TWEET_DETAIL_FEATURES)
+LIST_TWEETS_FEATURES["rweb_lists_timeline_redesign_enabled"] = True
 
 # ---------------------------------------------------------------------------
 # SearchTimeline feature switches and field toggles
@@ -655,6 +664,165 @@ def parse_user_tweets_entries(response: Dict[str, Any]) -> tuple:
     return entries, cursors
 
 
+# ---------------------------------------------------------------------------
+# List timeline: fetch metadata + tweets
+# ---------------------------------------------------------------------------
+
+def fetch_list_by_rest_id(list_id: str, cookies: dict) -> Dict[str, str]:
+    """
+    Fetch list metadata (name, description, member count) via ListByRestId.
+
+    Args:
+        list_id: Numeric list ID (e.g. '2002743803959300263').
+        cookies: dict with 'auth_token' and 'ct0'.
+
+    Returns:
+        {"list_id": "...", "name": "...", "description": "...", "member_count": 0}
+    """
+    query_id = _get_query_id("ListByRestId")
+    headers = build_graphql_headers(cookies)
+
+    variables = {
+        "listId": list_id,
+        "withSuperFollowsUserFields": True,
+    }
+
+    response = _execute_graphql(
+        query_id=query_id,
+        operation_name="ListByRestId",
+        variables=variables,
+        features=dict(USER_BY_SCREEN_NAME_FEATURES),
+        field_toggles={},
+        headers=headers,
+    )
+
+    if not response or "data" not in response:
+        logger.warning(f"[ListByRestId] API returned empty for list {list_id}")
+        return {"list_id": list_id, "name": "", "description": "", "member_count": 0}
+
+    lst = response.get("data", {}).get("list", {})
+    return {
+        "list_id": lst.get("id_str", list_id),
+        "name": lst.get("name", ""),
+        "description": lst.get("description", ""),
+        "member_count": lst.get("member_count", 0),
+    }
+
+
+def fetch_list_tweets_page(
+    list_id: str, cookies: dict, cursor: str = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """
+    Fetch one page of tweets from a Twitter List via ListLatestTweetsTimeline.
+
+    Args:
+        list_id: Numeric list ID.
+        cookies: dict with 'auth_token' and 'ct0'.
+        cursor: Optional pagination cursor from a previous response.
+        count: Number of tweets per page (default 20).
+
+    Returns:
+        Raw GraphQL response dict, or None on failure.
+    """
+    query_id = _get_query_id("ListLatestTweetsTimeline")
+    headers = build_graphql_headers(cookies)
+
+    variables = {
+        "listId": list_id,
+        "count": count,
+        "withDownvotePerspective": False,
+        "withReactionsMetadata": False,
+        "withReactionsPerspective": False,
+        "withSuperFollowsTweetFields": True,
+        "withSuperFollowsUserFields": True,
+        "withBirdwatchNotes": True,
+    }
+
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name="ListLatestTweetsTimeline",
+        variables=variables,
+        features=dict(LIST_TWEETS_FEATURES),
+        field_toggles=dict(BOOKMARK_FIELD_TOGGLES),
+        headers=headers,
+    )
+
+
+def parse_list_tweets_entries(response: Dict[str, Any]) -> tuple:
+    """
+    Extract tweet entries and pagination cursors from a ListLatestTweetsTimeline response.
+
+    Response path: data.list.tweets_timeline.timeline.instructions
+
+    Returns:
+        (entries, cursors) — entries can be passed to extract_tweet_data(),
+        cursors is a dict with optional 'top' and 'bottom' keys.
+    """
+    if not response or "data" not in response:
+        return [], {}
+
+    data = response["data"]
+
+    # Primary path: data.list.tweets_timeline.timeline.instructions
+    instructions = (
+        data.get("list", {})
+        .get("tweets_timeline", {})
+        .get("timeline", {})
+        .get("instructions", [])
+    )
+
+    entries = []
+    cursors = {}
+
+    for instruction in instructions:
+        inst_type = instruction.get("type", "")
+
+        if inst_type == "TimelineAddEntries":
+            for entry in instruction.get("entries", []):
+                entry_id = entry.get("entryId", "")
+                content = entry.get("content", {})
+
+                # Extract cursor entries
+                if entry_id.startswith("cursor-"):
+                    cursor_type = content.get("cursorType", "")
+                    value = content.get("value", "")
+                    if cursor_type == "Top" and value:
+                        cursors["top"] = value
+                    elif cursor_type == "Bottom" and value:
+                        cursors["bottom"] = value
+                    continue
+
+                # Skip promoted content
+                if "promoted" in entry_id.lower():
+                    continue
+
+                # Filter to tweet items only
+                item_type = content.get("itemContent", {}).get("itemType", "")
+                if item_type == "TimelineTweet":
+                    entries.append(entry)
+                elif content.get("entryType") == "TimelineTimelineModule":
+                    for item in content.get("items", []):
+                        sub_type = (item.get("item", {})
+                                    .get("itemContent", {})
+                                    .get("itemType", ""))
+                        if sub_type == "TimelineTweet":
+                            entries.append(item)
+
+        elif inst_type == "TimelineAddToModule":
+            for item in instruction.get("moduleItems", []):
+                item_type = (item.get("item", {})
+                             .get("itemContent", {})
+                             .get("itemType", ""))
+                if item_type == "TimelineTweet":
+                    entries.append(item)
+
+    return entries, cursors
+
+
 def parse_bookmark_entries(response: Dict[str, Any]) -> tuple:
     """
     Extract tweet entries and pagination cursors from a Bookmarks GraphQL response.
@@ -919,7 +1087,7 @@ def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
         if main_match:
             chunk_hash = main_match.group(1)
             chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
-            for op in ("UserByScreenName", "UserTweets"):
+            for op in ("UserByScreenName", "UserTweets", "ListByRestId", "ListLatestTweetsTimeline"):
                 if op not in result:
                     qid = _fetch_and_extract_query_id(chunk_url, op, ua)
                     if qid:
@@ -1298,6 +1466,8 @@ def _fallback_query_ids() -> Dict[str, str]:
         "UserByScreenName": FALLBACK_USER_BY_SCREEN_NAME_QUERY_ID,
         "UserTweets": FALLBACK_USER_TWEETS_QUERY_ID,
         "SearchTimeline": FALLBACK_SEARCH_TIMELINE_QUERY_ID,
+        "ListByRestId": FALLBACK_LIST_BY_REST_ID_QUERY_ID,
+        "ListLatestTweetsTimeline": FALLBACK_LIST_LATEST_TWEETS_QUERY_ID,
     }
 
 
