@@ -192,6 +192,16 @@ def _generate_filename(item: UnifiedContent) -> str:
             raw = f"{author_display}：{raw_title}"
         else:
             raw = raw_title
+    elif item.source_type == SourceType.WECHAT:
+        author_display = (item.source_name or "").strip()
+        published = extra.get("publish_date", "")
+
+        if author_display and published:
+            raw = f"{author_display}_{published}：{raw_title}"
+        elif author_display:
+            raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
     else:
         raw = raw_title
 
@@ -229,6 +239,7 @@ def _format_markdown(item: UnifiedContent) -> str:
     """Build the full Markdown content with Obsidian-compatible YAML front matter."""
     is_twitter = item.source_type == SourceType.TWITTER
     is_xhs = item.source_type == SourceType.XIAOHONGSHU
+    is_wechat = item.source_type == SourceType.WECHAT
     extra = item.extra or {}
 
     # --- Parse published date ---
@@ -240,6 +251,8 @@ def _format_markdown(item: UnifiedContent) -> str:
     elif is_xhs and extra.get("date"):
         # XHS: "02-18 福建"
         published = _parse_xhs_date(extra["date"])
+    elif is_wechat and extra.get("publish_date"):
+        published = extra["publish_date"]
     fetched_date = item.fetched_at[:10] if item.fetched_at else ""
 
     # --- Title (escape quotes for YAML) ---
@@ -296,6 +309,16 @@ def _format_markdown(item: UnifiedContent) -> str:
         location = _parse_xhs_location(extra.get("date", ""))
         if location:
             fm_lines.append(f'location: "{location}"')
+
+    # WeChat metadata
+    if is_wechat:
+        if extra.get("thumbnail"):
+            fm_lines.append(f'thumbnail: "{extra["thumbnail"]}"')
+        if extra.get("summary"):
+            fm_summary = extra["summary"].replace('"', '\\"')[:200]
+            fm_lines.append(f'summary: "{fm_summary}"')
+        if extra.get("search_keyword"):
+            fm_lines.append(f'search_keyword: "{extra["search_keyword"]}"')
 
     # Bilibili extras
     if item.source_type == SourceType.BILIBILI:

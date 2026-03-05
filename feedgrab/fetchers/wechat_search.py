@@ -6,7 +6,7 @@ Uses Sogou's WeChat search (weixin.sogou.com) to discover articles,
 then fetches each article's full content via the existing wechat.py fetcher.
 
 Provides:
-    - feedgrab wechat-search <keyword>          (search and fetch articles)
+    - feedgrab mpweixin-so <keyword>          (search and fetch articles)
 
 Data available from Sogou search results:
     - title, summary, author (公众号名), publish_time, thumbnail
@@ -144,49 +144,80 @@ def _parse_sogou_results(html: str, max_results: int = 10) -> List[Dict[str, Any
     return results
 
 
-async def _resolve_sogou_redirect_via_browser(sogou_url: str) -> Optional[str]:
-    """Follow Sogou redirect via Playwright to get the real mp.weixin.qq.com URL.
+async def _resolve_sogou_redirect(page, sogou_url: str) -> Optional[str]:
+    """Follow Sogou redirect via an existing Playwright page to get the real URL.
 
-    Sogou uses encrypted redirect links that trigger anti-bot on direct HTTP.
-    Browser automation is required to follow the redirect chain.
+    Reuses a shared page instance (which already visited the search page,
+    so the context has proper Sogou cookies and referer).
     Returns the final WeChat URL or None if resolution fails.
     """
     try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        logger.debug("[WeChat-Search] Playwright not installed, cannot resolve redirect")
-        return None
+        # Open redirect in a new tab to preserve search page state
+        new_page = await page.context.new_page()
+        try:
+            await new_page.goto(sogou_url, wait_until="domcontentloaded", timeout=20000)
+            # Wait for redirect chain to complete
+            await new_page.wait_for_timeout(4000)
+            final_url = new_page.url
 
-    from feedgrab.config import get_user_agent
+            if "mp.weixin.qq.com" in final_url:
+                logger.debug(f"[WeChat-Search] Redirect resolved via URL: {final_url[:80]}")
+                return final_url
 
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True, channel="chrome")
-            context = await browser.new_context(user_agent=get_user_agent())
-            page = await context.new_page()
+            # Check for antispider — try to solve it by waiting longer
+            if "antispider" in final_url:
+                logger.debug("[WeChat-Search] Hit antispider, waiting for manual/auto resolve...")
+                try:
+                    await new_page.wait_for_url("**/mp.weixin.qq.com/**", timeout=10000)
+                    final_url = new_page.url
+                    if "mp.weixin.qq.com" in final_url:
+                        logger.debug(f"[WeChat-Search] Antispider resolved: {final_url[:80]}")
+                        return final_url
+                except Exception:
+                    pass
 
-            try:
-                await page.goto(sogou_url, wait_until="domcontentloaded", timeout=15000)
-                # Wait briefly for redirect
-                await page.wait_for_timeout(3000)
-                final_url = page.url
+            # Try extracting from page content (JS redirect may embed the URL)
+            content = await new_page.content()
+            wx_m = re.search(r'(https?://mp\.weixin\.qq\.com/s[^\s"\'<>]+)', content)
+            if wx_m:
+                resolved = wx_m.group(1)
+                logger.debug(f"[WeChat-Search] Redirect resolved via content: {resolved[:80]}")
+                return resolved
 
-                if "mp.weixin.qq.com" in final_url:
-                    return final_url
-
-                # Try extracting from page content
-                content = await page.content()
-                wx_m = re.search(r'(https?://mp\.weixin\.qq\.com/s[^\s"\'<>]+)', content)
-                if wx_m:
-                    return wx_m.group(1)
-
-            finally:
-                await context.close()
-                await browser.close()
+            logger.debug(f"[WeChat-Search] Redirect landed on: {final_url[:80]}")
+        finally:
+            await new_page.close()
     except Exception as e:
-        logger.debug(f"[WeChat-Search] Browser redirect resolution failed: {e}")
+        logger.debug(f"[WeChat-Search] Browser redirect failed: {e}")
 
     return None
+
+
+def _save_search_item(item: Dict[str, Any], keyword: str):
+    """Save a search result item as Markdown even without full article content.
+
+    Uses search metadata (title, summary, author, publish_date, thumbnail)
+    to create a minimal but informative document.
+    """
+    from feedgrab.schema import from_wechat
+    from feedgrab.utils.storage import save_to_markdown
+
+    # Build a pseudo article_data from search metadata
+    article_data = {
+        "title": item.get("title", ""),
+        "author": item.get("author", ""),
+        "url": item.get("wechat_url", item.get("sogou_url", "")),
+        "content": item.get("summary", ""),
+        "publish_date": item.get("publish_date", ""),
+        "thumbnail": item.get("thumbnail", ""),
+        "summary": item.get("summary", ""),
+        "search_keyword": keyword,
+    }
+
+    content = from_wechat(article_data)
+    content.category = "search"
+    save_to_markdown(content)
+    logger.info(f"[WeChat-Search] Saved (metadata only): {item.get('title', '')[:50]}")
 
 
 async def search_wechat_articles(
@@ -224,6 +255,46 @@ async def search_wechat_articles(
 
     logger.info(f"[WeChat-Search] Found {len(results)} results")
 
+    if not fetch_content:
+        return {
+            "keyword": keyword,
+            "total": len(results),
+            "fetched": len(results),
+            "skipped": 0,
+            "failed": 0,
+            "articles": results,
+        }
+
+    # Launch ONE shared browser for all redirect resolutions
+    browser = None
+    context = None
+    page = None
+    pw = None
+    try:
+        from playwright.async_api import async_playwright
+        from feedgrab.config import get_user_agent
+
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        context = await browser.new_context(user_agent=get_user_agent())
+        page = await context.new_page()
+
+        # Navigate to the search page first to establish Sogou cookies
+        # This is critical: redirect links only work with proper cookies/referer
+        encoded = urllib.parse.quote(keyword)
+        search_url = f"https://weixin.sogou.com/weixin?type=2&query={encoded}&ie=utf8&page=1"
+        await page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
+        await page.wait_for_timeout(2000)
+        logger.info("[WeChat-Search] Browser launched, search page cookies acquired")
+    except ImportError:
+        logger.warning("[WeChat-Search] Playwright not installed, will save metadata only")
+    except Exception as e:
+        logger.warning(f"[WeChat-Search] Browser launch failed: {e}, will save metadata only")
+
     # Load dedup index
     index = load_index(platform="WeChat")
     fetched = 0
@@ -237,61 +308,74 @@ async def search_wechat_articles(
 
         logger.info(f"[WeChat-Search] [{i+1}/{len(results)}] {title[:50]}")
 
-        if not fetch_content:
-            articles.append(item)
-            fetched += 1
-            continue
-
         # Resolve Sogou redirect to get real WeChat URL
-        wx_url = await _resolve_sogou_redirect_via_browser(sogou_url)
-        if not wx_url:
-            logger.warning(f"[WeChat-Search] Could not resolve WeChat URL for: {title[:40]}")
-            # Still save search result metadata
-            articles.append(item)
-            failed += 1
-            continue
+        wx_url = None
+        if page:
+            wx_url = await _resolve_sogou_redirect(page, sogou_url)
 
-        item["wechat_url"] = wx_url
+        if wx_url:
+            item["wechat_url"] = wx_url
 
-        # Dedup check
-        item_id = item_id_from_url(wx_url)
-        if has_item(item_id, index):
-            logger.info(f"[WeChat-Search] Already fetched, skipping: {title[:40]}")
-            skipped += 1
-            continue
+            # Dedup check
+            item_id = item_id_from_url(wx_url)
+            if has_item(item_id, index):
+                logger.info(f"[WeChat-Search] Already fetched, skipping: {title[:40]}")
+                skipped += 1
+                continue
 
-        # Fetch full article content
-        try:
-            from feedgrab.fetchers.wechat import fetch_wechat
-            from feedgrab.schema import from_wechat
-            from feedgrab.utils.storage import save_to_markdown
+            # Fetch full article content
+            try:
+                from feedgrab.fetchers.wechat import fetch_wechat
+                from feedgrab.schema import from_wechat
+                from feedgrab.utils.storage import save_to_markdown
 
-            article_data = await fetch_wechat(wx_url)
-            # Enrich with search metadata
-            if item.get("author"):
-                article_data["author"] = item["author"]
-            if item.get("publish_date"):
-                article_data["publish_date"] = item["publish_date"]
+                article_data = await fetch_wechat(wx_url)
+                # Enrich with search metadata
+                if item.get("author"):
+                    article_data["author"] = item["author"]
+                if item.get("publish_date"):
+                    article_data["publish_date"] = item["publish_date"]
+                if item.get("thumbnail"):
+                    article_data["thumbnail"] = item["thumbnail"]
+                if item.get("summary"):
+                    article_data["summary"] = item["summary"]
+                article_data["search_keyword"] = keyword
 
-            content = from_wechat(article_data)
-            content.category = "search"
-            save_to_markdown(content)
+                content = from_wechat(article_data)
+                content.category = "search"
+                save_to_markdown(content)
 
-            # Register in dedup index
-            add_item(item_id, wx_url, index)
+                # Register in dedup index
+                add_item(item_id, wx_url, index)
 
-            articles.append(item)
-            fetched += 1
-            logger.info(f"[WeChat-Search] Saved: {title[:50]}")
+                articles.append(item)
+                fetched += 1
+                logger.info(f"[WeChat-Search] Saved: {title[:50]}")
 
-        except Exception as e:
-            logger.warning(f"[WeChat-Search] Failed to fetch: {title[:40]} — {e}")
+            except Exception as e:
+                logger.warning(f"[WeChat-Search] Fetch failed: {title[:40]} — {e}")
+                # Save search metadata as fallback
+                _save_search_item(item, keyword)
+                articles.append(item)
+                failed += 1
+        else:
+            logger.warning(f"[WeChat-Search] Could not resolve URL for: {title[:40]}")
+            # Save search metadata even without full content
+            _save_search_item(item, keyword)
             articles.append(item)
             failed += 1
 
         # Rate limit
         if i < len(results) - 1:
             time.sleep(delay)
+
+    # Cleanup browser
+    if context:
+        await context.close()
+    if browser:
+        await browser.close()
+    if pw:
+        await pw.stop()
 
     # Save dedup index
     save_index(index, platform="WeChat")
