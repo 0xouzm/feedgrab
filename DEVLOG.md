@@ -4,6 +4,33 @@
 
 ---
 
+## 2026-03-05 · v0.7.1 · tweet_type 分类 + 日期解析修复
+
+### 背景
+1. 需要在 Obsidian 中通过元数据字段筛选不同类型的推文（普通/线程/长文），新增 `tweet_type` 字段。
+2. berryxia 的长文缺少 `published` 发布时间，而同类型的长文正常。排查发现 `parse_twitter_date_local()` 的 ISO 8601 格式检测使用 `"T" in created_at`，会误匹配星期名称中的 `T`（如 `Tue`、`Thu`），导致走错分支解析失败。
+
+### 方案决策
+- **tweet_type 分类**：在 `from_twitter()` 中根据 `is_article`/线程长度判定 `status`/`thread`/`article`，输出到 front matter
+- **日期解析修复**：将 `"T" in created_at` 改为 `re.search(r"\d{4}-\d{2}-\d{2}T", created_at)` 精确匹配 ISO 8601 的 `YYYY-MM-DDT` 模式
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/config.py` | 修改 | 修复 ISO 8601 日期检测误匹配 `Tue`/`Thu` 中的 `T` |
+| `feedgrab/schema.py` | 修改 | `from_twitter()` 新增 `tweet_type` 分类逻辑 |
+| `feedgrab/utils/storage.py` | 修改 | front matter 输出 `tweet_type` 字段 |
+
+### 验证结果
+- berryxia 长文 `published: 2026-03-03` 正确输出（修复前为空）
+- 所有日期格式（`Tue`/`Thu`/`Wed`/`Fri`/ISO 8601）均正确解析
+- 三种类型的推文 front matter 字段完整一致
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-05 · v0.7.0 · GraphQL 数据完整提取 + 引用推文增强 + 富文本标记
 
 ### 背景

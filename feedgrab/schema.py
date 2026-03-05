@@ -258,6 +258,14 @@ def from_twitter(data: dict) -> UnifiedContent:
     if not cover_image and data.get("images"):
         cover_image = data["images"][0]
 
+    # Classify tweet type: article / thread / status
+    if is_article or article_data.get("has_content"):
+        tweet_type = "article"
+    elif tweets and len(tweets) > 1:
+        tweet_type = "thread"
+    else:
+        tweet_type = "status"
+
     return UnifiedContent(
         source_type=SourceType.TWITTER,
         source_name=data.get("author", ""),
@@ -266,6 +274,7 @@ def from_twitter(data: dict) -> UnifiedContent:
         url=data.get("url", ""),
         tags=data.get("hashtags", []),
         extra={
+            "tweet_type": tweet_type,
             "tweet_count": len(tweets) if tweets else 1,
             "has_thread": bool(tweets),
             "author_name": data.get("author_name", ""),

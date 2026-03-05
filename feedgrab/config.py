@@ -7,6 +7,7 @@ not hardcoded in individual fetcher files.
 """
 
 import os
+import re
 from pathlib import Path
 
 
@@ -325,7 +326,8 @@ def parse_twitter_date_local(created_at: str, fmt: str = "%Y-%m-%d") -> str:
         return ""
     try:
         # Try ISO 8601 first (Syndication API format)
-        if "T" in created_at:
+        # Use regex to avoid matching "T" in weekday names like "Tue", "Thu"
+        if re.search(r"\d{4}-\d{2}-\d{2}T", created_at):
             from datetime import datetime, timezone
             dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
             dt = dt.astimezone()  # UTC → system local timezone

@@ -268,6 +268,7 @@ def _format_markdown(item: UnifiedContent) -> str:
 
     # Twitter metrics (always show, including 0)
     if is_twitter:
+        fm_lines.append(f'tweet_type: "{extra.get("tweet_type", "status")}"')
         fm_lines.append(f"tweet_count: {extra.get('tweet_count', 1)}")
         fm_lines.append(f"has_thread: {str(extra.get('has_thread', False)).lower()}")
         for metric in ("likes", "retweets", "replies", "bookmarks", "views"):
