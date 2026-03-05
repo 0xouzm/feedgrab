@@ -363,6 +363,10 @@ def _save_article(article_data: Dict[str, Any], item: Dict[str, Any], keyword: s
     from feedgrab.schema import from_wechat
     from feedgrab.utils.storage import save_to_markdown
 
+    # Fallback title from search results when browser extraction failed
+    if not article_data.get("title") and item.get("title"):
+        article_data["title"] = item["title"]
+
     # Enrich with search metadata
     if item.get("author"):
         article_data["author"] = item["author"]
