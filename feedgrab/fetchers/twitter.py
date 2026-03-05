@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-X/Twitter fetcher — five-tier fallback:
+X/Twitter fetcher — six-tier fallback:
 
-0.  GraphQL API (complete thread + media, requires cookie auth)
-0.5 Syndication API (text + media + metrics, no auth, single tweet only)
-1.  X oEmbed API (fast, reliable for individual tweets, no login needed)
-2.  Jina Reader (handles non-tweet X pages like profiles)
-3.  Playwright + saved session (handles login-required content)
+0.    GraphQL API (complete thread + media, requires cookie auth)
+0.3   FxTwitter API (rich data, no auth, third-party public service)
+0.5   Syndication API (text + media + metrics, no auth, single tweet only)
+1.    X oEmbed API (fast, reliable for individual tweets, no login needed)
+2.    Jina Reader (handles non-tweet X pages like profiles)
+3.    Playwright + saved session (handles login-required content)
 
 Install browser tier: pip install "feedgrab[browser]" && playwright install chromium
 Save X session:       feedgrab login twitter
@@ -547,9 +548,10 @@ async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
 
 async def fetch_twitter(url: str) -> Dict[str, Any]:
     """
-    Fetch a tweet or X post with five-tier fallback.
+    Fetch a tweet or X post with six-tier fallback.
 
     Tier 0:   GraphQL API (needs cookie, most complete — thread + media)
+    Tier 0.3: FxTwitter API (no auth, rich data — stats + media + article)
     Tier 0.5: Syndication API (free, no auth, text + metrics + media)
     Tier 1:   oEmbed API (free, no auth, single tweet text only)
     Tier 2:   Jina Reader (no auth, handles profiles/non-tweet pages)
@@ -557,15 +559,16 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
 
     Logic:
         - Has cookies + is tweet URL → try Tier 0 first (GraphQL)
-        - No cookies → skip Tier 0, try Tier 0.5 (Syndication)
-        - GraphQL/Syndication fail → auto-degrade to Tier 1/2/3
+        - GraphQL fails → try Tier 0.3 (FxTwitter, unless circuit-broken)
+        - No cookies → skip Tier 0, try Tier 0.3 then Tier 0.5
+        - All fail → auto-degrade to Tier 1/2/3
 
     Args:
         url: Tweet URL (x.com or twitter.com)
 
     Returns:
         Dict with: text, author, url, title, platform,
-        and optionally: thread_tweets, has_thread (from Tier 0/0.5)
+        and optionally: thread_tweets, has_thread (from Tier 0/0.3/0.5)
     """
     url = url.replace("twitter.com", "x.com")
     author = _extract_author(url)
@@ -630,6 +633,24 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
                 )
             else:
                 logger.warning(f"[Twitter] GraphQL failed ({e}), falling back")
+
+    # Tier 0.3: FxTwitter API (rich data, no auth, third-party service)
+    if tweet_id and _is_tweet_url(url):
+        from feedgrab.fetchers.twitter_fxtwitter import (
+            fetch_via_fxtwitter, is_circuit_broken,
+        )
+        if not is_circuit_broken():
+            try:
+                logger.info(f"[Twitter] Tier 0.3 — FxTwitter: {url}")
+                data = fetch_via_fxtwitter(url, tweet_id)
+                if data and data.get("text"):
+                    _try_fetch_article_body(data, url, "[Twitter]")
+                    return data
+                logger.warning("[Twitter] FxTwitter returned empty data")
+            except Exception as e:
+                logger.warning(f"[Twitter] FxTwitter failed ({e})")
+        else:
+            logger.debug("[Twitter] FxTwitter skipped (circuit breaker active)")
 
     # Tier 0.5: Syndication API (richer than oEmbed, no auth)
     if tweet_id and _is_tweet_url(url):

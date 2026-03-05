@@ -658,6 +658,34 @@ def cmd_setup():
     print()
 
 
+def cmd_wechat_search(keyword: str, max_results: int = 10):
+    """Search WeChat articles by keyword via Sogou."""
+    from feedgrab.fetchers.wechat_search import search_wechat_articles
+
+    async def run():
+        result = await search_wechat_articles(
+            keyword, max_results=max_results, fetch_content=True
+        )
+        print(f"\n\u2705 WeChat search complete: '{keyword}'")
+        print(f"   Found: {result['total']}, Fetched: {result['fetched']}, "
+              f"Skipped: {result['skipped']}, Failed: {result['failed']}")
+        if result['articles']:
+            print("\n   Articles:")
+            for art in result['articles']:
+                title = art.get('title', 'untitled')[:50]
+                author = art.get('author', '')
+                date = art.get('publish_date', '')
+                print(f"   - [{date}] {title} ({author})")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n\u23f9 Cancelled")
+    except Exception as e:
+        print(f"\u274c {e}")
+        sys.exit(1)
+
+
 def main():
     if len(sys.argv) < 2:
         print("""
@@ -667,11 +695,13 @@ Usage:
     feedgrab setup              First-time deployment guide (recommended for new users)
     feedgrab <url>              Fetch content from any URL
     feedgrab <url1> <url2>      Fetch multiple URLs
+    feedgrab mpweixin-so <keyword>  Search WeChat articles by keyword
     feedgrab login <platform>   Login to a platform (saves session for browser fallback)
     feedgrab detect-ua          Detect real Chrome UA and save to .env
     feedgrab list               Show content statistics
     feedgrab reset <folder>     Reset a subfolder (delete files + clear dedup index)
     feedgrab clean-index        Clean up batch records and cache files from index
+    feedgrab mpweixin-so <kw>   Search WeChat articles by keyword via Sogou
 
 Supported platforms:
     WeChat, Telegram, X/Twitter, YouTube,
@@ -684,6 +714,7 @@ Examples:
     feedgrab https://x.com/iBigQiang
     feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
     feedgrab "https://www.xiaohongshu.com/search_result?keyword=..."
+    feedgrab mpweixin-so "AI Agent"
     feedgrab login xhs
     feedgrab setup              # First-time setup wizard
 """)
@@ -714,6 +745,21 @@ Examples:
     elif cmd == "clean-index":
         skip = "--yes" in sys.argv or "-y" in sys.argv
         cmd_clean_index(skip_confirm=skip)
+    elif cmd == "mpweixin-so":
+        if len(sys.argv) < 3:
+            print("\u274c Usage: feedgrab mpweixin-so <keyword> [--limit N]")
+            print('   Example: feedgrab mpweixin-so "AI Agent"')
+            sys.exit(1)
+        keyword = sys.argv[2]
+        limit = 10
+        if "--limit" in sys.argv:
+            idx = sys.argv.index("--limit")
+            if idx + 1 < len(sys.argv):
+                try:
+                    limit = int(sys.argv[idx + 1])
+                except ValueError:
+                    pass
+        cmd_wechat_search(keyword, max_results=limit)
     elif cmd.startswith("http") or cmd.startswith("www.") or "." in cmd:
         urls = [arg for arg in sys.argv[1:] if arg.startswith(("http", "www.")) or "." in arg]
         cmd_fetch(urls)

@@ -746,6 +746,9 @@ async def fetch_api_user_tweets(profile_url: str) -> dict:
     """
     log_prefix = "[API-UserTweets]"
 
+    from feedgrab.fetchers.twitter_fxtwitter import reset_circuit_breaker
+    reset_circuit_breaker()
+
     # 1. Parse screen_name
     screen_name = _parse_profile_url(profile_url)
     logger.info(f"{log_prefix} 用户: @{screen_name}")

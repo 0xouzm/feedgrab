@@ -129,6 +129,9 @@ async def fetch_list_tweets(
         {"total": N, "fetched": N, "skipped": N, "failed": N,
          "list_name": "...", "list_path": "..."}
     """
+    from feedgrab.fetchers.twitter_fxtwitter import reset_circuit_breaker
+    reset_circuit_breaker()
+
     list_id = _parse_list_url(list_url)
     logger.info(f"[ListTweets] List ID: {list_id}")
 

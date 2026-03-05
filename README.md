@@ -20,7 +20,7 @@
          7+ 平台           视频：yt-dlp 字幕    → output/YouTube/标题.md
                            音频：Whisper 转录
                            API：Bilibili / RSS / Telegram
-                           X/Twitter：GraphQL → Syndication → oEmbed → Jina → Playwright
+                           X/Twitter：GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
 ```
 
 Python 层负责文本抓取和 YouTube 字幕提取。**Claude Code 技能**（可选）提供完整的 Whisper 视频/播客转录和 AI 内容分析功能。
@@ -63,6 +63,10 @@ XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profil
 
 # 批量抓取小红书搜索结果（需要 XHS_SEARCH_ENABLED=true + feedgrab login xhs）
 feedgrab "https://www.xiaohongshu.com/search_result?keyword=开学第一课&source=web_explore_feed"
+
+# 搜索微信公众号文章（通过搜狗微信搜索）
+feedgrab mpweixin-so "AI Agent"
+feedgrab mpweixin-so "AI Agent" --limit 5  # 限制结果数量
 
 # 批量抓取多个 URL
 feedgrab https://url1.com https://url2.com
@@ -145,7 +149,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 |------|---------|-------------|
 | YouTube | Jina | yt-dlp 字幕 → Groq Whisper 兜底 |
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
-| X / Twitter | **GraphQL** → **Syndication** → oEmbed → Jina → Playwright | — |
+| X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright | — |
 | 小红书 | Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量**) | — |
 | Telegram | Telethon | — |
@@ -158,17 +162,20 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 >
 > YouTube Whisper 转录需要 `GROQ_API_KEY` — 从 [Groq](https://console.groq.com/keys) 免费获取
 
-### X/Twitter 五级兜底策略
+### X/Twitter 六级兜底策略
 
-feedgrab 对 X/Twitter 内容采用先进的五级兜底策略：
+feedgrab 对 X/Twitter 内容采用先进的六级兜底策略：
 
 | 层级 | 方式 | 是否需要认证 | 能力 |
 |------|------|-------------|------|
 | 0 | **GraphQL API** | 需要 Cookie（`auth_token` + `ct0`） | 完整线程、图片、视频、引用推文、长文章 |
+| 0.3 | **FxTwitter API** | 不需要 | 文本、图片、视频、完整互动数据（含 views/bookmarks）、Article Draft.js、作者画像 |
 | 0.5 | **Syndication API** | 不需要 | 文本、图片、视频、互动数据（likes/replies）、article 检测 |
 | 1 | oEmbed API | 不需要 | 单条推文文本（仅公开推文） |
 | 2 | Jina Reader | 不需要 | 个人主页、非推文页面 |
 | 3 | Playwright | 可选 session | 需要登录的内容，最后兜底 |
+
+> **FxTwitter API 的价值**：第三方公共 API，无需认证即可获取接近 GraphQL 的数据完整度（含 views、bookmarks、Article 全文）。缺少 blue_verified、listed_count 和线程展开。批量模式下连续 3 次失败自动触发 circuit breaker 跳过。
 
 > **Syndication API 的价值**：有 Cookie 时 GraphQL 自动切换，正常使用基本不会降级到 Syndication。Syndication 的价值在于：当 Cookie 全部过期/失效时，用户不需要立刻重新登录，仍能拿到 80% 的数据（缺 retweets/bookmarks/views 三项），而不是降级到只有纯文本的 oEmbed。
 
@@ -489,8 +496,9 @@ feedgrab/
 │   │   ├── youtube.py         # yt-dlp 字幕提取
 │   │   ├── rss.py             # RSS 解析（feedparser）
 │   │   ├── telegram.py        # Telegram 频道（Telethon）
-│   │   ├── twitter.py         # X/Twitter 五级兜底调度器
+│   │   ├── twitter.py         # X/Twitter 六级兜底调度器
 │   │   ├── twitter_cookies.py # Cookie 多源管理（环境变量/文件/Playwright/CDP）
+│   │   ├── twitter_fxtwitter.py # FxTwitter API 客户端（Tier 0.3 兜底 + circuit breaker）
 │   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, UserTweets, Bookmarks, SearchTimeline, 动态 queryId）
 │   │   ├── twitter_thread.py  # 线程重建 + 评论分类（分页 + 去重 + 根推文追溯）
 │   │   ├── twitter_bookmarks.py# 书签批量抓取（全部/文件夹，分页+去重+分类）
@@ -501,6 +509,7 @@ feedgrab/
 │   │   ├── twitter_api_user_tweets.py# 付费 API 补充/全量抓取（替代浏览器搜索）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
 │   │   ├── wechat.py          # Jina → Playwright 兜底
+│   │   ├── wechat_search.py   # 搜狗微信搜索（关键词 → 文章发现 + 抓取）
 │   │   ├── xhs.py             # Jina → Playwright + Session 兜底
 │   │   ├── xhs_user_notes.py  # 小红书作者批量抓取（__INITIAL_STATE__ + XHR 拦截 + 滚动加载）
 │   │   └── xhs_search_notes.py# 小红书搜索批量抓取（搜索结果页滚动 + 逐篇深度抓取）
@@ -524,7 +533,7 @@ feedgrab/
     │   └─ Python 抓取器 → UnifiedContent → Markdown
     │
     ├─ X/Twitter 推文或线程
-    │   └─ GraphQL（完整线程 + 媒体）→ Syndication → oEmbed → Jina → Playwright
+    │   └─ GraphQL（完整线程 + 媒体）→ FxTwitter → Syndication → oEmbed → Jina → Playwright
     │
     ├─ 视频（YouTube、B站、X 视频）
     │   ├─ Python 抓取器 → 元数据（标题、描述）

@@ -130,9 +130,12 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
         dict with: total, fetched, skipped, failed, list_path
     """
     from feedgrab.fetchers.twitter import _fetch_via_graphql, _clean_title
+    from feedgrab.fetchers.twitter_fxtwitter import reset_circuit_breaker
     from feedgrab.fetchers.jina import fetch_via_jina
     from feedgrab.schema import from_twitter
     from feedgrab.utils.storage import save_to_markdown
+
+    reset_circuit_breaker()
 
     # 1. Parse screen_name from URL
     screen_name = _parse_profile_url(profile_url)

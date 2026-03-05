@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-03-06 · v0.8.0 · FxTwitter Tier 0.3 兜底 + 搜狗微信搜索
+
+### 背景
+1. 分析了 [x-tweet-fetcher](https://github.com/ythx-101/x-tweet-fetcher) 项目，发现其核心数据源为 FxTwitter 公共 API（`api.fxtwitter.com`），无需认证即可获取丰富的推文数据，完整度显著高于 Syndication。
+2. 搜狗微信搜索（`weixin.sogou.com`）可按关键词发现微信公众号文章，补充现有的单篇微信抓取能力。
+
+### 方案决策
+- **FxTwitter Tier 0.3**：插入 GraphQL（Tier 0）和 Syndication（Tier 0.5）之间，数据完整度接近 GraphQL（有 views/bookmarks/Article Draft.js），缺少 blue_verified/listed_count/线程展开。单篇失败直接降级；批量模式连续 3 次失败触发 circuit breaker，当前任务后续跳过 FxTwitter。
+- **搜狗微信搜索**：新增 `feedgrab mpweixin-so <keyword>` 命令，通过搜狗搜索发现文章 → Playwright 解析加密跳转 → 复用现有 wechat.py 抓取全文 → 去重保存。
+- **六级兜底链**：GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_fxtwitter.py` | 新建 | FxTwitter API 客户端 + circuit breaker + Article Draft.js 渲染 |
+| `feedgrab/fetchers/wechat_search.py` | 新建 | 搜狗微信搜索（HTML 解析 + Playwright 跳转解析 + 批量抓取） |
+| `feedgrab/fetchers/twitter.py` | 修改 | 插入 Tier 0.3 FxTwitter 兜底层 |
+| `feedgrab/cli.py` | 修改 | 新增 `mpweixin-so` 命令 + 帮助文本 |
+| `feedgrab/fetchers/twitter_bookmarks.py` | 修改 | 任务启动时 reset circuit breaker |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 修改 | 任务启动时 reset circuit breaker |
+| `feedgrab/fetchers/twitter_list_tweets.py` | 修改 | 任务启动时 reset circuit breaker |
+| `feedgrab/fetchers/twitter_api_user_tweets.py` | 修改 | 任务启动时 reset circuit breaker |
+| `强子笔记/x-tweet-fetcher技术方案分析.md` | 新建 | x-tweet-fetcher 架构分析报告 |
+| `强子笔记/FxTwitter与搜狗微信搜索评估报告.md` | 新建 | FxTwitter + 搜狗微信搜索数据完整度评估 |
+
+### 验证结果
+- FxTwitter API 实测：普通推文、Article 长文数据完整返回（views/bookmarks/Article Draft.js blocks）
+- 搜狗微信搜索实测："openclaw" 返回 10 条结果（标题/摘要/公众号名/时间戳/缩略图）
+- 搜狗跳转链接 HTTP 直请求触发反爬 → 改用 Playwright 浏览器解析
+- Circuit breaker 逻辑验证通过（3 次连续失败后停用 FxTwitter）
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-05 · v0.7.1 · tweet_type 分类 + 日期解析修复
 
 ### 背景
