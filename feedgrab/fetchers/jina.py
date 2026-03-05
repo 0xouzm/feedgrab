@@ -68,3 +68,25 @@ def fetch_via_jina(url: str) -> dict:
     except requests.RequestException as e:
         logger.error(f"Jina fetch failed: {url} — {e}")
         raise
+
+
+def fetch_via_jina_text(url: str) -> str:
+    """Fetch URL via Jina Reader in plain text mode (no markdown formatting).
+
+    Text mode preserves all visible text including inline link content
+    (cashtags, @mentions) that Jina's markdown renderer may drop.
+
+    Returns:
+        Plain text content string.
+    """
+    jina_url = f"{JINA_BASE}/{url}"
+    logger.info(f"Jina fetch (text mode): {url}")
+
+    headers = {**HEADERS, "X-Return-Format": "text"}
+    try:
+        resp = requests.get(jina_url, headers=headers, timeout=TIMEOUT)
+        resp.raise_for_status()
+        return resp.text.strip()
+    except requests.RequestException as e:
+        logger.warning(f"Jina text-mode fetch failed: {url} — {e}")
+        return ""

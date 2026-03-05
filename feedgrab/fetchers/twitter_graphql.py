@@ -1530,6 +1530,120 @@ def _extract_query_id(js_content: str, operation_name: str) -> Optional[str]:
     return None
 
 
+def _render_article_body(article: dict) -> str:
+    """Render Twitter Article content_state (Draft.js format) to Markdown.
+
+    The content_state contains:
+    - blocks: list of {text, type, entityRanges, inlineStyleRanges, depth}
+    - entityMap: list of {key, value: {type, data}} entries
+
+    Block types: unstyled, header-two, header-three, ordered-list-item,
+    unordered-list-item, blockquote, atomic, code-block.
+
+    Entity types: MEDIA (images), MARKDOWN (code blocks), TWEMOJI (emoji SVG).
+    """
+    cs = article.get("content_state")
+    if not cs:
+        return ""
+    blocks = cs.get("blocks", [])
+    if not blocks:
+        return ""
+
+    # Build entityMap lookup: key (str) → {type, data}
+    raw_em = cs.get("entityMap", {})
+    if isinstance(raw_em, list):
+        entity_map = {str(item["key"]): item["value"] for item in raw_em if "key" in item}
+    elif isinstance(raw_em, dict):
+        entity_map = raw_em
+    else:
+        entity_map = {}
+
+    # Build mediaId → URL lookup from media_entities
+    media_url_map = {}
+    for me in article.get("media_entities", []):
+        mi = me.get("media_info") or {}
+        media_id = str(me.get("media_key", ""))
+        url = mi.get("original_img_url", "")
+        if url:
+            media_url_map[media_id] = url
+        # Also index by numeric media_id
+        mid = str(mi.get("__rest_id", ""))
+        if mid and url:
+            media_url_map[mid] = url
+
+    parts = []
+    list_counter = 0  # for ordered lists
+
+    for block in blocks:
+        btype = block.get("type", "unstyled")
+        text = block.get("text", "")
+        entity_ranges = block.get("entityRanges", [])
+
+        # atomic blocks: content comes from entityMap
+        if btype == "atomic":
+            for er in entity_ranges:
+                ent_key = str(er.get("key", ""))
+                ent = entity_map.get(ent_key, {})
+                ent_type = ent.get("type", "")
+                ent_data = ent.get("data", {})
+
+                if ent_type == "MEDIA":
+                    # Resolve image URL from media_entities
+                    for mi in ent_data.get("mediaItems", []):
+                        mid = str(mi.get("mediaId", ""))
+                        img_url = media_url_map.get(mid, "")
+                        if not img_url:
+                            # Try matching by suffix in media_url_map keys
+                            for mk, mv in media_url_map.items():
+                                if mid in mk or mk in mid:
+                                    img_url = mv
+                                    break
+                        if img_url:
+                            parts.append(f"\n![image]({img_url})\n")
+                elif ent_type == "MARKDOWN":
+                    md = ent_data.get("markdown", "")
+                    if md:
+                        parts.append(f"\n{md}\n")
+                # TWEMOJI: skip (emoji SVGs are oversized in Obsidian)
+            continue
+
+        # Empty block → blank line
+        if not text.strip():
+            parts.append("")
+            list_counter = 0
+            continue
+
+        # Format text based on block type
+        if btype == "header-one":
+            parts.append(f"# {text}")
+            list_counter = 0
+        elif btype == "header-two":
+            parts.append(f"## {text}")
+            list_counter = 0
+        elif btype == "header-three":
+            parts.append(f"### {text}")
+            list_counter = 0
+        elif btype == "ordered-list-item":
+            list_counter += 1
+            parts.append(f"{list_counter}. {text}")
+        elif btype == "unordered-list-item":
+            parts.append(f"- {text}")
+            list_counter = 0
+        elif btype == "blockquote":
+            for line in text.split("\n"):
+                parts.append(f"> {line}")
+            list_counter = 0
+        elif btype == "code-block":
+            parts.append(f"```\n{text}\n```")
+            list_counter = 0
+        else:
+            # unstyled → regular paragraph
+            parts.append(text)
+            list_counter = 0
+
+    return "\n\n".join(parts).strip()
+
+
 def _extract_article_ref(result: dict) -> Optional[Dict[str, Any]]:
     """
     Extract article entity reference from a tweet result.
@@ -1556,15 +1670,14 @@ def _extract_article_ref(result: dict) -> Optional[Dict[str, Any]]:
                     or (media_info.get("preview_image") or {}).get("original_img_url")
                     or ""
                 )
+                # Render article body from content_state (Draft.js format)
+                body = _render_article_body(article)
                 return {
                     "id": article.get("rest_id", ""),
                     "title": article.get("title", ""),
                     "cover_image": cover_image,
-                    "has_content": bool(
-                        article.get("content_state")
-                        or article.get("plain_text")
-                        or article.get("preview_text")
-                    ),
+                    "body": body,
+                    "has_content": bool(body or article.get("preview_text")),
                 }
         except (TypeError, AttributeError):
             continue

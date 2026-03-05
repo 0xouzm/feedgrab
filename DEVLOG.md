@@ -4,7 +4,39 @@
 
 ---
 
-## 2026-03-04 · v0.6.1 · 元数据完整性优化
+## 2026-03-05 · v0.6.2 · Twitter Article GraphQL 原生渲染
+
+### 背景
+抓取 Twitter Article（长文）时，正文通过 Jina Reader 抓取 `/article/` 页面获得。但 Jina 的 Markdown 渲染器会丢掉 cashtag 链接（`$MODEL`、`$BASE_URL`）和 mention 链接（`@username`），导致保存的 Markdown 文件正文内容不完整。
+
+### 方案决策
+- **根因分析**：GraphQL API 的 `article.article_results.result.content_state` 已经包含完整的 Article 正文（Draft.js 富文本格式），之前未解析利用，错误地走了 Jina 抓取
+- **GraphQL 原生渲染**：新增 `_render_article_body()` 将 Draft.js `content_state.blocks` 直接渲染为 Markdown，支持段落、标题、有序/无序列表、代码块、图片、引用块
+- **零额外请求**：Article 正文数据随 TweetDetail GraphQL 请求一起返回，本地解析即可，不需要任何额外网络请求
+- **Jina 降级为 fallback**：仅在 Syndication tier（无 content_state）时才走 Jina 抓取
+- **Jina 空洞修补**：为 Jina fallback 路径新增 `_patch_jina_hollows()` — 检测 Markdown 中被丢掉的 cashtag/mention 空洞，用 Jina text 模式（`X-Return-Format: text`）修补
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增 `_render_article_body()` Draft.js → Markdown 渲染器；`_extract_article_ref()` 新增 `body` 字段 |
+| `feedgrab/fetchers/twitter.py` | 修改 | `_try_fetch_article_body()` 优先用 GraphQL body，Jina 降为 fallback |
+| `feedgrab/fetchers/jina.py` | 修改 | 新增 `fetch_via_jina_text()` 纯文本模式获取 |
+| `feedgrab/fetchers/twitter_bookmarks.py` | 修改 | 新增 `_detect_hollows()` 和 `_patch_jina_hollows()` 空洞检测修补 |
+
+### 验证结果
+- 测试推文：`xiangxiang103/status/2029137537621737817`（含 PowerShell 代码块、`$MODEL` cashtag、`@username` mention 的 Article）
+- `$MODEL`、`$BASE_URL`、`$API_KEY`：全部完整保留
+- `@LawrenceW_Zen`、`@innomad_io`：全部完整保留
+- 代码块（146 行 PowerShell）：格式正确
+- 5 张内嵌图片 + cover image：全部输出
+- 3 个 H2 标题 + 有序列表：格式正确
+- 零 Jina 网络请求，耗时显著减少
+
+### 状态：已完成 ✅
+
+---
 
 ### 背景
 保存的 Markdown 文件中，当 likes/bookmarks/replies 等指标值为 0 时会被省略，导致元数据缺失和"值为 0"无法区分，影响 Obsidian Dataview 查询准确性。

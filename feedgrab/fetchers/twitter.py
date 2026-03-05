@@ -28,8 +28,9 @@ SYNDICATION_URL = "https://cdn.syndication.twimg.com/tweet-result"
 
 
 def _try_fetch_article_body(data: Dict[str, Any], url: str, tier_label: str) -> None:
-    """Detect article stub and fetch full body via Jina (mutates data in-place).
+    """Detect article stub and fetch full body (mutates data in-place).
 
+    Priority: GraphQL content_state (complete, no network call) → Jina (fallback).
     Used by both Tier 0 (GraphQL) and Tier 0.5 (Syndication) to supplement
     article tweets whose text is just a t.co link.
     """
@@ -51,18 +52,30 @@ def _try_fetch_article_body(data: Dict[str, Any], url: str, tier_label: str) -> 
             "https://t.co/" in first_text or first_text.startswith("http")
         ) and len(first_without_urls) < 30
     is_article_stub = (has_article or text_is_stub) and not data.get("videos")
-    if is_article_stub:
-        logger.info(f"{tier_label} Article detected — fetching body via Jina")
-        from feedgrab.fetchers.twitter_bookmarks import _fetch_article_body
-        article_info = data.get("article_data") or {}
-        tweet_author = (data.get("author") or "").lstrip("@")
-        jina_content = _fetch_article_body(
-            url, article_info, tweet_author, tier_label
-        )
-        if jina_content:
-            data["text"] = jina_content
-            if data.get("thread_tweets"):
-                data["thread_tweets"][0]["text"] = jina_content
+    if not is_article_stub:
+        return
+
+    # Priority 1: GraphQL content_state body (already parsed, no extra network call)
+    article_body = article_data.get("body", "")
+    if article_body and len(article_body.strip()) > 200:
+        logger.info(f"{tier_label} Article detected — using GraphQL content_state body")
+        data["text"] = article_body
+        if data.get("thread_tweets"):
+            data["thread_tweets"][0]["text"] = article_body
+        return
+
+    # Priority 2: Jina Reader fallback (for Syndication tier or missing content_state)
+    logger.info(f"{tier_label} Article detected — fetching body via Jina")
+    from feedgrab.fetchers.twitter_bookmarks import _fetch_article_body
+    article_info = data.get("article_data") or {}
+    tweet_author = (data.get("author") or "").lstrip("@")
+    jina_content = _fetch_article_body(
+        url, article_info, tweet_author, tier_label
+    )
+    if jina_content:
+        data["text"] = jina_content
+        if data.get("thread_tweets"):
+            data["thread_tweets"][0]["text"] = jina_content
 
 # Sentence-ending punctuation for smart title truncation
 _SENTENCE_ENDS = set("。！？.!?")

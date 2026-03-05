@@ -180,6 +180,8 @@ def _fetch_article_body(
                         r'![image](\1)',
                         jina_content,
                     )
+                    # Fix hollows: Jina markdown drops cashtag/mention links
+                    jina_content = _patch_jina_hollows(jina_content, jina_url, log_prefix)
                     return jina_content
                 if attempt == 0:
                     logger.info(f"{log_prefix} Jina 内容过短，重试...")
@@ -193,6 +195,117 @@ def _fetch_article_body(
 
     logger.warning(f"{log_prefix} 文章正文获取失败，保留原始内容")
     return ""
+
+
+# Natural break punctuation at end of line (paragraph boundary, not hollow)
+_BREAK_END_CHARS = frozenset('.。！？!?：:）)】」》；;')
+# Natural break start chars for next line (heading, list, emoji etc.)
+_BREAK_START_CHARS = frozenset('#-*>•□■●◆◇▲△▼○①②③④⑤⑥⑦⑧⑨⑩')
+
+
+def _detect_hollows(md_content: str) -> bool:
+    """Quick check: does the markdown content have hollow patterns?
+
+    A hollow is where Jina dropped an inline link (cashtag/mention),
+    leaving a line that ends mid-sentence → empty line → continuation.
+    """
+    lines = md_content.split('\n')
+    in_code = False
+    for i in range(len(lines) - 2):
+        stripped = lines[i].strip()
+        if stripped.startswith('```'):
+            in_code = not in_code
+            continue
+        if in_code or not stripped:
+            continue
+        if (lines[i + 1].strip() == ''
+                and lines[i + 2].strip()
+                and stripped[-1] not in _BREAK_END_CHARS
+                and not stripped.endswith(('```', '---'))
+                and lines[i + 2].strip()[0] not in _BREAK_START_CHARS
+                and not lines[i + 2].strip()[0].isdigit()):
+            return True
+    return False
+
+
+def _patch_jina_hollows(md_content: str, jina_url: str, log_prefix: str) -> str:
+    """Fix Jina markdown hollows using text-mode content.
+
+    Jina's markdown renderer drops inline link-only elements (cashtags like
+    $MODEL, @mentions) from Twitter Articles. The text mode preserves all
+    visible text. This function detects hollow patterns in markdown and
+    patches them from the text-mode output.
+    """
+    if not _detect_hollows(md_content):
+        return md_content
+
+    from feedgrab.fetchers.jina import fetch_via_jina_text
+    text_content = fetch_via_jina_text(jina_url)
+    if not text_content:
+        return md_content
+
+    logger.info(f"{log_prefix} 检测到 Jina 内容缺失，正在用纯文本模式修补...")
+
+    # Flatten text content for searching (collapse whitespace)
+    text_flat = re.sub(r'\s+', ' ', text_content)
+
+    lines = md_content.split('\n')
+    result = []
+    in_code = False
+    i = 0
+
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if stripped.startswith('```'):
+            in_code = not in_code
+
+        if in_code or not stripped:
+            result.append(lines[i])
+            i += 1
+            continue
+
+        # Detect and collect a hollow chain:
+        # line_A → empty → line_B → empty → line_C ...
+        # where each transition looks like a broken sentence (not a natural break)
+        chain_lines = [stripped]
+        chain_original = [lines[i]]
+        j = i + 1
+        while j + 1 < len(lines) and lines[j].strip() == '' and lines[j + 1].strip():
+            next_stripped = lines[j + 1].strip()
+            cur_end = chain_lines[-1][-1]
+            is_natural = (
+                cur_end in _BREAK_END_CHARS
+                or chain_lines[-1].endswith(('```', '---'))
+                or next_stripped[0] in _BREAK_START_CHARS
+                or next_stripped[0].isdigit()
+            )
+            if is_natural:
+                break
+            chain_lines.append(next_stripped)
+            chain_original.append(lines[j + 1])
+            j += 2
+
+        if len(chain_lines) > 1:
+            # Try to find the complete text from text mode
+            anchor_before = chain_lines[0][-20:]
+            anchor_after = chain_lines[-1][:20:]
+
+            before_pos = text_flat.find(anchor_before)
+            if before_pos >= 0:
+                search_start = before_pos + len(anchor_before)
+                after_pos = text_flat.find(anchor_after, search_start)
+                if 0 <= after_pos - search_start < 200:
+                    missing = text_flat[search_start:after_pos]
+                    # Stitch: first chain line + missing + last chain line
+                    patched = chain_original[0].rstrip() + missing + chain_original[-1].lstrip()
+                    result.append(patched)
+                    i = j  # Skip past the chain
+                    continue
+
+        result.append(lines[i])
+        i += 1
+
+    return '\n'.join(result)
 
 
 # ---------------------------------------------------------------------------
