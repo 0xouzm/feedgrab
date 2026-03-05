@@ -1306,6 +1306,9 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
         if short_url and expanded_url and short_url in full_text:
             full_text = full_text.replace(short_url, expanded_url)
 
+    # Apply richtext_tags (bold/italic) from note_tweet to produce Markdown formatting
+    full_text = _apply_richtext_tags(full_text, note_tweet)
+
     # Extract media from extended_entities
     media_list = legacy.get("extended_entities", {}).get("media", [])
     images = []
@@ -1324,7 +1327,7 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
             # Also keep poster image
             images.append(media.get("media_url_https", ""))
 
-    # Extract quoted tweet
+    # Extract quoted tweet (full data: long text, media, metrics, t.co expansion)
     quoted_tweet = None
     quoted_status = result.get("quoted_status_result", {}).get("result", {})
     if quoted_status.get("__typename") == "TweetWithVisibilityResults":
@@ -1338,11 +1341,61 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
         )
         q_user_legacy = q_user.get("legacy", {})
         q_user_core = q_user.get("core", {})
+
+        # Use note_tweet for full text (avoids 280-char truncation)
+        q_note = (
+            quoted_status.get("note_tweet", {})
+            .get("note_tweet_results", {})
+            .get("result", {})
+        )
+        q_text = q_note.get("text") or q_legacy.get("full_text", "")
+
+        # Expand t.co URLs in quoted tweet
+        q_note_urls = q_note.get("entity_set", {}).get("urls", [])
+        q_legacy_urls = q_legacy.get("entities", {}).get("urls", [])
+        for q_url_ent in (q_note_urls or q_legacy_urls):
+            q_short = q_url_ent.get("url", "")
+            q_expanded = q_url_ent.get("expanded_url", "")
+            if q_short and q_expanded and q_short in q_text:
+                q_text = q_text.replace(q_short, q_expanded)
+
+        # Apply richtext_tags to quoted tweet text
+        q_text = _apply_richtext_tags(q_text, q_note)
+
+        # Extract media from quoted tweet
+        q_media_list = q_legacy.get("extended_entities", {}).get("media", [])
+        q_images = []
+        q_videos = []
+        for q_media in q_media_list:
+            q_mtype = q_media.get("type", "")
+            if q_mtype == "photo":
+                q_images.append(q_media.get("media_url_https", ""))
+            elif q_mtype in ("video", "animated_gif"):
+                q_variants = q_media.get("video_info", {}).get("variants", [])
+                q_mp4s = [v for v in q_variants if v.get("content_type") == "video/mp4"]
+                if q_mp4s:
+                    q_best = max(q_mp4s, key=lambda v: v.get("bitrate", 0))
+                    q_videos.append(q_best.get("url", ""))
+                q_images.append(q_media.get("media_url_https", ""))
+
+        # Remove trailing media t.co URL from text
+        for q_media in q_legacy.get("entities", {}).get("media", []):
+            q_short = q_media.get("url", "")
+            if q_short and q_short in q_text:
+                q_text = q_text.replace(q_short, "").strip()
+
+        q_screen_name = q_user_legacy.get("screen_name", "") or q_user_core.get("screen_name", "")
         quoted_tweet = {
             "id": q_legacy.get("id_str", ""),
-            "text": q_legacy.get("full_text", ""),
-            "author": q_user_legacy.get("screen_name", "") or q_user_core.get("screen_name", ""),
+            "text": q_text,
+            "author": q_screen_name,
             "author_name": q_user_legacy.get("name", "") or q_user_core.get("name", ""),
+            "images": q_images,
+            "videos": q_videos,
+            "likes": q_legacy.get("favorite_count", 0),
+            "retweets": q_legacy.get("retweet_count", 0),
+            "views": quoted_status.get("views", {}).get("count", "0"),
+            "url": f"https://x.com/{q_screen_name}/status/{q_legacy.get('id_str', '')}",
         }
 
     # Extract article reference if present
@@ -1375,6 +1428,16 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
         "replies": legacy.get("reply_count", 0),
         "bookmarks": legacy.get("bookmark_count", 0),
         "views": result.get("views", {}).get("count", "0"),
+        # New metadata fields
+        "quote_count": legacy.get("quote_count", 0),
+        "lang": legacy.get("lang", ""),
+        "source_app": _parse_source_app(result.get("source", "")),
+        "possibly_sensitive": legacy.get("possibly_sensitive", False),
+        # Author profile fields
+        "is_blue_verified": user_results.get("is_blue_verified", False),
+        "followers_count": user_legacy.get("followers_count", 0),
+        "statuses_count": user_legacy.get("statuses_count", 0),
+        "listed_count": user_legacy.get("listed_count", 0),
         # Keep raw result for article extraction in later PRs
         "_raw_result": result,
     }
@@ -1528,6 +1591,52 @@ def _extract_query_id(js_content: str, operation_name: str) -> Optional[str]:
             return match.group(1)
 
     return None
+
+
+def _apply_richtext_tags(text: str, note_tweet: dict) -> str:
+    """Apply richtext_tags (Bold/Italic) from note_tweet to produce Markdown formatting.
+
+    Tags are index-based on the original text. We process from end to start
+    to avoid index shifting when inserting markers.
+    """
+    tags = note_tweet.get("richtext", {}).get("richtext_tags", [])
+    if not tags or not text:
+        return text
+
+    # Sort by from_index descending so insertions don't shift earlier indices
+    sorted_tags = sorted(tags, key=lambda t: t.get("from_index", 0), reverse=True)
+    chars = list(text)
+
+    for tag in sorted_tags:
+        fr = tag.get("from_index", 0)
+        to = tag.get("to_index", 0)
+        types = tag.get("richtext_types", [])
+        if fr >= to or fr >= len(chars):
+            continue
+        to = min(to, len(chars))
+        if "Bold" in types and "Italic" in types:
+            chars.insert(to, "***")
+            chars.insert(fr, "***")
+        elif "Bold" in types:
+            chars.insert(to, "**")
+            chars.insert(fr, "**")
+        elif "Italic" in types:
+            chars.insert(to, "*")
+            chars.insert(fr, "*")
+
+    return "".join(chars)
+
+
+def _parse_source_app(source_html: str) -> str:
+    """Extract app name from tweet source HTML tag.
+
+    Input: '<a href="https://mobile.twitter.com" rel="nofollow">Twitter Web App</a>'
+    Output: 'Twitter Web App'
+    """
+    if not source_html:
+        return ""
+    m = re.search(r">([^<]+)<", source_html)
+    return m.group(1).strip() if m else ""
 
 
 def _render_article_body(article: dict) -> str:

@@ -4,6 +4,34 @@
 
 ---
 
+## 2026-03-05 · v0.7.0 · GraphQL 数据完整提取 + 引用推文增强 + 富文本标记
+
+### 背景
+系统分析 GraphQL 返回的完整数据后，发现大量有价值数据未被提取：1）引用推文只拿到截断的 280 字 `full_text`，丢失完整长文、图片、视频；2）note_tweet 的 `richtext_tags`（粗体/斜体标记）完全忽略；3）作者信息（粉丝数、蓝标认证、发推数等）和推文元数据（被引用次数、语言、发布客户端等）未保存到 front matter。
+
+### 方案决策
+- **引用推文完整提取**：从 `quoted_status_result` 中提取 `note_tweet.text`（完整长文不截断）、展开 t.co 链接、提取图片/视频/互动指标，渲染为完整 blockquote
+- **richtext_tags 转 Markdown**：`_apply_richtext_tags()` 将 Draft.js 索引式标记转换为 `**bold**`/`*italic*`，从末尾向前插入避免索引偏移
+- **新增 8 个 front matter 字段**：`quotes`、`is_blue_verified`、`followers_count`、`statuses_count`、`listed_count`、`lang`、`source_app`、`possibly_sensitive`
+- **title 净化**：`_clean_title()` 剥离 Markdown 格式标记，确保 title 是纯文本
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增 `_apply_richtext_tags()`、`_parse_source_app()`；`extract_tweet_data()` 增加 8 个新字段 + 引用推文完整提取（长文+媒体+指标+t.co展开+richtext） |
+| `feedgrab/fetchers/twitter.py` | 修改 | `_fetch_via_graphql()` 两个分支透传新字段；`_clean_title()` 剥离 `**` 标记 |
+| `feedgrab/schema.py` | 修改 | 新增 `_render_quoted_tweet()` 完整引用渲染（含图片/视频/URL）；`from_twitter()` extra 透传新字段 |
+| `feedgrab/utils/storage.py` | 修改 | front matter 输出 8 个新元数据字段 |
+
+### 验证结果
+- `@binghe/status/2003639692542247190`（21条线程）：`AI**漫剧创业**` 粗体正确渲染；title 纯文本无 `**`；front matter 含 `is_blue_verified: true`、`followers_count: 40173`、`quotes: 2` 等完整元数据
+- `@iBigQiang/status/2015088004109615266`（带引用推文）：引用推文完整长文+2张图片+t.co展开+作者URL全部到位；旧版仅一行截断文本
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-05 · v0.6.2 · Twitter Article GraphQL 原生渲染
 
 ### 背景

@@ -84,10 +84,13 @@ _SENTENCE_ENDS = set("。！？.!?")
 def _clean_title(text: str, max_len: int = 50) -> str:
     """Clean and smart-truncate text for use as a title.
 
+    - Strip Markdown formatting (bold/italic markers)
     - Strip newlines, tabs, control chars; collapse whitespace
     - If within max_len, return as-is
     - Otherwise prefer cutting at last sentence-ending punctuation
     """
+    # Strip Markdown bold/italic markers for clean title
+    text = re.sub(r'\*{1,3}', '', text)
     # Remove newlines, tabs, control chars; collapse whitespace
     text = re.sub(r'[\r\n\t]+', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -206,6 +209,15 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
             )),
             "author_replies": thread.get("author_replies", []),
             "comments": thread.get("comments", []),
+            # New metadata from root tweet
+            "quote_count": root.get("quote_count", 0),
+            "lang": root.get("lang", ""),
+            "source_app": root.get("source_app", ""),
+            "possibly_sensitive": root.get("possibly_sensitive", False),
+            "is_blue_verified": root.get("is_blue_verified", False),
+            "followers_count": root.get("followers_count", 0),
+            "statuses_count": root.get("statuses_count", 0),
+            "listed_count": root.get("listed_count", 0),
         }
 
     # Fallback: single tweet via TweetDetail
@@ -238,6 +250,15 @@ async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
                     "images": tweet_data.get("images", []),
                     "videos": tweet_data.get("videos", []),
                     "hashtags": tweet_data.get("hashtags", []),
+                    # New metadata
+                    "quote_count": tweet_data.get("quote_count", 0),
+                    "lang": tweet_data.get("lang", ""),
+                    "source_app": tweet_data.get("source_app", ""),
+                    "possibly_sensitive": tweet_data.get("possibly_sensitive", False),
+                    "is_blue_verified": tweet_data.get("is_blue_verified", False),
+                    "followers_count": tweet_data.get("followers_count", 0),
+                    "statuses_count": tweet_data.get("statuses_count", 0),
+                    "listed_count": tweet_data.get("listed_count", 0),
                 }
 
     raise RuntimeError("GraphQL returned no usable data")

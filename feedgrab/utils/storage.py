@@ -272,6 +272,21 @@ def _format_markdown(item: UnifiedContent) -> str:
         fm_lines.append(f"has_thread: {str(extra.get('has_thread', False)).lower()}")
         for metric in ("likes", "retweets", "replies", "bookmarks", "views"):
             fm_lines.append(f"{metric}: {extra.get(metric, 0)}")
+        # New: quote_count (被引用次数)
+        fm_lines.append(f"quotes: {extra.get('quote_count', 0)}")
+        # New: author profile metadata
+        if extra.get("is_blue_verified"):
+            fm_lines.append(f"is_blue_verified: true")
+        fm_lines.append(f"followers_count: {extra.get('followers_count', 0)}")
+        fm_lines.append(f"statuses_count: {extra.get('statuses_count', 0)}")
+        fm_lines.append(f"listed_count: {extra.get('listed_count', 0)}")
+        # New: tweet metadata
+        if extra.get("lang"):
+            fm_lines.append(f'lang: "{extra["lang"]}"')
+        if extra.get("source_app"):
+            fm_lines.append(f'source_app: "{extra["source_app"]}"')
+        if extra.get("possibly_sensitive"):
+            fm_lines.append(f"possibly_sensitive: true")
 
     # XHS metrics (always show, including 0)
     if is_xhs:

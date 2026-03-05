@@ -159,6 +159,36 @@ def from_bilibili(video: dict) -> UnifiedContent:
     )
 
 
+def _render_quoted_tweet(qt: dict) -> str:
+    """Render a quoted tweet as a Markdown blockquote with full content."""
+    if not qt or not qt.get("text"):
+        return ""
+    lines = []
+    author = qt.get("author", "")
+    author_name = qt.get("author_name", "")
+    qt_url = qt.get("url", "")
+    # Header line
+    if author_name:
+        lines.append(f"> **{author_name}** (@{author})")
+    else:
+        lines.append(f"> **@{author}**")
+    if qt_url:
+        lines.append(f"> {qt_url}")
+    lines.append(">")
+    # Text body
+    for line in qt["text"].split("\n"):
+        lines.append(f"> {line}")
+    # Images
+    for img in qt.get("images", []):
+        if img:
+            lines.append(f">\n> ![image]({img})")
+    # Videos
+    for vid in qt.get("videos", []):
+        if vid:
+            lines.append(f">\n> [▶ video]({vid})")
+    return "\n".join(lines)
+
+
 def from_twitter(data: dict) -> UnifiedContent:
     # If thread data is present, assemble rich content from all tweets
     tweets = data.get("thread_tweets", [])
@@ -211,10 +241,11 @@ def from_twitter(data: dict) -> UnifiedContent:
                 for video_url in t.get("videos", []):
                     if video_url:
                         part += f"\n\n[▶ video]({video_url})"
-                # Quoted tweet as blockquote
+                # Quoted tweet — full blockquote with media
                 qt = t.get("quoted_tweet")
-                if qt and qt.get("text"):
-                    part += f"\n\n> **@{qt.get('author', '')}**: {qt['text']}"
+                qt_block = _render_quoted_tweet(qt)
+                if qt_block:
+                    part += f"\n\n{qt_block}"
                 parts.append(part)
             content = "\n\n---\n\n".join(parts)
     else:
@@ -250,6 +281,15 @@ def from_twitter(data: dict) -> UnifiedContent:
             "quoted_tweets": data.get("quoted_tweets", []),
             "author_replies": data.get("author_replies", []),
             "comments": data.get("comments", []),
+            # New metadata
+            "quote_count": data.get("quote_count", 0),
+            "lang": data.get("lang", ""),
+            "source_app": data.get("source_app", ""),
+            "possibly_sensitive": data.get("possibly_sensitive", False),
+            "is_blue_verified": data.get("is_blue_verified", False),
+            "followers_count": data.get("followers_count", 0),
+            "statuses_count": data.get("statuses_count", 0),
+            "listed_count": data.get("listed_count", 0),
         },
     )
 
