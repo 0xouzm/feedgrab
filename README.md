@@ -150,7 +150,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | YouTube | Jina | yt-dlp 字幕 → Groq Whisper 兜底 |
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
-| 微信公众号 | Jina → Playwright | — |
+| 微信公众号 | Jina → Playwright（单篇）/ 搜狗搜索（关键词批量，`mpweixin-so`） | — |
 | 小红书 | Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
@@ -470,6 +470,9 @@ cp .env.example .env
 | `XHS_SEARCH_ENABLED` | 否 | 启用小红书搜索批量抓取（默认：`false`） |
 | `XHS_SEARCH_MAX_SCROLLS` | 否 | 搜索页最大滚动次数（默认：`30`） |
 | `XHS_SEARCH_DELAY` | 否 | 搜索笔记处理间隔秒数（默认：`3.0`） |
+| `MPWEIXIN_SOGOU_ENABLED` | 否 | 启用搜狗微信文章搜索（默认：`false`） |
+| `MPWEIXIN_SOGOU_MAX_RESULTS` | 否 | 每次搜索最大文章数（默认：`10`，最多 `100`） |
+| `MPWEIXIN_SOGOU_DELAY` | 否 | 文章处理间隔秒数（默认：`3.0`） |
 | `BROWSER_USER_AGENT` | 否 | 全局浏览器 UA（推荐 `feedgrab detect-ua` 自动检测） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |

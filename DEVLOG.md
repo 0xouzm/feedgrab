@@ -4,6 +4,46 @@
 
 ---
 
+## 2026-03-06 · v0.8.1 · 搜狗微信搜索增强（mpweixin 目录 + 配置开关 + 多页 + 富文本）
+
+### 背景
+v0.8.0 搜狗微信搜索功能上线后的实测反馈：
+1. 输出目录 `WeChat/search/` 不够明确（WeChat 易与个人微信混淆），需改为 `mpweixin/search_sogou/{keyword}/`
+2. 默认 10 篇太少，需要多页抓取支持和配置开关
+3. 正文通过 Jina/browser.py 通用链抓取时丢失所有格式（只有 `innerText` 纯文本），需要富文本 Markdown
+4. 搜索元数据（公众号名、日期、缩略图、摘要）未保存到 md 文件
+5. Sogou antispider 拦截 headless 浏览器和直接 HTTP 跳转
+
+### 方案决策
+- **目录重命名**：`WeChat/` → `mpweixin/`，搜索子目录 `search_sogou/{keyword}/`
+- **配置开关**：`MPWEIXIN_SOGOU_ENABLED`（默认 false）、`MPWEIXIN_SOGOU_MAX_RESULTS`（默认 10，上限 100）、`MPWEIXIN_SOGOU_DELAY`
+- **多页搜索**：`_sogou_search_multi()` 按需翻页（每页 10 条，搜狗最多约 10 页）
+- **反爬绕过**：headed 浏览器 + 先访问搜索页获取 Cookie → 从同 context 新标签页访问跳转链接
+- **富文本**：直接用已有浏览器实例提取 `#js_content` HTML，自定义 `_html_to_markdown()` 转换（h1-h4/bold/italic/img data-src/link/list/blockquote）
+- **元数据完整**：`from_wechat()` 新增 `extra` 传递 publish_date/thumbnail/summary/search_keyword → front matter + 正文开头封面图
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/wechat_search.py` | 重写 | 多页搜索 + 浏览器直提 HTML→Markdown + 反爬 Cookie 策略 |
+| `feedgrab/config.py` | 修改 | 新增 `mpweixin_sogou_*` 配置函数 |
+| `feedgrab/cli.py` | 修改 | 配置开关检查 + `--limit` 覆盖 |
+| `feedgrab/schema.py` | 修改 | `from_wechat()` 传递搜索元数据 + 封面图前置 |
+| `feedgrab/utils/storage.py` | 修改 | WeChat→mpweixin 目录 + front matter 元数据 + 文件名带公众号+日期 |
+| `.env.example` | 修改 | 新增 `MPWEIXIN_SOGOU_*` 配置项文档 |
+
+### 验证结果
+- `MPWEIXIN_SOGOU_ENABLED=true feedgrab mpweixin-so openclaw --limit 2` → 2/2 成功
+- 输出路径：`mpweixin/search_sogou/openclaw/人人都是产品经理_2026-02-17：OpenClaw 被 OpenAI 收购了。.md`
+- 富文本：**加粗**、*斜体*、`![image](mmbiz.qpic.cn/...)` 图片、段落分隔均正确
+- front matter：title/source/author/published/thumbnail/summary/search_keyword 完整
+- 未启用时：`feedgrab mpweixin-so xxx` 提示 "Set MPWEIXIN_SOGOU_ENABLED=true"
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-06 · v0.8.0 · FxTwitter Tier 0.3 兜底 + 搜狗微信搜索
 
 ### 背景

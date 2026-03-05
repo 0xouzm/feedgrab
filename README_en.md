@@ -141,7 +141,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | YouTube | Jina | yt-dlp subtitles → Groq Whisper fallback |
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
-| WeChat (微信公众号) | Jina → Playwright | — |
+| WeChat (微信公众号) | Jina → Playwright (single) / Sogou search (keyword batch, `mpweixin-so`) | — |
 | Xiaohongshu (小红书) | Jina → **Playwright deep fetch** (single + **author batch** + **search batch**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
@@ -451,6 +451,9 @@ cp .env.example .env
 | `XHS_SEARCH_ENABLED` | No | Enable XHS search batch fetch (default: `false`) |
 | `XHS_SEARCH_MAX_SCROLLS` | No | Max scroll iterations on search page (default: `30`) |
 | `XHS_SEARCH_DELAY` | No | Delay between search note fetches in seconds (default: `3.0`) |
+| `MPWEIXIN_SOGOU_ENABLED` | No | Enable Sogou WeChat article search (default: `false`) |
+| `MPWEIXIN_SOGOU_MAX_RESULTS` | No | Max articles per search (default: `10`, max `100`) |
+| `MPWEIXIN_SOGOU_DELAY` | No | Delay between article fetches in seconds (default: `3.0`) |
 | `BROWSER_USER_AGENT` | No | Global browser UA (recommend `feedgrab detect-ua` for auto-detection) |
 | `TG_API_ID` | Telegram only | From https://my.telegram.org |
 | `TG_API_HASH` | Telegram only | From https://my.telegram.org |
