@@ -3,29 +3,35 @@
 Sogou WeChat article search — search WeChat public account articles by keyword.
 
 Uses Sogou's WeChat search (weixin.sogou.com) to discover articles,
-then fetches each article's full content via the existing wechat.py fetcher.
+then fetches each article's full content via browser and converts to Markdown.
 
 Provides:
-    - feedgrab mpweixin-so <keyword>          (search and fetch articles)
+    - feedgrab mpweixin-so <keyword>
 
 Data available from Sogou search results:
     - title, summary, author (公众号名), publish_time, thumbnail
     - NOT available: read count, likes, comments (WeChat internal only)
+
+Sogou pagination: 10 results per page, up to ~10 pages (100 results).
 """
 
+import math
 import re
 import time
 import urllib.request
 import urllib.error
 import urllib.parse
 from datetime import datetime
-from pathlib import Path
 from loguru import logger
 from typing import Dict, Any, List, Optional
 
 
-def _sogou_search(keyword: str, page: int = 1, max_results: int = 10) -> List[Dict[str, Any]]:
-    """Search WeChat articles via Sogou.
+# ---------------------------------------------------------------------------
+# Sogou search (HTTP)
+# ---------------------------------------------------------------------------
+
+def _sogou_search(keyword: str, page: int = 1) -> List[Dict[str, Any]]:
+    """Search WeChat articles via Sogou (one page, 10 results max).
 
     Returns list of dicts with: title, summary, author, timestamp, sogou_url, thumbnail.
     """
@@ -52,61 +58,68 @@ def _sogou_search(keyword: str, page: int = 1, max_results: int = 10) -> List[Di
         with urllib.request.urlopen(req, timeout=15) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except Exception as e:
-        logger.warning(f"[WeChat-Search] Sogou request failed: {e}")
+        logger.warning(f"[mpweixin-so] Sogou request failed (page {page}): {e}")
         return []
 
-    # Check for anti-bot page
     if "antispider" in html.lower() or "用户您好" in html:
-        logger.warning("[WeChat-Search] Sogou triggered anti-bot verification")
+        logger.warning("[mpweixin-so] Sogou triggered anti-bot verification")
         return []
 
-    return _parse_sogou_results(html, max_results)
+    return _parse_sogou_results(html)
 
 
-def _parse_sogou_results(html: str, max_results: int = 10) -> List[Dict[str, Any]]:
-    """Parse Sogou WeChat search results from HTML."""
+def _sogou_search_multi(keyword: str, max_results: int = 10) -> List[Dict[str, Any]]:
+    """Fetch multiple pages from Sogou to reach max_results."""
+    pages_needed = math.ceil(max_results / 10)
+    all_results: List[Dict[str, Any]] = []
+
+    for page_num in range(1, pages_needed + 1):
+        if len(all_results) >= max_results:
+            break
+        logger.info(f"[mpweixin-so] Fetching search page {page_num}/{pages_needed}")
+        page_results = _sogou_search(keyword, page=page_num)
+        if not page_results:
+            break
+        all_results.extend(page_results)
+        if page_num < pages_needed:
+            time.sleep(1.5)  # Rate limit between pages
+
+    return all_results[:max_results]
+
+
+def _parse_sogou_results(html: str) -> List[Dict[str, Any]]:
+    """Parse Sogou WeChat search results from HTML (single page)."""
     results = []
 
-    # Find all <li> blocks in the news-list
     li_blocks = re.findall(
         r'<li\s+id="sogou_vr_\d+_box_\d+"[^>]*>(.*?)</li>',
         html,
         re.DOTALL,
     )
 
-    for block in li_blocks[:max_results]:
+    for block in li_blocks:
         item = {}
 
-        # Title: <h3><a ...>title text</a></h3>
-        title_m = re.search(
-            r'<h3>\s*<a[^>]*>(.*?)</a>\s*</h3>',
-            block,
-            re.DOTALL,
-        )
+        # Title
+        title_m = re.search(r'<h3>\s*<a[^>]*>(.*?)</a>\s*</h3>', block, re.DOTALL)
         if title_m:
             title = title_m.group(1)
-            # Clean HTML tags and entities
             title = re.sub(r'<[^>]+>', '', title)
             title = re.sub(r'<!--.*?-->', '', title)
             title = title.replace("&ldquo;", "\u201c").replace("&rdquo;", "\u201d")
             title = title.replace("&mdash;", "\u2014").replace("&amp;", "&")
             item["title"] = title.strip()
 
-        # Sogou redirect URL (from the title link)
+        # Sogou redirect URL
         url_m = re.search(r'<h3>\s*<a[^>]*href="([^"]+)"', block)
         if url_m:
             sogou_url = url_m.group(1)
-            # Make absolute if relative
             if sogou_url.startswith("/"):
                 sogou_url = f"https://weixin.sogou.com{sogou_url}"
             item["sogou_url"] = sogou_url
 
-        # Summary: <p class="txt-info" ...>text</p>
-        summary_m = re.search(
-            r'<p\s+class="txt-info"[^>]*>(.*?)</p>',
-            block,
-            re.DOTALL,
-        )
+        # Summary
+        summary_m = re.search(r'<p\s+class="txt-info"[^>]*>(.*?)</p>', block, re.DOTALL)
         if summary_m:
             summary = summary_m.group(1)
             summary = re.sub(r'<[^>]+>', '', summary)
@@ -115,26 +128,20 @@ def _parse_sogou_results(html: str, max_results: int = 10) -> List[Dict[str, Any
             summary = summary.replace("&mdash;", "\u2014").replace("&amp;", "&")
             item["summary"] = summary.strip()
 
-        # Author (公众号名): <span class="all-time-y2">name</span>
-        author_m = re.search(
-            r'<span\s+class="all-time-y2">(.*?)</span>',
-            block,
-        )
+        # Author (公众号名)
+        author_m = re.search(r'<span\s+class="all-time-y2">(.*?)</span>', block)
         if author_m:
             item["author"] = author_m.group(1).strip()
 
-        # Publish timestamp: timeConvert('1234567890')
+        # Publish timestamp
         time_m = re.search(r"timeConvert\('(\d+)'\)", block)
         if time_m:
             ts = int(time_m.group(1))
             item["timestamp"] = ts
             item["publish_date"] = datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
 
-        # Thumbnail: <img src="...">
-        thumb_m = re.search(
-            r'<img\s+src="(//img01\.sogoucdn\.com[^"]+)"',
-            block,
-        )
+        # Thumbnail
+        thumb_m = re.search(r'<img\s+src="(//img01\.sogoucdn\.com[^"]+)"', block)
         if thumb_m:
             item["thumbnail"] = f"https:{thumb_m.group(1)}"
 
@@ -144,65 +151,236 @@ def _parse_sogou_results(html: str, max_results: int = 10) -> List[Dict[str, Any
     return results
 
 
-async def _resolve_sogou_redirect(page, sogou_url: str) -> Optional[str]:
-    """Follow Sogou redirect via an existing Playwright page to get the real URL.
+# ---------------------------------------------------------------------------
+# Sogou redirect resolution (browser)
+# ---------------------------------------------------------------------------
 
-    Reuses a shared page instance (which already visited the search page,
-    so the context has proper Sogou cookies and referer).
-    Returns the final WeChat URL or None if resolution fails.
+async def _resolve_sogou_redirect(page, sogou_url: str) -> Optional[str]:
+    """Follow Sogou redirect via a new tab in the existing browser context.
+
+    The context already has Sogou cookies from visiting the search page.
     """
     try:
-        # Open redirect in a new tab to preserve search page state
         new_page = await page.context.new_page()
         try:
             await new_page.goto(sogou_url, wait_until="domcontentloaded", timeout=20000)
-            # Wait for redirect chain to complete
             await new_page.wait_for_timeout(4000)
             final_url = new_page.url
 
             if "mp.weixin.qq.com" in final_url:
-                logger.debug(f"[WeChat-Search] Redirect resolved via URL: {final_url[:80]}")
+                logger.debug(f"[mpweixin-so] Redirect resolved: {final_url[:80]}")
                 return final_url
 
-            # Check for antispider — try to solve it by waiting longer
             if "antispider" in final_url:
-                logger.debug("[WeChat-Search] Hit antispider, waiting for manual/auto resolve...")
+                logger.debug("[mpweixin-so] Hit antispider, waiting...")
                 try:
                     await new_page.wait_for_url("**/mp.weixin.qq.com/**", timeout=10000)
                     final_url = new_page.url
                     if "mp.weixin.qq.com" in final_url:
-                        logger.debug(f"[WeChat-Search] Antispider resolved: {final_url[:80]}")
                         return final_url
                 except Exception:
                     pass
 
-            # Try extracting from page content (JS redirect may embed the URL)
             content = await new_page.content()
             wx_m = re.search(r'(https?://mp\.weixin\.qq\.com/s[^\s"\'<>]+)', content)
             if wx_m:
-                resolved = wx_m.group(1)
-                logger.debug(f"[WeChat-Search] Redirect resolved via content: {resolved[:80]}")
-                return resolved
+                return wx_m.group(1)
 
-            logger.debug(f"[WeChat-Search] Redirect landed on: {final_url[:80]}")
+            logger.debug(f"[mpweixin-so] Redirect landed on: {final_url[:80]}")
         finally:
             await new_page.close()
     except Exception as e:
-        logger.debug(f"[WeChat-Search] Browser redirect failed: {e}")
+        logger.debug(f"[mpweixin-so] Browser redirect failed: {e}")
 
     return None
 
 
-def _save_search_item(item: Dict[str, Any], keyword: str):
-    """Save a search result item as Markdown even without full article content.
+# ---------------------------------------------------------------------------
+# WeChat article HTML → Markdown conversion
+# ---------------------------------------------------------------------------
 
-    Uses search metadata (title, summary, author, publish_date, thumbnail)
-    to create a minimal but informative document.
+_WECHAT_EXTRACT_JS = """
+() => {
+    const content = document.querySelector('#js_content');
+    if (!content) return null;
+
+    const title = (document.querySelector('#activity-name') || {}).innerText || '';
+    const author = (document.querySelector('#js_name') || {}).innerText || '';
+
+    // Extract rich content as simplified HTML
+    const html = content.innerHTML;
+    return { title: title.trim(), author: author.trim(), html: html };
+}
+"""
+
+
+def _html_to_markdown(html: str) -> str:
+    """Convert WeChat article HTML to Markdown.
+
+    Handles: headings, paragraphs, bold, italic, images, links, lists, blockquotes.
     """
+    if not html:
+        return ""
+
+    text = html
+
+    # Remove script/style
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+
+    # Headings (h1-h4)
+    for level in range(1, 5):
+        tag = f'h{level}'
+        prefix = '#' * level
+        text = re.sub(
+            rf'<{tag}[^>]*>(.*?)</{tag}>',
+            lambda m, p=prefix: f'\n\n{p} {_strip_tags(m.group(1)).strip()}\n\n',
+            text, flags=re.DOTALL | re.IGNORECASE,
+        )
+
+    # Blockquote
+    text = re.sub(
+        r'<blockquote[^>]*>(.*?)</blockquote>',
+        lambda m: '\n' + '\n'.join(f'> {line}' for line in _strip_tags(m.group(1)).strip().split('\n') if line.strip()) + '\n',
+        text, flags=re.DOTALL | re.IGNORECASE,
+    )
+
+    # Bold: <strong>, <b>
+    text = re.sub(r'<(?:strong|b)[^>]*>(.*?)</(?:strong|b)>', r'**\1**', text, flags=re.DOTALL | re.IGNORECASE)
+    # Italic: <em>, <i>
+    text = re.sub(r'<(?:em|i)[^>]*>(.*?)</(?:em|i)>', r'*\1*', text, flags=re.DOTALL | re.IGNORECASE)
+
+    # Images: data-src (lazy) or src
+    def _img_replace(m):
+        attrs = m.group(1)
+        # WeChat uses data-src for lazy loading
+        src_m = re.search(r'data-src="([^"]+)"', attrs)
+        if not src_m:
+            src_m = re.search(r'src="([^"]+)"', attrs)
+        if not src_m:
+            return ''
+        src = src_m.group(1)
+        # Skip tiny tracking pixels and SVG icons
+        if 'wx_fmt=svg' in src or 'data:image' in src:
+            return ''
+        width_m = re.search(r'data-w="(\d+)"', attrs)
+        if width_m and int(width_m.group(1)) < 20:
+            return ''
+        return f'\n\n![image]({src})\n\n'
+
+    text = re.sub(r'<img([^>]*)/?>', _img_replace, text, flags=re.IGNORECASE)
+
+    # Links
+    text = re.sub(
+        r'<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>',
+        lambda m: f'[{_strip_tags(m.group(2)).strip()}]({m.group(1)})' if m.group(1) and not m.group(1).startswith('javascript:') else _strip_tags(m.group(2)),
+        text, flags=re.DOTALL | re.IGNORECASE,
+    )
+
+    # List items
+    text = re.sub(r'<li[^>]*>(.*?)</li>', lambda m: f'\n- {_strip_tags(m.group(1)).strip()}', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'</?[ou]l[^>]*>', '', text, flags=re.IGNORECASE)
+
+    # Horizontal rules
+    text = re.sub(r'<hr[^>]*/?>','\n\n---\n\n', text, flags=re.IGNORECASE)
+
+    # Line breaks
+    text = re.sub(r'<br\s*/?>','\n', text, flags=re.IGNORECASE)
+
+    # Paragraphs and sections → double newline
+    text = re.sub(r'<(?:p|section|div)[^>]*>', '\n\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</(?:p|section|div)>', '', text, flags=re.IGNORECASE)
+
+    # Strip remaining HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+
+    # Decode HTML entities
+    text = text.replace('&nbsp;', ' ')
+    text = text.replace('&amp;', '&')
+    text = text.replace('&lt;', '<')
+    text = text.replace('&gt;', '>')
+    text = text.replace('&quot;', '"')
+    text = text.replace('&#39;', "'")
+    text = text.replace('&ldquo;', '\u201c')
+    text = text.replace('&rdquo;', '\u201d')
+    text = text.replace('&mdash;', '\u2014')
+    text = text.replace('&ndash;', '\u2013')
+    text = text.replace('&hellip;', '\u2026')
+
+    # Clean up whitespace
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = text.strip()
+
+    return text
+
+
+def _strip_tags(html: str) -> str:
+    """Remove all HTML tags from a string."""
+    return re.sub(r'<[^>]+>', '', html)
+
+
+async def _fetch_wechat_article_via_browser(context, wx_url: str) -> Dict[str, Any]:
+    """Fetch WeChat article content using the shared browser context.
+
+    Extracts rich HTML from #js_content and converts to Markdown.
+    Returns dict with: title, content, author, url.
+    """
+    new_page = await context.new_page()
+    try:
+        await new_page.goto(wx_url, wait_until="domcontentloaded", timeout=20000)
+        await new_page.wait_for_timeout(2000)
+
+        data = await new_page.evaluate(_WECHAT_EXTRACT_JS)
+        if not data:
+            # Fallback: grab raw text
+            text = await new_page.evaluate("() => document.body.innerText")
+            page_title = await new_page.title()
+            return {
+                "title": page_title or "",
+                "content": (text or "").strip(),
+                "author": "",
+                "url": wx_url,
+            }
+
+        md_content = _html_to_markdown(data.get("html", ""))
+        return {
+            "title": data.get("title", ""),
+            "content": md_content,
+            "author": data.get("author", ""),
+            "url": wx_url,
+        }
+    finally:
+        await new_page.close()
+
+
+# ---------------------------------------------------------------------------
+# Save helpers
+# ---------------------------------------------------------------------------
+
+def _save_article(article_data: Dict[str, Any], item: Dict[str, Any], keyword: str):
+    """Save a WeChat article as Markdown with full metadata."""
     from feedgrab.schema import from_wechat
     from feedgrab.utils.storage import save_to_markdown
 
-    # Build a pseudo article_data from search metadata
+    # Enrich with search metadata
+    if item.get("author"):
+        article_data["author"] = item["author"]
+    if item.get("publish_date"):
+        article_data["publish_date"] = item["publish_date"]
+    if item.get("thumbnail"):
+        article_data["thumbnail"] = item["thumbnail"]
+    if item.get("summary"):
+        article_data["summary"] = item["summary"]
+    article_data["search_keyword"] = keyword
+
+    content = from_wechat(article_data)
+    content.category = f"search_sogou/{keyword}"
+    save_to_markdown(content)
+
+
+def _save_search_item(item: Dict[str, Any], keyword: str):
+    """Save search metadata only (when full content fetch fails)."""
     article_data = {
         "title": item.get("title", ""),
         "author": item.get("author", ""),
@@ -213,12 +391,13 @@ def _save_search_item(item: Dict[str, Any], keyword: str):
         "summary": item.get("summary", ""),
         "search_keyword": keyword,
     }
+    _save_article(article_data, item, keyword)
+    logger.info(f"[mpweixin-so] Saved (metadata only): {item.get('title', '')[:50]}")
 
-    content = from_wechat(article_data)
-    content.category = "search"
-    save_to_markdown(content)
-    logger.info(f"[WeChat-Search] Saved (metadata only): {item.get('title', '')[:50]}")
 
+# ---------------------------------------------------------------------------
+# Main search + fetch pipeline
+# ---------------------------------------------------------------------------
 
 async def search_wechat_articles(
     keyword: str,
@@ -226,11 +405,11 @@ async def search_wechat_articles(
     fetch_content: bool = True,
     delay: float = 3.0,
 ) -> Dict[str, Any]:
-    """Search and optionally fetch WeChat articles.
+    """Search and fetch WeChat articles via Sogou.
 
     Args:
         keyword: Search keyword
-        max_results: Maximum number of results
+        max_results: Maximum number of results (up to 100, 10 per Sogou page)
         fetch_content: Whether to fetch full article content
         delay: Delay between fetching each article (seconds)
 
@@ -239,11 +418,11 @@ async def search_wechat_articles(
     """
     from feedgrab.utils.dedup import load_index, save_index, has_item, add_item, item_id_from_url
 
-    logger.info(f"[WeChat-Search] Searching: {keyword}")
-    results = _sogou_search(keyword, max_results=max_results)
+    logger.info(f"[mpweixin-so] Searching: {keyword} (max {max_results})")
+    results = _sogou_search_multi(keyword, max_results=max_results)
 
     if not results:
-        logger.warning("[WeChat-Search] No results found")
+        logger.warning("[mpweixin-so] No results found")
         return {
             "keyword": keyword,
             "total": 0,
@@ -253,7 +432,7 @@ async def search_wechat_articles(
             "articles": [],
         }
 
-    logger.info(f"[WeChat-Search] Found {len(results)} results")
+    logger.info(f"[mpweixin-so] Found {len(results)} results")
 
     if not fetch_content:
         return {
@@ -265,7 +444,7 @@ async def search_wechat_articles(
             "articles": results,
         }
 
-    # Launch ONE shared browser for all redirect resolutions
+    # Launch ONE shared browser for redirect resolution + article fetching
     browser = None
     context = None
     page = None
@@ -283,20 +462,18 @@ async def search_wechat_articles(
         context = await browser.new_context(user_agent=get_user_agent())
         page = await context.new_page()
 
-        # Navigate to the search page first to establish Sogou cookies
-        # This is critical: redirect links only work with proper cookies/referer
+        # Visit search page to acquire Sogou cookies (required for redirect links)
         encoded = urllib.parse.quote(keyword)
         search_url = f"https://weixin.sogou.com/weixin?type=2&query={encoded}&ie=utf8&page=1"
         await page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
         await page.wait_for_timeout(2000)
-        logger.info("[WeChat-Search] Browser launched, search page cookies acquired")
+        logger.info("[mpweixin-so] Browser ready, Sogou cookies acquired")
     except ImportError:
-        logger.warning("[WeChat-Search] Playwright not installed, will save metadata only")
+        logger.warning("[mpweixin-so] Playwright not installed, will save metadata only")
     except Exception as e:
-        logger.warning(f"[WeChat-Search] Browser launch failed: {e}, will save metadata only")
+        logger.warning(f"[mpweixin-so] Browser launch failed: {e}, will save metadata only")
 
-    # Load dedup index
-    index = load_index(platform="WeChat")
+    index = load_index(platform="mpweixin")
     fetched = 0
     skipped = 0
     failed = 0
@@ -306,9 +483,9 @@ async def search_wechat_articles(
         title = item.get("title", "untitled")
         sogou_url = item.get("sogou_url", "")
 
-        logger.info(f"[WeChat-Search] [{i+1}/{len(results)}] {title[:50]}")
+        logger.info(f"[mpweixin-so] [{i+1}/{len(results)}] {title[:50]}")
 
-        # Resolve Sogou redirect to get real WeChat URL
+        # Resolve Sogou redirect → real mp.weixin.qq.com URL
         wx_url = None
         if page:
             wx_url = await _resolve_sogou_redirect(page, sogou_url)
@@ -316,60 +493,36 @@ async def search_wechat_articles(
         if wx_url:
             item["wechat_url"] = wx_url
 
-            # Dedup check
             item_id = item_id_from_url(wx_url)
             if has_item(item_id, index):
-                logger.info(f"[WeChat-Search] Already fetched, skipping: {title[:40]}")
+                logger.info(f"[mpweixin-so] Already fetched, skipping: {title[:40]}")
                 skipped += 1
                 continue
 
-            # Fetch full article content
+            # Fetch full article directly via our browser (rich Markdown)
             try:
-                from feedgrab.fetchers.wechat import fetch_wechat
-                from feedgrab.schema import from_wechat
-                from feedgrab.utils.storage import save_to_markdown
+                article_data = await _fetch_wechat_article_via_browser(context, wx_url)
+                _save_article(article_data, item, keyword)
 
-                article_data = await fetch_wechat(wx_url)
-                # Enrich with search metadata
-                if item.get("author"):
-                    article_data["author"] = item["author"]
-                if item.get("publish_date"):
-                    article_data["publish_date"] = item["publish_date"]
-                if item.get("thumbnail"):
-                    article_data["thumbnail"] = item["thumbnail"]
-                if item.get("summary"):
-                    article_data["summary"] = item["summary"]
-                article_data["search_keyword"] = keyword
-
-                content = from_wechat(article_data)
-                content.category = "search"
-                save_to_markdown(content)
-
-                # Register in dedup index
                 add_item(item_id, wx_url, index)
-
                 articles.append(item)
                 fetched += 1
-                logger.info(f"[WeChat-Search] Saved: {title[:50]}")
-
+                logger.info(f"[mpweixin-so] Saved: {title[:50]}")
             except Exception as e:
-                logger.warning(f"[WeChat-Search] Fetch failed: {title[:40]} — {e}")
-                # Save search metadata as fallback
+                logger.warning(f"[mpweixin-so] Fetch failed: {title[:40]} — {e}")
                 _save_search_item(item, keyword)
                 articles.append(item)
                 failed += 1
         else:
-            logger.warning(f"[WeChat-Search] Could not resolve URL for: {title[:40]}")
-            # Save search metadata even without full content
+            logger.warning(f"[mpweixin-so] Could not resolve URL for: {title[:40]}")
             _save_search_item(item, keyword)
             articles.append(item)
             failed += 1
 
-        # Rate limit
         if i < len(results) - 1:
             time.sleep(delay)
 
-    # Cleanup browser
+    # Cleanup
     if context:
         await context.close()
     if browser:
@@ -377,8 +530,7 @@ async def search_wechat_articles(
     if pw:
         await pw.stop()
 
-    # Save dedup index
-    save_index(index, platform="WeChat")
+    save_index(index, platform="mpweixin")
 
     return {
         "keyword": keyword,

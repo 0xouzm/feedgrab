@@ -310,6 +310,32 @@ def xhs_search_delay() -> float:
 
 
 # ---------------------------------------------------------------------------
+# WeChat Sogou search (mpweixin-so)
+# ---------------------------------------------------------------------------
+
+def mpweixin_sogou_enabled() -> bool:
+    """Whether Sogou WeChat article search is enabled."""
+    return os.getenv("MPWEIXIN_SOGOU_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def mpweixin_sogou_max_results() -> int:
+    """Maximum articles per search (default 10, max ~100, 10 per page)."""
+    try:
+        val = int(os.getenv("MPWEIXIN_SOGOU_MAX_RESULTS", "10"))
+        return min(val, 100)  # Sogou caps at ~10 pages
+    except ValueError:
+        return 10
+
+
+def mpweixin_sogou_delay() -> float:
+    """Delay in seconds between fetching each article (default 3.0)."""
+    try:
+        return float(os.getenv("MPWEIXIN_SOGOU_DELAY", "3.0"))
+    except ValueError:
+        return 3.0
+
+
+# ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------
 

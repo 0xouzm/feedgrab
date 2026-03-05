@@ -102,7 +102,7 @@ PLATFORM_FOLDER_MAP = {
     SourceType.TWITTER: "X",
     SourceType.XIAOHONGSHU: "XHS",
     SourceType.BILIBILI: "Bilibili",
-    SourceType.WECHAT: "WeChat",
+    SourceType.WECHAT: "mpweixin",
     SourceType.YOUTUBE: "YouTube",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",

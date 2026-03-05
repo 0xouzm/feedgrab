@@ -658,13 +658,25 @@ def cmd_setup():
     print()
 
 
-def cmd_wechat_search(keyword: str, max_results: int = 10):
+def cmd_wechat_search(keyword: str, max_results: int = 0):
     """Search WeChat articles by keyword via Sogou."""
+    from feedgrab.config import mpweixin_sogou_enabled, mpweixin_sogou_max_results, mpweixin_sogou_delay
+
+    if not mpweixin_sogou_enabled():
+        print("\u274c Sogou WeChat search is disabled.")
+        print("   Set MPWEIXIN_SOGOU_ENABLED=true in .env to enable.")
+        return
+
+    # Use config default if not specified via --limit
+    if max_results <= 0:
+        max_results = mpweixin_sogou_max_results()
+    delay = mpweixin_sogou_delay()
+
     from feedgrab.fetchers.wechat_search import search_wechat_articles
 
     async def run():
         result = await search_wechat_articles(
-            keyword, max_results=max_results, fetch_content=True
+            keyword, max_results=max_results, fetch_content=True, delay=delay
         )
         print(f"\n\u2705 WeChat search complete: '{keyword}'")
         print(f"   Found: {result['total']}, Fetched: {result['fetched']}, "
@@ -681,6 +693,8 @@ def cmd_wechat_search(keyword: str, max_results: int = 10):
         asyncio.run(run())
     except KeyboardInterrupt:
         print("\n\u23f9 Cancelled")
+    except SystemExit:
+        raise
     except Exception as e:
         print(f"\u274c {e}")
         sys.exit(1)
@@ -751,7 +765,7 @@ Examples:
             print('   Example: feedgrab mpweixin-so "AI Agent"')
             sys.exit(1)
         keyword = sys.argv[2]
-        limit = 10
+        limit = 0  # 0 means use config default
         if "--limit" in sys.argv:
             idx = sys.argv.index("--limit")
             if idx + 1 < len(sys.argv):
