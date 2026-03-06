@@ -16,6 +16,159 @@ from feedgrab.config import get_session_dir, get_user_agent
 SESSION_DIR = get_session_dir()
 TIMEOUT_MS = 30_000
 
+
+# ---------------------------------------------------------------------------
+# Stealth browser engine: patchright (Tier 1) → playwright (Tier 3)
+#
+# patchright patches Chromium's CDP layer to remove automation detection
+# (navigator.webdriver, Runtime.enable) at the protocol level — no JS hacks.
+# Falls back to standard playwright if patchright is not installed.
+# Adapted from: https://github.com/D4Vinci/Scrapling
+# ---------------------------------------------------------------------------
+
+_async_pw = None   # cached async_playwright function
+_pw_engine = ""    # "patchright" or "playwright"
+
+
+def get_async_playwright():
+    """Return async_playwright: patchright (Tier 1) → playwright (Tier 3)."""
+    global _async_pw, _pw_engine
+    if _async_pw is not None:
+        return _async_pw
+    try:
+        from patchright.async_api import async_playwright
+        _async_pw, _pw_engine = async_playwright, "patchright"
+        return _async_pw
+    except ImportError:
+        pass
+    try:
+        from playwright.async_api import async_playwright
+        _async_pw, _pw_engine = async_playwright, "playwright"
+        return _async_pw
+    except ImportError:
+        raise RuntimeError(
+            "Neither patchright nor playwright is installed. Run:\n"
+            "  pip install patchright && patchright install chromium\n"
+            "OR:\n"
+            "  pip install playwright && playwright install chromium"
+        )
+
+
+def get_stealth_engine_name() -> str:
+    """Return active engine name ('patchright' or 'playwright')."""
+    if not _pw_engine:
+        get_async_playwright()
+    return _pw_engine
+
+
+# Chrome launch flags for anti-detection (adapted from Scrapling)
+STEALTH_LAUNCH_ARGS = [
+    # Core anti-detection
+    "--disable-blink-features=AutomationControlled",
+    "--test-type",
+    # Performance & noise reduction
+    "--no-pings",
+    "--no-first-run",
+    "--disable-infobars",
+    "--disable-breakpad",
+    "--no-service-autorun",
+    "--password-store=basic",
+    "--disable-hang-monitor",
+    "--no-default-browser-check",
+    "--disable-session-crashed-bubble",
+    "--disable-search-engine-choice-screen",
+    # Stealth fingerprint
+    "--mute-audio",
+    "--disable-sync",
+    "--hide-scrollbars",
+    "--disable-logging",
+    "--start-maximized",
+    "--enable-async-dns",
+    "--use-mock-keychain",
+    "--disable-translate",
+    "--disable-voice-input",
+    "--disable-wake-on-wifi",
+    "--ignore-gpu-blocklist",
+    "--enable-tcp-fast-open",
+    "--disable-cloud-import",
+    "--disable-print-preview",
+    "--disable-dev-shm-usage",
+    "--metrics-recording-only",
+    "--disable-crash-reporter",
+    "--disable-partial-raster",
+    "--disable-gesture-typing",
+    "--disable-prompt-on-repost",
+    "--force-color-profile=srgb",
+    "--font-render-hinting=none",
+    "--aggressive-cache-discard",
+    "--disable-cookie-encryption",
+    "--disable-domain-reliability",
+    "--disable-threaded-animation",
+    "--disable-threaded-scrolling",
+    "--enable-simple-cache-backend",
+    "--disable-background-networking",
+    "--enable-surface-synchronization",
+    "--disable-renderer-backgrounding",
+    "--disable-ipc-flooding-protection",
+    "--safebrowsing-disable-auto-update",
+    "--disable-background-timer-throttling",
+    "--disable-client-side-phishing-detection",
+    "--disable-backgrounding-occluded-windows",
+    "--autoplay-policy=user-gesture-required",
+    "--enable-features=NetworkService,NetworkServiceInProcess",
+    "--disable-features=AudioServiceOutOfProcess,TranslateUI,"
+    "BlinkGenPropertyTrees",
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,"
+    "primaryPointerType=4,availablePointerTypes=4",
+]
+
+# Playwright adds these by default — they expose automation fingerprints
+HARMFUL_DEFAULT_ARGS = [
+    "--enable-automation",
+    "--disable-popup-blocking",
+    "--disable-component-update",
+    "--disable-default-apps",
+    "--disable-extensions",
+]
+
+
+async def stealth_launch(p, *, headless=True):
+    """Launch Chromium with full stealth anti-detection settings.
+
+    Uses system Chrome (channel='chrome') for genuine fingerprint;
+    patchright's CDP patches still apply at the protocol level.
+    """
+    engine = get_stealth_engine_name()
+    logger.debug(f"Launching browser [{engine}] headless={headless}")
+    return await p.chromium.launch(
+        headless=headless,
+        channel="chrome",
+        args=STEALTH_LAUNCH_ARGS,
+        ignore_default_args=HARMFUL_DEFAULT_ARGS,
+    )
+
+
+def get_stealth_context_options(**overrides) -> dict:
+    """Build browser context options with anti-detection defaults.
+
+    Returns dict for ``browser.new_context(**opts)``.
+    Caller can override any field via kwargs (e.g. storage_state).
+    """
+    opts = {
+        "user_agent": get_user_agent(),
+        "viewport": {"width": 1920, "height": 1080},
+        "screen": {"width": 1920, "height": 1080},
+        "locale": "zh-CN",
+        "color_scheme": "dark",
+        "device_scale_factor": 2,
+        "is_mobile": False,
+        "has_touch": False,
+        "ignore_https_errors": True,
+    }
+    opts.update(overrides)
+    return opts
+
+
 # XHS note page JS evaluate — extracted for reuse by batch fetcher
 XHS_NOTE_JS_EVALUATE = """() => {
     const title = document.querySelector('#detail-title');
@@ -122,51 +275,38 @@ async def evaluate_xhs_note(page) -> dict:
 
 async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
     """
-    Fetch a URL using headless Chromium via Playwright.
+    Fetch a URL using stealth Chromium browser.
+
+    Engine priority: patchright (Tier 1) → playwright (Tier 3).
 
     Args:
         url: Target URL to fetch.
-        storage_state: Path to a Playwright storage state JSON file (cookies/localStorage).
+        storage_state: Path to a storage state JSON file (cookies/localStorage).
                        If provided, the browser context will load this session.
 
     Returns:
         dict with keys: title, content, url, author
     """
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        raise RuntimeError(
-            "Playwright is not installed. Run:\n"
-            '  pip install "feedgrab[browser]"\n'
-            "  playwright install chromium"
-        )
+    async_pw = get_async_playwright()
+    logger.info(f"Browser fetch [{get_stealth_engine_name()}]: {url}")
 
-    logger.info(f"Browser fetch: {url}")
-
-    async with async_playwright() as p:
+    async with async_pw() as p:
         # Use headed mode for XHS (anti-bot detection), headless for others
         is_xhs = "xiaohongshu.com" in url or "xhslink.com" in url
-        browser = await p.chromium.launch(
-            headless=not is_xhs,
-            channel="chrome",
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+        browser = await stealth_launch(p, headless=not is_xhs)
 
-        context_kwargs = {}
+        ctx_opts = {}
         if storage_state and Path(storage_state).exists():
-            context_kwargs["storage_state"] = storage_state
+            ctx_opts["storage_state"] = storage_state
             logger.info(f"Using session: {storage_state}")
 
         context = await browser.new_context(
-            user_agent=get_user_agent(),
-            **context_kwargs,
+            **get_stealth_context_options(**ctx_opts)
         )
         page = await context.new_page()
 
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=TIMEOUT_MS)
-
-            is_xhs = "xiaohongshu.com" in url or "xhslink.com" in url
 
             if is_xhs:
                 # XHS SPA needs the note container to render
@@ -177,7 +317,6 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
                 await page.wait_for_timeout(1000)
 
                 data = await page.evaluate(XHS_NOTE_JS_EVALUATE)
-
                 result = _build_xhs_result(data, page.url)
             else:
                 # Generic fallback for non-XHS pages

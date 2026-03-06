@@ -454,16 +454,16 @@ async def search_wechat_articles(
     page = None
     pw = None
     try:
-        from playwright.async_api import async_playwright
-        from feedgrab.config import get_user_agent
-
-        pw = await async_playwright().start()
-        browser = await pw.chromium.launch(
-            headless=False,
-            channel="chrome",
-            args=["--disable-blink-features=AutomationControlled"],
+        from feedgrab.fetchers.browser import (
+            get_async_playwright, stealth_launch, get_stealth_context_options,
+            get_stealth_engine_name,
         )
-        context = await browser.new_context(user_agent=get_user_agent())
+
+        async_pw = get_async_playwright()
+        logger.info(f"[mpweixin-so] Stealth engine: {get_stealth_engine_name()}")
+        pw = await async_pw().start()
+        browser = await stealth_launch(pw, headless=False)
+        context = await browser.new_context(**get_stealth_context_options())
         page = await context.new_page()
 
         # Visit search page to acquire Sogou cookies (required for redirect links)

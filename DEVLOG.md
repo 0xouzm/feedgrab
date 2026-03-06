@@ -4,6 +4,42 @@
 
 ---
 
+## 2026-03-06 · v0.8.2 · 隐身浏览器引擎升级（patchright + stealth flags）
+
+### 背景
+feedgrab 的 Playwright 浏览器抓取方案反检测能力极弱——仅有一条 `--disable-blink-features=AutomationControlled` 启动参数，几乎等于"裸奔"。小红书（反爬最严格）和搜狗微信搜索容易被识别为自动化流量。
+
+通过深度分析 [Scrapling](https://github.com/D4Vinci/Scrapling) 项目的反检测技术方案，发现其 patchright + stealth flags + 环境伪装的组合方案投入产出比极高，可以精准移植到 feedgrab。
+
+### 方案决策
+- **不直接替换 playwright**，而是 patchright 前置为 Tier 1、playwright 兜底为 Tier 3（间隔编号预留扩展空间）
+- **集中管理隐身配置**：在 `browser.py` 新增统一的 stealth 工具函数，所有 fetcher 共享
+- 从 Scrapling 适配 52 条 Chrome 隐身启动参数 + 5 条有害默认参数屏蔽
+- 浏览器 context 补全环境伪装（viewport/screen/locale/color_scheme/device_scale_factor 等）
+- `pyproject.toml` 新增 `stealth` 可选依赖组
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/browser.py` | 重写 | 新增 stealth 引擎模块（双引擎选择 + 52 条启动参数 + context 反指纹配置 + stealth_launch/get_stealth_context_options 工具函数）；重写 fetch_via_browser 使用新引擎 |
+| `feedgrab/fetchers/xhs_user_notes.py` | 修改 | 替换为 stealth 引擎，移除硬编码 playwright import 和旧参数 |
+| `feedgrab/fetchers/xhs_search_notes.py` | 修改 | 同上 |
+| `feedgrab/fetchers/wechat_search.py` | 修改 | 同上 |
+| `pyproject.toml` | 修改 | 新增 `stealth = ["patchright>=1.0"]` 可选依赖 |
+
+### 验证结果
+- patchright 引擎自动检测：`get_stealth_engine_name()` → `"patchright"` ✅
+- 未安装 patchright 时自动降级：→ `"playwright"` ✅
+- 通用网页（少数派）：headless 模式，3,043 字符 ✅
+- 通用网页（Wikipedia）：headless 模式，84,341 字符 ✅
+- XHS 小红书：自动切换 headed 模式 + session 加载 ✅
+- 所有文件语法检查通过 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-06 · v0.8.1 · 搜狗微信搜索增强（mpweixin 目录 + 配置开关 + 多页 + 富文本）
 
 ### 背景

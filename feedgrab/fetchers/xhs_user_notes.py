@@ -23,7 +23,6 @@ from typing import List, Dict, Tuple
 from loguru import logger
 
 from feedgrab.config import (
-    get_user_agent,
     xhs_user_note_max_scrolls,
     xhs_user_note_delay,
     xhs_user_notes_since,
@@ -360,18 +359,13 @@ async def fetch_user_notes(profile_url: str) -> dict:
     Returns:
         dict with keys: total, fetched, skipped, failed, list_path
     """
-    from feedgrab.fetchers.browser import evaluate_xhs_note, get_session_path
+    from feedgrab.fetchers.browser import (
+        evaluate_xhs_note, get_session_path,
+        get_async_playwright, stealth_launch, get_stealth_context_options,
+        get_stealth_engine_name,
+    )
     from feedgrab.schema import from_xiaohongshu
     from feedgrab.utils.storage import save_to_markdown, _parse_xhs_date
-
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        raise RuntimeError(
-            "Playwright is not installed. Run:\n"
-            '  pip install "feedgrab[browser]"\n'
-            "  playwright install chromium"
-        )
 
     # 1. Verify session exists
     session_path = get_session_path("xhs")
@@ -398,17 +392,12 @@ async def fetch_user_notes(profile_url: str) -> dict:
 
     # 5. Launch browser (ONE context for entire batch)
     # Use headed mode so user can solve captcha if needed
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=False,
-            channel="chrome",
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+    async_pw = get_async_playwright()
+    logger.info(f"[XHS-User] Stealth engine: {get_stealth_engine_name()}")
+    async with async_pw() as p:
+        browser = await stealth_launch(p, headless=False)
         context = await browser.new_context(
-            storage_state=session_path,
-            user_agent=get_user_agent(),
-            viewport={"width": 1920, "height": 1080},
-            locale="zh-CN",
+            **get_stealth_context_options(storage_state=session_path)
         )
         page = await context.new_page()
 

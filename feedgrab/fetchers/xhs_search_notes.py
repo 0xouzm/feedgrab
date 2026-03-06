@@ -22,7 +22,6 @@ from urllib.parse import urlparse, parse_qs, unquote
 from loguru import logger
 
 from feedgrab.config import (
-    get_user_agent,
     xhs_search_max_scrolls,
     xhs_search_delay,
 )
@@ -285,19 +284,14 @@ async def fetch_search_notes(search_url: str) -> dict:
     Returns:
         dict with keys: total, fetched, skipped, failed, list_path, keyword
     """
-    from feedgrab.fetchers.browser import evaluate_xhs_note, get_session_path
+    from feedgrab.fetchers.browser import (
+        evaluate_xhs_note, get_session_path,
+        get_async_playwright, stealth_launch, get_stealth_context_options,
+        get_stealth_engine_name,
+    )
     from feedgrab.fetchers.xhs_user_notes import _handle_captcha_or_login
     from feedgrab.schema import from_xiaohongshu
     from feedgrab.utils.storage import save_to_markdown, _parse_xhs_date
-
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        raise RuntimeError(
-            "Playwright is not installed. Run:\n"
-            '  pip install "feedgrab[browser]"\n'
-            "  playwright install chromium"
-        )
 
     # 1. Verify session exists
     session_path = get_session_path("xhs")
@@ -320,17 +314,12 @@ async def fetch_search_notes(search_url: str) -> dict:
     logger.info(f"[XHS-Search] 已有 {initial_count} 条笔记索引")
 
     # 5. Launch browser (ONE context for entire batch)
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=False,
-            channel="chrome",
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+    async_pw = get_async_playwright()
+    logger.info(f"[XHS-Search] Stealth engine: {get_stealth_engine_name()}")
+    async with async_pw() as p:
+        browser = await stealth_launch(p, headless=False)
         context = await browser.new_context(
-            storage_state=session_path,
-            user_agent=get_user_agent(),
-            viewport={"width": 1920, "height": 1080},
-            locale="zh-CN",
+            **get_stealth_context_options(storage_state=session_path)
         )
         page = await context.new_page()
 

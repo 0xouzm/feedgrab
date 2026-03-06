@@ -368,7 +368,11 @@ item_id: db22cbe3d9c0
 # 从 GitHub 安装（推荐）
 pip install git+https://github.com/iBigQiang/feedgrab.git
 
-# 带浏览器兜底（Playwright — 用于小红书/微信反爬）
+# 带隐身浏览器（patchright — 推荐，反检测能力更强）
+pip install "feedgrab[stealth] @ git+https://github.com/iBigQiang/feedgrab.git"
+patchright install chromium
+
+# 或使用 Playwright 兜底
 pip install "feedgrab[browser] @ git+https://github.com/iBigQiang/feedgrab.git"
 
 # 安装所有可选依赖
@@ -391,7 +395,8 @@ feedgrab setup
 git clone https://github.com/iBigQiang/feedgrab.git
 cd feedgrab
 pip install -e ".[all]"
-playwright install chromium
+patchright install chromium   # 推荐（反检测更强）
+# 或: playwright install chromium
 ```
 
 ### 视频/音频依赖（可选）
@@ -494,7 +499,7 @@ feedgrab/
 │   ├── login.py               # 浏览器登录管理器（保存 session）
 │   ├── fetchers/
 │   │   ├── jina.py            # Jina Reader（万能兜底）
-│   │   ├── browser.py         # Playwright 无头浏览器（反爬兜底）
+│   │   ├── browser.py         # 隐身浏览器引擎（patchright Tier 1 → playwright Tier 3 + 52 stealth flags）
 │   │   ├── bilibili.py        # B 站 API
 │   │   ├── youtube.py         # yt-dlp 字幕提取
 │   │   ├── rss.py             # RSS 解析（feedparser）
