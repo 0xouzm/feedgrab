@@ -2,6 +2,40 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-06 · v0.8.3 · browserforge 浏览器指纹一致性
+
+### 背景
+feedgrab 各 HTTP 模块的 User-Agent 和请求头严重不一致：jina.py 使用 `feedgrab/0.1`（直接暴露工具身份），twitter_fxtwitter.py 和 twitter.py 使用极简的 `Mozilla/5.0`，wechat_search.py 使用另一个独立的完整 UA 但缺少 Sec-Ch-Ua 配套。这些不一致容易被服务器识别为非真实浏览器流量。
+
+### 方案决策
+引入 browserforge 库生成完整且内部一致的浏览器请求头集合（UA + sec-ch-ua + Accept + Sec-Fetch 等 11 项），缓存到会话级别。
+
+关键设计：
+- **版本号精确匹配**：从 `BROWSER_USER_AGENT` 环境变量提取 Chrome 版本号，browserforge 按该版本 pin 生成匹配的 sec-ch-ua，确保 `Chrome/132` 对应 `"Google Chrome";v="132"`
+- **OS 自动检测**：`platform.system()` → browserforge OS 参数，header 与实际运行平台一致
+- **分层使用**：API 调用（Jina/FxTwitter/Syndication）仅统一 UA，HTML 页面请求（搜狗）用全套 header
+- **优雅降级 + 提示**：browserforge 未安装时 loguru WARNING 输出安装指导，降级为基础 header
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/config.py` | 修改 | 新增 `get_stealth_headers()` — browserforge 全套一致 header 生成 + 会话缓存 + 降级提示 |
+| `feedgrab/fetchers/jina.py` | 修改 | UA: `feedgrab/0.1` → `get_user_agent()` |
+| `feedgrab/fetchers/twitter_fxtwitter.py` | 修改 | UA: `Mozilla/5.0` → `get_user_agent()` + 新增 import |
+| `feedgrab/fetchers/twitter.py` | 修改 | Syndication UA: `Mozilla/5.0` → `get_user_agent()` |
+| `feedgrab/fetchers/wechat_search.py` | 修改 | 3 个硬编码 header → `get_stealth_headers()` 全套 11 个 |
+| `pyproject.toml` | 修改 | `browserforge>=1.1` 加入 stealth/all 依赖组 |
+
+### 验证结果
+- browserforge 生成 11 项一致 header，UA Chrome/132 与 sec-ch-ua "Google Chrome";v="132" 精确匹配
+- BROWSER_USER_AGENT 环境变量覆盖（Chrome/133）→ sec-ch-ua 自动匹配 v="133"
+- 浏览器 context UA、HTTP header UA、config UA 三处完全一致
+- 所有 6 个修改模块导入无错误
+- browserforge 未安装时正确输出 WARNING 提示及安装命令
+
+### 状态：已完成 ✅
+
 ---
 
 ## 2026-03-06 · v0.8.2 · 隐身浏览器引擎升级（patchright + stealth flags）

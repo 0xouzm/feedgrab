@@ -7,8 +7,11 @@ not hardcoded in individual fetcher files.
 """
 
 import os
+import platform
 import re
 from pathlib import Path
+
+from loguru import logger
 
 
 # ---------------------------------------------------------------------------
@@ -27,9 +30,118 @@ def get_user_agent() -> str:
 
     Priority:
       1. BROWSER_USER_AGENT env var (user-configured or auto-detected)
-      2. DEFAULT_USER_AGENT fallback
+      2. browserforge generated UA (if installed)
+      3. DEFAULT_USER_AGENT fallback
     """
-    return os.getenv("BROWSER_USER_AGENT", "").strip() or DEFAULT_USER_AGENT
+    env_ua = os.getenv("BROWSER_USER_AGENT", "").strip()
+    if env_ua:
+        return env_ua
+    if _stealth_headers is None:
+        _init_stealth_headers()
+    return _stealth_headers.get("User-Agent", DEFAULT_USER_AGENT)
+
+
+# ---------------------------------------------------------------------------
+# Stealth headers — browserforge-powered consistent fingerprint
+# ---------------------------------------------------------------------------
+
+_stealth_headers = None  # session-level cache
+
+
+def _detect_browser_os() -> str:
+    """Map platform.system() to browserforge OS name."""
+    return {"windows": "windows", "linux": "linux", "darwin": "macos"}.get(
+        platform.system().lower(), "windows"
+    )
+
+
+def _init_stealth_headers():
+    """Initialize consistent browser headers (called once, cached).
+
+    Uses browserforge to generate a complete header set where UA, Sec-Ch-Ua,
+    Accept, Accept-Language etc. are internally consistent.
+    Falls back to basic headers if browserforge is not installed.
+    """
+    global _stealth_headers
+
+    env_ua = os.getenv("BROWSER_USER_AGENT", "").strip()
+
+    try:
+        from browserforge.headers import Browser, HeaderGenerator
+
+        # Match Chrome version from user's real UA if set
+        chrome_ver = 0
+        if env_ua:
+            m = re.search(r"Chrome/(\d+)", env_ua)
+            chrome_ver = int(m.group(1)) if m else 0
+
+        if chrome_ver > 0:
+            browsers = [Browser(name="chrome", min_version=chrome_ver, max_version=chrome_ver)]
+        else:
+            # Pin to DEFAULT_USER_AGENT version for consistent "Google Chrome" brand
+            m = re.search(r"Chrome/(\d+)", DEFAULT_USER_AGENT)
+            fallback_ver = int(m.group(1)) if m else 132
+            browsers = [Browser(name="chrome", min_version=fallback_ver, max_version=fallback_ver)]
+
+        gen = HeaderGenerator(
+            browser=browsers, os=_detect_browser_os(), device="desktop"
+        )
+        _stealth_headers = dict(gen.generate())
+
+        # Override with user's real UA if set (keeps Sec-Ch-Ua from browserforge)
+        if env_ua:
+            _stealth_headers["User-Agent"] = env_ua
+
+        # Let HTTP libraries handle encoding negotiation
+        _stealth_headers.pop("Accept-Encoding", None)
+
+        # Chinese locale for feedgrab's primary targets
+        _stealth_headers["Accept-Language"] = "zh-CN,zh;q=0.9,en;q=0.8"
+
+    except ImportError:
+        logger.warning(
+            "[stealth] browserforge 未安装，浏览器指纹一致性降级。"
+            "建议安装以提升反检测能力：\n"
+            '  pip install "feedgrab[stealth]"   # 含 patchright + browserforge\n'
+            "  或单独安装：pip install browserforge"
+        )
+        ua = env_ua or DEFAULT_USER_AGENT
+        _stealth_headers = {
+            "User-Agent": ua,
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,image/apng,*/*;q=0.8,"
+                "application/signed-exchange;v=b3;q=0.7"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+    except Exception as e:
+        logger.warning(f"[stealth] browserforge 初始化失败: {e}，使用基础 header")
+        ua = env_ua or DEFAULT_USER_AGENT
+        _stealth_headers = {
+            "User-Agent": ua,
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,image/apng,*/*;q=0.8,"
+                "application/signed-exchange;v=b3;q=0.7"
+            ),
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+
+
+def get_stealth_headers(**overrides) -> dict:
+    """Return a complete set of consistent browser headers.
+
+    Uses browserforge (if installed) to generate headers where UA, Sec-Ch-Ua,
+    Accept, etc. are all internally consistent.  Falls back to basic headers.
+    Kwargs override specific headers (e.g. Accept="text/markdown" for Jina).
+    Cached per session — all requests share the same fingerprint.
+    """
+    if _stealth_headers is None:
+        _init_stealth_headers()
+    h = dict(_stealth_headers)
+    h.update(overrides)
+    return h
 
 
 def get_data_dir() -> Path:

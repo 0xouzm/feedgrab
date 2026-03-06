@@ -25,6 +25,8 @@ from datetime import datetime
 from loguru import logger
 from typing import Dict, Any, List, Optional
 
+from feedgrab.config import get_stealth_headers
+
 
 # ---------------------------------------------------------------------------
 # Sogou search (HTTP)
@@ -43,15 +45,7 @@ def _sogou_search(keyword: str, page: int = 1) -> List[Dict[str, Any]]:
 
     req = urllib.request.Request(
         url,
-        headers={
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/132.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        },
+        headers=get_stealth_headers(),
     )
 
     try:

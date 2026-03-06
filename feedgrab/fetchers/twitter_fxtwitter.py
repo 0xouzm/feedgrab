@@ -19,6 +19,8 @@ import urllib.error
 from loguru import logger
 from typing import Dict, Any, Optional
 
+from feedgrab.config import get_user_agent
+
 # Module-level circuit breaker for batch mode
 _consecutive_failures: int = 0
 _circuit_broken: bool = False
@@ -139,7 +141,7 @@ def fetch_via_fxtwitter(url: str, tweet_id: str) -> Dict[str, Any]:
     try:
         req = urllib.request.Request(
             api_url,
-            headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+            headers={"User-Agent": get_user_agent(), "Accept": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             raw = resp.read()

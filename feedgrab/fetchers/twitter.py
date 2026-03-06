@@ -326,7 +326,7 @@ def _fetch_via_syndication(url: str, tweet_id: str) -> Dict[str, Any]:
     resp = requests.get(
         SYNDICATION_URL,
         params={"id": tweet_id, "token": token},
-        headers={"User-Agent": "Mozilla/5.0"},
+        headers={"User-Agent": get_user_agent()},
         timeout=15,
     )
     if resp.status_code == 404:

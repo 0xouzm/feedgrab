@@ -368,7 +368,7 @@ item_id: db22cbe3d9c0
 # 从 GitHub 安装（推荐）
 pip install git+https://github.com/iBigQiang/feedgrab.git
 
-# 带隐身浏览器（patchright — 推荐，反检测能力更强）
+# 带隐身浏览器（patchright + browserforge — 推荐，反检测能力更强）
 pip install "feedgrab[stealth] @ git+https://github.com/iBigQiang/feedgrab.git"
 patchright install chromium
 
@@ -493,7 +493,7 @@ cp .env.example .env
 feedgrab/
 ├── feedgrab/                  # Python 包
 │   ├── cli.py                 # CLI 入口
-│   ├── config.py              # 集中配置（路径、开关）
+│   ├── config.py              # 集中配置（路径、开关、stealth headers）
 │   ├── reader.py              # URL 调度器（UniversalReader）
 │   ├── schema.py              # 统一数据模型（UnifiedContent + Inbox）
 │   ├── login.py               # 浏览器登录管理器（保存 session）

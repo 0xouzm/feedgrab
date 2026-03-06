@@ -9,13 +9,15 @@ Free, no API key required, handles JS rendering and anti-scraping.
 import requests
 from loguru import logger
 
+from feedgrab.config import get_user_agent
+
 
 JINA_BASE = "https://r.jina.ai"
 TIMEOUT = 30
 
 HEADERS = {
     "Accept": "text/markdown",
-    "User-Agent": "feedgrab/0.1",
+    "User-Agent": get_user_agent(),
 }
 
 # Jina Reader injects these metadata lines into the markdown output
