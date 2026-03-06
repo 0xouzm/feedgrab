@@ -141,7 +141,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | YouTube | Jina | yt-dlp subtitles → Groq Whisper fallback |
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
-| WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (keyword batch, `mpweixin-so`) | — |
+| WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) | — |
 | Xiaohongshu (小红书) | Jina → **Playwright deep fetch** (single + **author batch** + **search batch**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |

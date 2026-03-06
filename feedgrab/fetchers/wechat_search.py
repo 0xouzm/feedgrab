@@ -243,6 +243,9 @@ def _preprocess_wechat_html(html: str) -> tuple:
         # Extract code text from all <code> tags
         code_parts = []
         for code_tag in snippet.find_all("code"):
+            # Convert <br> tags to newlines before extracting text
+            for br in code_tag.find_all("br"):
+                br.replace_with("\n")
             text = code_tag.get_text()
             # Filter CSS counter leak lines
             if re.match(r'^[ce]?ounter\(line', text):
@@ -259,8 +262,11 @@ def _preprocess_wechat_html(html: str) -> tuple:
     # Also handle standard <pre> code blocks not inside .code-snippet__fix
     for pre in soup.find_all("pre"):
         lang = pre.get("data-lang", "")
-        code_tag = pre.find("code")
-        code_text = code_tag.get_text() if code_tag else pre.get_text()
+        code_tag = pre.find("code") or pre
+        # Convert <br> tags to newlines before extracting text
+        for br in code_tag.find_all("br"):
+            br.replace_with("\n")
+        code_text = code_tag.get_text()
 
         placeholder = f"WECHAT-CODEBLOCK-{len(code_blocks)}"
         code_blocks.append((lang, code_text))
@@ -298,9 +304,13 @@ def _html_to_markdown(html: str) -> str:
     )
 
     # Restore code block placeholders → fenced code blocks
-    for idx, (lang, code_text) in enumerate(code_blocks):
+    # Replace in reverse order to avoid prefix collision
+    # (e.g. "WECHAT-CODEBLOCK-1" matching inside "WECHAT-CODEBLOCK-10")
+    for idx in range(len(code_blocks) - 1, -1, -1):
+        lang, code_text = code_blocks[idx]
         placeholder = f"WECHAT-CODEBLOCK-{idx}"
-        fence = f"```{lang}\n{code_text}\n```"
+        # Ensure newlines around fences — markdownify may strip placeholder padding
+        fence = f"\n\n```{lang}\n{code_text}\n```\n\n"
         md = md.replace(placeholder, fence)
 
     # Clean up whitespace

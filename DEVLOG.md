@@ -2,6 +2,48 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-06 · v0.9.3 · 微信代码块修复 + 小绿书元数据回退
+
+### 背景
+微信公众号文章中使用 plain `<pre><code>` 格式的代码块在抓取后所有行被压缩为一行，原因是 `BeautifulSoup.get_text()` 丢弃了 `<br>` 标签的换行语义。同时，当文章包含 10+ 个代码块时，占位符还原出现前缀碰撞（`WECHAT-CODEBLOCK-1` 匹配到 `WECHAT-CODEBLOCK-10` 的前缀），导致部分代码块被错误替换并残留数字尾巴。此外，markdownify 在处理占位符时吃掉了两侧的换行，导致代码围栏（` ``` `）与相邻图片/文本粘连。
+
+另一个问题：微信"小绿书"图片帖（`itemShowType=16`）的 DOM 结构与普通长文不同 — `#activity-name` 和 `#js_name` 元素不存在，导致标题和作者提取全部为空，文件名缺少 `作者名_日期：` 前缀。
+
+### 方案决策
+
+**代码块修复（3 个子问题）：**
+1. `<br>` → `\n`：在 `_preprocess_wechat_html()` 的两个代码块处理器中（`.code-snippet__fix` 和 plain `<pre>`），调用 `get_text()` 前先将所有 `<br>` 标签替换为 `\n` 文本节点
+2. 占位符前缀碰撞：还原时反向遍历（从最大索引到 0），避免 `CODEBLOCK-1` 匹配 `CODEBLOCK-10`
+3. 围栏间距：还原时在 fence 前后加 `\n\n`，确保代码块与相邻内容有空行分隔
+
+**小绿书元数据回退（`WECHAT_ARTICLE_JS_EVALUATE` 增强）：**
+- 标题回退链：`#activity-name` → `og:title` → `.rich_media_title`
+- 作者回退链：`#js_name` → JS 脚本 `nick_name` 正则 → `window.cgiDataNew.nick_name`
+
+通过 Playwright 实测确认：小绿书页面的 `cgiDataNew` 对象包含完整的 `nick_name`（如 "饼干哥哥AGI"）和 `title`，是最可靠的回退数据源。
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/wechat_search.py` | 修改 | `_preprocess_wechat_html()` 两处 `<br>→\n` + `_html_to_markdown()` 反向还原 + fence 间距 |
+| `feedgrab/fetchers/browser.py` | 修改 | `WECHAT_ARTICLE_JS_EVALUATE` 新增标题/作者三级回退 |
+
+### 验证结果
+- 代码块测试（`mp.weixin.qq.com/s/pQioMCCW9sCOZ1BW8fRD9A`，12 个 plain `<pre>` 块）：
+  - 12 个代码块全部正确识别和还原 ✅
+  - Python/JSON/Prompt 内容有正确的多行格式（86 行、55 行、31 行等）✅
+  - 代码围栏与相邻图片有空行分隔 ✅
+  - 无占位符残留数字 ✅
+- 小绿书测试（`mp.weixin.qq.com/s/lk60C8tBWknMzFTQRUIFTQ`）：
+  - 标题 "X上疯传 从2050个n8n 工作流中总结出的🔟个要点"（`og:title`）✅
+  - 作者 "饼干哥哥AGI"（`cgiDataNew.nick_name`）✅
+  - 发布日期 "2025-08-03 23:44"（`create_time`）✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-06 · v0.9.2 · 微信公众号按账号批量抓取 + cgiDataNew 元数据管线
 
 ### 背景

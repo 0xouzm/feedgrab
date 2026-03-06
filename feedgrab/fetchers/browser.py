@@ -440,7 +440,7 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
 WECHAT_ARTICLE_JS_EVALUATE = """() => {
     const result = {};
 
-    // 1. DOM elements
+    // 1. DOM elements (normal articles)
     const titleEl = document.querySelector('#activity-name');
     result.title = titleEl ? titleEl.innerText.trim() : '';
 
@@ -449,6 +449,33 @@ WECHAT_ARTICLE_JS_EVALUATE = """() => {
 
     const timeEl = document.querySelector('#publish_time');
     result.publishTime = timeEl ? timeEl.innerText.trim() : '';
+
+    // 1b. Fallback for image-posts (小绿书, itemShowType=16):
+    //     #activity-name and #js_name don't exist — use og:title and nick_name from JS
+    if (!result.title) {
+        const ogTitle = document.querySelector('meta[property="og:title"]');
+        if (ogTitle && ogTitle.content) result.title = ogTitle.content.trim();
+    }
+    if (!result.title) {
+        const h1 = document.querySelector('.rich_media_title');
+        if (h1) result.title = h1.innerText.trim();
+    }
+    if (!result.author) {
+        const scripts = document.querySelectorAll('script');
+        for (const s of scripts) {
+            const text = s.textContent || '';
+            const m = text.match(/nick_name\\s*[:=]\\s*['"]([^'"]+)['"]/);
+            if (m) { result.author = m[1].trim(); break; }
+        }
+    }
+    // Fallback: cgiDataNew.nick_name (reliable for both normal articles and image-posts)
+    if (!result.author) {
+        try {
+            if (window.cgiDataNew && window.cgiDataNew.nick_name) {
+                result.author = window.cgiDataNew.nick_name.trim();
+            }
+        } catch(e) {}
+    }
 
     // 2. OG meta tags (reliable, always present)
     const ogImage = document.querySelector('meta[property="og:image"]');
