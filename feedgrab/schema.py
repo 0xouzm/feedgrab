@@ -360,16 +360,37 @@ def from_xiaohongshu(note: dict) -> UnifiedContent:
 
 
 def from_youtube(video: dict) -> UnifiedContent:
+    published = video.get("published_at", "")
+    if published:
+        # ISO 8601 → YYYY-MM-DD HH:MM
+        try:
+            dt = datetime.fromisoformat(published.replace("Z", "+00:00"))
+            published = dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            published = published[:10]
+
     return UnifiedContent(
         source_type=SourceType.YOUTUBE,
-        source_name=video.get('author', ''),
+        source_name=video.get('author', '') or video.get('channel_title', ''),
         title=video.get('title', ''),
         content=video.get('description', ''),
         url=video.get('url', ''),
         media_type=MediaType.VIDEO,
+        tags=video.get('tags', []),
         extra={
+            "video_id": video.get('video_id', ''),
             "duration": video.get('duration', ''),
+            "duration_seconds": video.get('duration_seconds', 0),
             "view_count": video.get('view_count', 0),
+            "like_count": video.get('like_count', 0),
+            "comment_count": video.get('comment_count', 0),
+            "channel_id": video.get('channel_id', ''),
+            "published_at": published,
+            "category_id": video.get('category_id', ''),
+            "definition": video.get('definition', ''),
+            "has_caption": video.get('has_caption', False),
+            "has_transcript": video.get('has_transcript', False),
+            "thumbnail": video.get('thumbnail', ''),
         },
     )
 

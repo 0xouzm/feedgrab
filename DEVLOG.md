@@ -2,6 +2,45 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-06 · v0.9.5 · YouTube Data API v3 搜索 + 单视频下载命令
+
+### 背景
+feedgrab 原有的 YouTube 抓取仅依赖 Jina Reader 获取元数据，缺少搜索能力和视频/音频/字幕文件下载能力。对比分析了 yt-search-download 和 union-search-skill 两个第三方仓库后，决定融合 YouTube Data API v3 实现搜索模块，同时升级单视频抓取为 API 优先策略。
+
+### 方案决策
+- **YouTube Data API v3 搜索**：免费 10,000 quota/天，search.list=100 单位，videos.list=1 单位。两阶段查询：search → videoId list → videos.list 批量详情
+- **API 优先单视频**：替代 Jina-first 元数据获取，1 quota 单位获取完整元数据（标题/作者/时长/播放量/标签/缩略图/字幕标记）
+- **多语言字幕回退**：`[sub_lang, "zh-CN", "zh-Hans", "zh-Hant", "zh", "en", "en-US"]`，覆盖手动字幕和自动字幕
+- **yt-dlp JS 运行时修复**：yt-dlp 默认只启用 deno，`_js_runtime_args()` 自动检测 deno/node/bun 并加 `--remote-components ejs:github`
+- **三个下载命令**：`ytb-dlv`(视频MP4)、`ytb-dla`(音频MP3)、`ytb-dlz`(字幕SRT)，输出目录和文件名与 MD 保持一致
+- **频道搜索修复**：channel 限定搜索时跳过 `regionCode`/`relevanceLanguage` 参数（会导致空结果）
+- **Cookie 检测简化**：移除不可靠的自动检测（Windows 上 Chrome DB 锁定），改为 `YT_COOKIES_BROWSER` 环境变量控制
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/youtube_search.py` | 新建 | YouTube Data API v3 搜索引擎 + yt-dlp 下载（视频/音频/字幕） |
+| `feedgrab/fetchers/youtube.py` | 重写 | API 优先元数据 + 多语言字幕回退 + JS 运行时修复 |
+| `feedgrab/cli.py` | 修改 | 新增 `ytb-so`/`ytb-dlv`/`ytb-dla`/`ytb-dlz` 四个命令 |
+| `feedgrab/schema.py` | 修改 | `from_youtube()` 扩展支持完整 API 元数据（时长/播放量/标签等） |
+| `feedgrab/utils/storage.py` | 修改 | YouTube 文件名前缀 + front matter + 封面图 + 字幕分段 |
+| `.env.example` | 修改 | 新增 YouTube API 配置项模板 |
+
+### 验证结果
+- `feedgrab ytb-so "AI Agent"` — 搜索成功，10 条结果保存到 `YouTube/search/AI Agent/` ✅
+- `feedgrab ytb-so "教程" --channel @Fireship --limit 3` — 频道限定搜索 3 条结果 ✅
+- `feedgrab https://www.youtube.com/watch?v=g56TThyELm0` — API 元数据 + zh-Hant 字幕成功 ✅
+- `feedgrab https://www.youtube.com/watch?v=bBG25aoIS0s` — zh-CN 手动字幕成功（修复前失败） ✅
+- `feedgrab ytb-dlv <url>` — 视频下载到 `{OUTPUT_DIR}/YouTube/` 目录 ✅
+- `feedgrab ytb-dla <url>` — 音频下载，长链接和 youtu.be 短链接都兼容 ✅
+- `feedgrab ytb-dlz <url>` — 字幕 SRT 下载成功 ✅
+- 文件名格式统一：`author_date：title.{mp4,mp3,srt,md}` ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-06 · v0.9.4 · 微信单篇抓取策略反转：Browser 优先
 
 ### 背景

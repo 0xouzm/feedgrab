@@ -97,6 +97,45 @@ def _parse_xhs_location(raw: str) -> str:
     return ""
 
 
+def _format_subtitle_text(text: str) -> str:
+    """Format subtitle/transcript text with paragraph breaks.
+
+    SRT/VTT subtitles are joined into one long string. This function
+    inserts paragraph breaks at sentence boundaries to improve readability.
+    Splits roughly every 3-5 sentences (targeting ~200-300 char segments).
+    """
+    if not text or len(text) < 100:
+        return text
+
+    # If already has paragraph breaks, leave as-is
+    if "\n\n" in text:
+        return text
+
+    # Split at sentence-ending punctuation followed by space
+    # Covers Chinese（。！？）and English (. ! ?)
+    parts = re.split(r'(?<=[。！？.!?])\s+', text)
+    if len(parts) <= 1:
+        return text
+
+    paragraphs = []
+    current = []
+    char_count = 0
+
+    for part in parts:
+        current.append(part)
+        char_count += len(part)
+        # Break at ~200-300 chars for readable paragraphs
+        if char_count >= 250:
+            paragraphs.append(" ".join(current))
+            current = []
+            char_count = 0
+
+    if current:
+        paragraphs.append(" ".join(current))
+
+    return "\n\n".join(paragraphs)
+
+
 # SourceType → subdirectory name
 PLATFORM_FOLDER_MAP = {
     SourceType.TWITTER: "X",
@@ -198,6 +237,16 @@ def _generate_filename(item: UnifiedContent) -> str:
         author_display = (item.source_name or "").strip()
         # Only use date (no time) in filename
         published = extra.get("publish_date", "")[:10]
+
+        if author_display and published:
+            raw = f"{author_display}_{published}：{raw_title}"
+        elif author_display:
+            raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
+    elif item.source_type == SourceType.YOUTUBE:
+        author_display = (item.source_name or "").strip()
+        published = extra.get("published_at", "")[:10]
 
         if author_display and published:
             raw = f"{author_display}_{published}：{raw_title}"
@@ -341,6 +390,31 @@ def _format_markdown(item: UnifiedContent) -> str:
         if extra.get("duration"):
             fm_lines.append(f"duration: {extra['duration']}")
 
+    # YouTube extras
+    if item.source_type == SourceType.YOUTUBE:
+        if extra.get("published_at"):
+            fm_lines.append(f"published: {extra['published_at']}")
+        if extra.get("duration"):
+            fm_lines.append(f'duration: "{extra["duration"]}"')
+        if extra.get("view_count"):
+            fm_lines.append(f"views: {extra['view_count']}")
+        if extra.get("like_count"):
+            fm_lines.append(f"likes: {extra['like_count']}")
+        if extra.get("comment_count"):
+            fm_lines.append(f"comments: {extra['comment_count']}")
+        if extra.get("definition"):
+            fm_lines.append(f'definition: "{extra["definition"]}"')
+        if extra.get("has_transcript"):
+            fm_lines.append(f"has_transcript: true")
+        if extra.get("thumbnail"):
+            fm_lines.append(f'cover_image: "{extra["thumbnail"]}"')
+        if extra.get("channel_id"):
+            fm_lines.append(f'channel_id: "{extra["channel_id"]}"')
+        if extra.get("video_id"):
+            fm_lines.append(f'video_id: "{extra["video_id"]}"')
+        if extra.get("search_keyword"):
+            fm_lines.append(f'search_keyword: "{extra["search_keyword"]}"')
+
     # Tags (from tweet hashtags or other sources)
     if item.tags:
         # XHS: only top 3 tags in front matter (full list goes in body)
@@ -423,11 +497,20 @@ def _format_markdown(item: UnifiedContent) -> str:
                 fm_lines.append("")
     else:
         # Non-Twitter/XHS: add title heading + full content
-        # WeChat: skip title heading (already in filename + front matter)
-        if not is_wechat and item.title and item.title.strip():
+        # WeChat / YouTube: skip title heading (already in filename + front matter)
+        is_youtube = item.source_type == SourceType.YOUTUBE
+        if not is_wechat and not is_youtube and item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
-        fm_lines.append(item.content)
+
+        # YouTube: cover image preview + subtitle paragraph formatting
+        if is_youtube:
+            if extra.get("thumbnail"):
+                fm_lines.append(f"![cover]({extra['thumbnail']})")
+                fm_lines.append("")
+            fm_lines.append(_format_subtitle_text(item.content))
+        else:
+            fm_lines.append(item.content)
 
     fm_lines.append("")  # trailing newline
     result = "\n".join(fm_lines)

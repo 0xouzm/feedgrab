@@ -16,10 +16,10 @@ Give it a URL (article, video, podcast, tweet), get back structured content. Wor
 ```
 Any URL → Platform Detection → Fetch Content → Unified Output
               ↓                      ↓                ↓
-         auto-detect           text: Jina Reader    → output/X/Author：Title.md
-         7+ platforms          video: yt-dlp subs    → output/YouTube/Title.md
+         auto-detect           text: Jina Reader    → output/X/Author_Date：Title.md
+         7+ platforms          video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
                                audio: Whisper transcription
-                               API: Bilibili / RSS / Telegram
+                               API: Bilibili / RSS / Telegram / YouTube Data API v3
                                X/Twitter: GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
 ```
 
@@ -63,6 +63,17 @@ XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profil
 
 # Batch fetch XHS search results (requires XHS_SEARCH_ENABLED=true + feedgrab login xhs)
 feedgrab "https://www.xiaohongshu.com/search_result?keyword=开学第一课&source=web_explore_feed"
+
+# Search YouTube videos
+feedgrab ytb-so "AI Agent"
+feedgrab ytb-so "tutorial" --channel @AndrewNg --order viewCount
+feedgrab ytb-so "ML" --after 2025-01-01 --limit 5
+
+# Download YouTube video/audio/subtitles (output to OUTPUT_DIR/YouTube/)
+feedgrab ytb-dlv https://www.youtube.com/watch?v=xxx   # Download video (MP4)
+feedgrab ytb-dla https://www.youtube.com/watch?v=xxx   # Download audio (MP3)
+feedgrab ytb-dlz https://www.youtube.com/watch?v=xxx   # Download subtitles (SRT)
+feedgrab ytb-dla https://youtu.be/xxx?si=xxx           # Short share links work too
 
 # Fetch multiple URLs
 feedgrab https://url1.com https://url2.com
@@ -138,7 +149,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 
 | Platform | Text Fetch | Video/Audio Transcript |
 |----------|-----------|----------------------|
-| YouTube | Jina | yt-dlp subtitles → Groq Whisper fallback |
+| YouTube | **YouTube Data API v3** search + yt-dlp subtitles | yt-dlp subtitles → Groq Whisper fallback |
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) | — |

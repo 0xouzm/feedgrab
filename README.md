@@ -17,9 +17,9 @@
 任意 URL → 平台检测 → 抓取内容 → 统一输出
               ↓                ↓          ↓
          自动识别          文本：Jina Reader    → output/X/作者_日期：标题.md
-         7+ 平台           视频：yt-dlp 字幕    → output/YouTube/标题.md
+         7+ 平台           视频：yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
                            音频：Whisper 转录
-                           API：Bilibili / RSS / Telegram
+                           API：Bilibili / RSS / Telegram / YouTube Data API v3
                            X/Twitter：GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
 ```
 
@@ -67,6 +67,17 @@ feedgrab "https://www.xiaohongshu.com/search_result?keyword=开学第一课&sour
 # 搜索微信公众号文章（通过搜狗微信搜索）
 feedgrab mpweixin-so "AI Agent"
 feedgrab mpweixin-so "AI Agent" --limit 5  # 限制结果数量
+
+# 搜索 YouTube 视频
+feedgrab ytb-so "AI Agent"
+feedgrab ytb-so "教程" --channel @AndrewNg --order viewCount
+feedgrab ytb-so "ML" --after 2025-01-01 --limit 5
+
+# 下载 YouTube 视频/音频/字幕（输出到 OUTPUT_DIR/YouTube/ 目录）
+feedgrab ytb-dlv https://www.youtube.com/watch?v=xxx   # 下载视频 (MP4)
+feedgrab ytb-dla https://www.youtube.com/watch?v=xxx   # 下载音频 (MP3)
+feedgrab ytb-dlz https://www.youtube.com/watch?v=xxx   # 下载字幕 (SRT)
+feedgrab ytb-dla https://youtu.be/xxx?si=xxx           # 支持短分享链接
 
 # 按公众号账号批量抓取全部历史文章（需要 feedgrab login wechat）
 feedgrab mpweixin-id "饼干哥哥AGI"
@@ -151,7 +162,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 
 | 平台 | 文本抓取 | 视频/音频转录 |
 |------|---------|-------------|
-| YouTube | Jina | yt-dlp 字幕 → Groq Whisper 兜底 |
+| YouTube | **YouTube Data API v3** 搜索 + yt-dlp 字幕 | yt-dlp 字幕 → Groq Whisper 兜底 |
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`） | — |
@@ -306,12 +317,15 @@ output/
 │   └── search_xxx/       #   搜索笔记（按关键词分目录）
 ├── WeChat/               # 微信公众号
 ├── YouTube/              # YouTube
+│   └── search_xxx/       #   搜索结果（按关键词分目录）
 ├── Bilibili/             # B 站
 ├── Telegram/             # Telegram
 └── RSS/                  # RSS
 ```
 
 文件命名格式（Twitter）：`作者名_YYYY-MM-DD：标题.md`（如 `强子手记_2026-02-24：最近看到好多新蓝V都成功✅认证了创作者身份。.md`）
+
+文件命名格式（YouTube）：`作者名_YYYY-MM-DD：标题.{md,mp4,mp3,srt}`（如 `影视飓风_2026-02-12：能卖上亿美金？国产短剧如何征服世界？.md`）
 
 文件命名格式（小红书）：`作者名_YYYY-MM-DD：标题.md`（如 `墨客老师资料库_2026-02-18：开学第一课还没思路的班主任看过来👀.md`）
 

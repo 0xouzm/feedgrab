@@ -658,6 +658,150 @@ def cmd_setup():
     print()
 
 
+def cmd_youtube_download(url: str, mode: str = "video"):
+    """Download YouTube video/audio/subtitles to the same dir as MD output.
+
+    Args:
+        url: YouTube video URL
+        mode: 'video', 'audio', or 'subtitle'
+    """
+    import re as _re
+    from feedgrab.fetchers.youtube_search import download_video, download_subtitles
+
+    # Resolve output directory (same as MD output: {OUTPUT_DIR}/YouTube/)
+    vault_path = os.getenv("OBSIDIAN_VAULT", "")
+    output_dir_env = os.getenv("OUTPUT_DIR", "")
+    if vault_path:
+        output_dir = os.path.join(vault_path, "YouTube")
+    elif output_dir_env:
+        output_dir = os.path.join(output_dir_env, "YouTube")
+    else:
+        output_dir = os.path.expanduser("~/Downloads")
+
+    # Try to get API metadata for consistent filename
+    video_id = ""
+    match = _re.search(r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})', url)
+    if match:
+        video_id = match.group(1)
+
+    filename_prefix = ""
+    if video_id and os.getenv("YOUTUBE_API_KEY", "").strip():
+        try:
+            from feedgrab.fetchers.youtube_search import get_single_video
+            meta = get_single_video(video_id)
+            if meta:
+                author = meta.get("channel_title", "").strip()
+                pub = meta.get("published_at", "")[:10]
+                title = meta.get("title", "").strip()
+                # Sanitize for filename
+                parts = []
+                if author:
+                    parts.append(author)
+                if pub:
+                    parts.append(pub)
+                prefix = "_".join(parts)
+                safe_title = _re.sub(r'[\\/:*?"<>|\x00-\x1f]', '_', title)[:80]
+                filename_prefix = f"{prefix}：{safe_title}" if prefix else safe_title
+        except Exception:
+            pass
+
+    print(f"\n📥 YouTube download ({mode}): {url}")
+    print(f"   Output: {output_dir}\n")
+
+    if mode == "subtitle":
+        path = download_subtitles(url, output_dir=output_dir, filename_prefix=filename_prefix)
+    elif mode == "audio":
+        path = download_video(url, output_dir=output_dir, audio_only=True,
+                              filename_prefix=filename_prefix)
+    else:
+        path = download_video(url, output_dir=output_dir, filename_prefix=filename_prefix)
+
+    if path:
+        print(f"\n✅ Downloaded: {path}")
+    else:
+        print(f"\n❌ Download failed")
+        sys.exit(1)
+
+
+def cmd_youtube_search(args: list):
+    """Search YouTube videos and save results as Obsidian Markdown."""
+    from feedgrab.fetchers.youtube_search import youtube_search, download_video
+    from feedgrab.schema import from_youtube
+    from feedgrab.utils.storage import save_to_markdown
+
+    keyword = args[0]
+
+    # Parse CLI options
+    def _opt(name: str, default: str = "") -> str:
+        if name in args:
+            idx = args.index(name)
+            if idx + 1 < len(args):
+                return args[idx + 1]
+        return default
+
+    channel = _opt("--channel")
+    order = _opt("--order", "relevance")
+    after = _opt("--after")
+    before = _opt("--before")
+    min_dur = _opt("--min-duration")
+    max_dur = _opt("--max-duration")
+    limit = int(_opt("--limit", "0")) or 0
+    do_download = "--download" in args
+    audio_only = "--audio-only" in args
+
+    try:
+        results = youtube_search(
+            keyword,
+            channel=channel,
+            max_results=limit,
+            order=order,
+            after=after,
+            before=before,
+            min_duration=min_dur,
+            max_duration=max_dur,
+        )
+    except RuntimeError as e:
+        print(f"\u274c {e}")
+        sys.exit(1)
+
+    if not results:
+        print("\u274c No results found")
+        return
+
+    print(f"\n\U0001f50d YouTube search: \"{keyword}\" — {len(results)} results\n")
+
+    saved = 0
+    for i, video in enumerate(results, 1):
+        # Display result
+        print(
+            f"  {i}. [{video['duration']}] {video['title'][:70]}\n"
+            f"     {video['channel_title']} · "
+            f"{video['view_count']:,} views · "
+            f"{video['published_at'][:10]}"
+        )
+
+        # Save to Obsidian Markdown
+        video["search_keyword"] = keyword
+        content = from_youtube(video)
+        # Put search results in search subdirectory
+        content.category = f"search/{_sanitize_for_dirname(keyword)}"
+        save_to_markdown(content)
+        saved += 1
+
+        # Download if requested
+        if do_download:
+            download_video(video["url"], audio_only=audio_only)
+
+    print(f"\n\u2705 Saved {saved} videos to YouTube/search/{keyword}/")
+
+
+def _sanitize_for_dirname(name: str) -> str:
+    """Clean a string for use as a directory name."""
+    import re as _re
+    name = _re.sub(r'[\\/:*?"<>|\x00-\x1f]', '_', name)
+    return name.strip('. ')[:50]
+
+
 def cmd_mpweixin_account(account_name: str):
     """Fetch all articles from a WeChat public account via MP backend API."""
     from feedgrab.config import mpweixin_id_since, mpweixin_id_delay
@@ -744,6 +888,10 @@ Usage:
     feedgrab <url1> <url2>      Fetch multiple URLs
     feedgrab mpweixin-id <name> Fetch all articles from a WeChat public account
     feedgrab mpweixin-so <keyword>  Search WeChat articles by keyword
+    feedgrab ytb-so <keyword>   Search YouTube videos by keyword
+    feedgrab ytb-dlv <url>      Download YouTube video (MP4)
+    feedgrab ytb-dla <url>      Download YouTube audio (MP3)
+    feedgrab ytb-dlz <url>      Download YouTube subtitles (SRT)
     feedgrab login <platform>   Login to a platform (saves session for browser fallback)
     feedgrab detect-ua          Detect real Chrome UA and save to .env
     feedgrab list               Show content statistics
@@ -763,6 +911,11 @@ Examples:
     feedgrab "https://www.xiaohongshu.com/search_result?keyword=..."
     feedgrab mpweixin-id "饼干哥哥AGI"
     feedgrab mpweixin-so "AI Agent"
+    feedgrab ytb-so "AI Agent"
+    feedgrab ytb-so "教程" --channel @AndrewNg --order viewCount
+    feedgrab ytb-dlv https://www.youtube.com/watch?v=xxx   # Download video
+    feedgrab ytb-dla https://www.youtube.com/watch?v=xxx   # Download audio
+    feedgrab ytb-dlz https://www.youtube.com/watch?v=xxx   # Download subtitles
     feedgrab login xhs
     feedgrab setup              # First-time setup wizard
 """)
@@ -815,6 +968,32 @@ Examples:
                 except ValueError:
                     pass
         cmd_wechat_search(keyword, max_results=limit)
+    elif cmd == "ytb-so":
+        if len(sys.argv) < 3:
+            print("\u274c Usage: feedgrab ytb-so <keyword> [options]")
+            print('   Example: feedgrab ytb-so "AI Agent"')
+            print('            feedgrab ytb-so "教程" --channel @AndrewNg')
+            print('            feedgrab ytb-so "ML" --order viewCount --after 2025-01-01')
+            print('            feedgrab ytb-so "AI" --download --limit 5')
+            print("   Options:")
+            print("     --channel <handle>   Restrict to a YouTube channel")
+            print("     --order <order>      relevance/date/viewCount/rating (default: relevance)")
+            print("     --after YYYY-MM-DD   Only videos after this date")
+            print("     --before YYYY-MM-DD  Only videos before this date")
+            print("     --min-duration <dur> Minimum duration (e.g. 10m, 1h)")
+            print("     --max-duration <dur> Maximum duration (e.g. 30m, 2h)")
+            print("     --limit N            Max results (default: 10, max: 50)")
+            print("     --download           Download videos after search")
+            print("     --audio-only         Download audio only (MP3)")
+            sys.exit(1)
+        cmd_youtube_search(sys.argv[2:])
+    elif cmd in ("ytb-dlv", "ytb-dla", "ytb-dlz"):
+        if len(sys.argv) < 3:
+            print(f"❌ Usage: feedgrab {cmd} <youtube_url>")
+            print(f"   Example: feedgrab {cmd} https://www.youtube.com/watch?v=xxx")
+            sys.exit(1)
+        mode_map = {"ytb-dlv": "video", "ytb-dla": "audio", "ytb-dlz": "subtitle"}
+        cmd_youtube_download(sys.argv[2], mode=mode_map[cmd])
     elif cmd.startswith("http") or cmd.startswith("www.") or "." in cmd:
         urls = [arg for arg in sys.argv[1:] if arg.startswith(("http", "www.")) or "." in arg]
         cmd_fetch(urls)
