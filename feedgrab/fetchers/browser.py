@@ -493,6 +493,26 @@ WECHAT_ARTICLE_JS_EVALUATE = """() => {
     result.html = content ? content.innerHTML : '';
     result.hasContent = !!content;
 
+    // 8. cgiDataNew — WeChat embeds article metadata in window.cgiDataNew
+    //    user_info.appmsg_bar_data contains read/like/share/comment counts
+    //    NOTE: only populated with real data when accessed via authenticated WeChat session;
+    //    anonymous browser access returns empty object {} with all counts = 0.
+    result.cgiMetrics = null;
+    try {
+        if (window.cgiDataNew && window.cgiDataNew.user_info) {
+            const bar = window.cgiDataNew.user_info.appmsg_bar_data;
+            if (bar && Object.keys(bar).length > 0) {
+                result.cgiMetrics = {
+                    readNum: bar.read_num || 0,
+                    oldLikeNum: bar.old_like_count || 0,
+                    likeNum: bar.like_count || 0,
+                    shareNum: bar.share_count || 0,
+                    commentNum: bar.comment_count || 0,
+                };
+            }
+        }
+    } catch(e) {}
+
     return result;
 }"""
 
@@ -542,6 +562,17 @@ def _build_wechat_result(data: dict, page_url: str, md_converter=None) -> dict:
         "tags": data.get("tags", []),
         "original_url": data.get("originalUrl", ""),
     }
+
+    # cgiMetrics: only present when appmsg_bar_data has real data
+    cgi = data.get("cgiMetrics")
+    if cgi:
+        result["reads"] = cgi.get("readNum", 0)
+        result["likes"] = cgi.get("oldLikeNum", 0)
+        result["wow"] = cgi.get("likeNum", 0)    # 在看
+        result["shares"] = cgi.get("shareNum", 0)
+        result["comments"] = cgi.get("commentNum", 0)
+
+    return result
 
 
 async def evaluate_wechat_article(page, md_converter=None) -> dict:

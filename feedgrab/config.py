@@ -448,6 +448,27 @@ def mpweixin_sogou_delay() -> float:
 
 
 # ---------------------------------------------------------------------------
+# WeChat MP account article fetch (mpweixin-id)
+# ---------------------------------------------------------------------------
+
+def mpweixin_id_since() -> str:
+    """Date filter for MP account articles (e.g. '2025-10-01').
+
+    Only fetch articles published after this date.
+    Empty = fetch all articles.
+    """
+    return os.getenv("MPWEIXIN_ID_SINCE", "").strip()
+
+
+def mpweixin_id_delay() -> float:
+    """Delay in seconds between fetching each article (default 3.0)."""
+    try:
+        return float(os.getenv("MPWEIXIN_ID_DELAY", "3.0"))
+    except ValueError:
+        return 3.0
+
+
+# ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------
 

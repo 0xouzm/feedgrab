@@ -160,7 +160,9 @@ def _generate_filename(item: UnifiedContent) -> str:
     if item.title and item.title.strip():
         raw_title = item.title.strip()
     elif item.content and item.content.strip():
-        raw_title = item.content.strip()[:50]
+        # Strip leading ![cover](...) markdown image (e.g. WeChat prepends cover)
+        text = re.sub(r'^!\[cover\]\([^)]*\)\s*', '', item.content.strip())
+        raw_title = text[:50] if text else item.id
     else:
         raw_title = item.id
 
@@ -324,6 +326,13 @@ def _format_markdown(item: UnifiedContent) -> str:
             fm_lines.append(f'original_url: "{extra["original_url"]}"')
         if extra.get("search_keyword"):
             fm_lines.append(f'search_keyword: "{extra["search_keyword"]}"')
+        # Engagement metrics (only when available via authenticated session)
+        if extra.get("reads"):
+            fm_lines.append(f"reads: {extra['reads']}")
+            fm_lines.append(f"likes: {extra.get('likes', 0)}")
+            fm_lines.append(f"wow: {extra.get('wow', 0)}")
+            fm_lines.append(f"shares: {extra.get('shares', 0)}")
+            fm_lines.append(f"comments: {extra.get('comments', 0)}")
 
     # Bilibili extras
     if item.source_type == SourceType.BILIBILI:

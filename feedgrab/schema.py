@@ -328,6 +328,11 @@ def from_wechat(article: dict) -> UnifiedContent:
             "summary": article.get('summary', ''),
             "original_url": article.get('original_url', ''),
             "search_keyword": article.get('search_keyword', ''),
+            "reads": article.get('reads', 0),
+            "likes": article.get('likes', 0),
+            "wow": article.get('wow', 0),
+            "shares": article.get('shares', 0),
+            "comments": article.get('comments', 0),
         },
     )
 

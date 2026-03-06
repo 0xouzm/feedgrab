@@ -658,6 +658,39 @@ def cmd_setup():
     print()
 
 
+def cmd_mpweixin_account(account_name: str):
+    """Fetch all articles from a WeChat public account via MP backend API."""
+    from feedgrab.config import mpweixin_id_since, mpweixin_id_delay
+    from feedgrab.fetchers.mpweixin_account import fetch_account_articles
+
+    since = mpweixin_id_since()
+    delay = mpweixin_id_delay()
+
+    async def run():
+        result = await fetch_account_articles(
+            account_name, since=since, delay=delay,
+        )
+        print(f"\n\u2705 WeChat account fetch complete: '{account_name}'")
+        print(f"   Total: {result['total']}, Fetched: {result['fetched']}, "
+              f"Skipped: {result['skipped']}, Failed: {result['failed']}")
+        if result['articles']:
+            print("\n   Articles:")
+            for art in result['articles']:
+                title = art.get('title', 'untitled')[:50]
+                date = art.get('publish_date', '')
+                print(f"   - [{date}] {title}")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n\u23f9 Cancelled")
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"\u274c {e}")
+        sys.exit(1)
+
+
 def cmd_wechat_search(keyword: str, max_results: int = 0):
     """Search WeChat articles by keyword via Sogou."""
     from feedgrab.config import mpweixin_sogou_enabled, mpweixin_sogou_max_results, mpweixin_sogou_delay
@@ -709,13 +742,13 @@ Usage:
     feedgrab setup              First-time deployment guide (recommended for new users)
     feedgrab <url>              Fetch content from any URL
     feedgrab <url1> <url2>      Fetch multiple URLs
+    feedgrab mpweixin-id <name> Fetch all articles from a WeChat public account
     feedgrab mpweixin-so <keyword>  Search WeChat articles by keyword
     feedgrab login <platform>   Login to a platform (saves session for browser fallback)
     feedgrab detect-ua          Detect real Chrome UA and save to .env
     feedgrab list               Show content statistics
     feedgrab reset <folder>     Reset a subfolder (delete files + clear dedup index)
     feedgrab clean-index        Clean up batch records and cache files from index
-    feedgrab mpweixin-so <kw>   Search WeChat articles by keyword via Sogou
 
 Supported platforms:
     WeChat, Telegram, X/Twitter, YouTube,
@@ -728,6 +761,7 @@ Examples:
     feedgrab https://x.com/iBigQiang
     feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
     feedgrab "https://www.xiaohongshu.com/search_result?keyword=..."
+    feedgrab mpweixin-id "饼干哥哥AGI"
     feedgrab mpweixin-so "AI Agent"
     feedgrab login xhs
     feedgrab setup              # First-time setup wizard
@@ -759,6 +793,13 @@ Examples:
     elif cmd == "clean-index":
         skip = "--yes" in sys.argv or "-y" in sys.argv
         cmd_clean_index(skip_confirm=skip)
+    elif cmd == "mpweixin-id":
+        if len(sys.argv) < 3:
+            print("\u274c Usage: feedgrab mpweixin-id <account_name>")
+            print('   Example: feedgrab mpweixin-id "饼干哥哥AGI"')
+            print("   Requires: feedgrab login wechat (MP backend session)")
+            sys.exit(1)
+        cmd_mpweixin_account(sys.argv[2])
     elif cmd == "mpweixin-so":
         if len(sys.argv) < 3:
             print("\u274c Usage: feedgrab mpweixin-so <keyword> [--limit N]")

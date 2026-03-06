@@ -2,6 +2,60 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-06 · v0.9.2 · 微信公众号按账号批量抓取 + cgiDataNew 元数据管线
+
+### 背景
+feedgrab 已支持微信公众号单篇抓取和搜狗搜索批量抓取，但缺少按公众号账号批量枚举全部历史文章的能力。通过分析 [wechat-article-exporter](https://github.com/nichenke/wechat-article-exporter) 的 MP 后台 API 逆向方案，发现可以利用 `feedgrab login wechat` 保存的 MP 后台 session，调用 `searchbiz`（搜索公众号→fakeid）和 `appmsgpublish`（分页文章列表）API 实现全量枚举。
+
+同时调研了 `window.cgiDataNew.user_info.appmsg_bar_data` 的阅读量/点赞/评论提取可行性。测试结果：匿名访问时 `appmsg_bar_data` 为空对象，互动数据需要微信认证会话才会填充。代码已预埋管线，未来认证会话可用时自动启用。
+
+### 方案决策
+
+**MP 后台 API 按账号批量抓取**
+1. `mpweixin_account.py` 新建：核心 fetcher，使用 Playwright `page.evaluate()` + `fetch(url, {credentials: 'include'})` 调用 MP API（自动携带 session cookie）。
+2. `searchbiz` API：按名称搜索公众号，精确匹配优先，返回 fakeid。
+3. `appmsgpublish` API：按 fakeid 分页枚举文章列表（每页 5 条），`publish_page.publish_list` 内含 `publish_info.appmsgex[]` 文章数组。
+4. 日期过滤：`MPWEIXIN_ID_SINCE` 配置项控制截止日期，到达后停止分页。
+5. 断点续传：`_progress_*.json` 缓存文件记录 `next_begin/fetched/skipped/failed`，中断后自动恢复。完成后自动清理。
+6. 去重：复用 `utils/dedup.py` 的 `mpweixin` 平台索引，与搜狗搜索、单篇抓取共享。
+7. 逐篇抓取：每篇文章在新标签页打开，复用 `evaluate_wechat_article()` + `_html_to_markdown()` 提取全文。
+8. 输出目录：`{OUTPUT_DIR}/mpweixin/account/{公众号名}/`。
+9. API title fallback：当浏览器页面提取 title 为空时，使用 API 返回的 title 作为回退。
+
+**cgiDataNew 元数据管线**
+1. `browser.py` 的 JS evaluate 新增第 8 段：提取 `window.cgiDataNew.user_info.appmsg_bar_data` 的 `read_num/old_like_count/like_count/share_count/comment_count`。
+2. `_build_wechat_result()` 透传 cgiMetrics → `schema.py` → `storage.py` 条件输出（仅当 reads > 0 时展示）。
+
+**storage.py 优化**
+1. 文件名日期截断为仅日期（去掉时间部分 `[:10]`）。
+2. WeChat 正文不再重复输出标题 heading。
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/mpweixin_account.py` | 新建 | MP 后台 API 按账号批量抓取（searchbiz + appmsgpublish + 断点续传 + 去重） |
+| `feedgrab/cli.py` | 修改 | 新增 `cmd_mpweixin_account()` + `mpweixin-id` 命令路由 |
+| `feedgrab/config.py` | 修改 | 新增 `mpweixin_id_since()` + `mpweixin_id_delay()` |
+| `feedgrab/fetchers/browser.py` | 修改 | 新增 cgiDataNew 元数据提取（JS evaluate 第 8 段） |
+| `feedgrab/schema.py` | 修改 | `from_wechat()` 新增 reads/likes/wow/shares/comments 字段 |
+| `feedgrab/utils/storage.py` | 修改 | WeChat 文件名日期截断 + 正文去标题 + 条件性互动指标输出 |
+| `.env.example` | 修改 | 新增 `MPWEIXIN_ID_SINCE` + `MPWEIXIN_ID_DELAY` 配置 |
+
+### 验证结果
+- `MPWEIXIN_ID_SINCE=2025-08-01 feedgrab mpweixin-id "饼干哥哥AGI"` 实测：
+  - Session 加载 + 账号搜索 + fakeid 获取 ✅
+  - 文章分页枚举（每页 5 篇） ✅
+  - 逐篇打开 + 全文提取 + Markdown 保存 ✅
+  - 去重索引更新 ✅
+  - 日期过滤停止 ✅
+  - 已成功抓取 48+ 篇文章到 `mpweixin/account/饼干哥哥AGI/` ✅
+  - 发现并修复 title fallback bug（部分文章 title 为空导致文件名异常） ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-06 · v0.9.1 · 微信公众号抓取增强（元数据 + markdownify + 图片防盗链）
 
 ### 背景

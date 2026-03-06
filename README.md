@@ -68,6 +68,10 @@ feedgrab "https://www.xiaohongshu.com/search_result?keyword=开学第一课&sour
 feedgrab mpweixin-so "AI Agent"
 feedgrab mpweixin-so "AI Agent" --limit 5  # 限制结果数量
 
+# 按公众号账号批量抓取全部历史文章（需要 feedgrab login wechat）
+feedgrab mpweixin-id "饼干哥哥AGI"
+MPWEIXIN_ID_SINCE=2025-01-01 feedgrab mpweixin-id "饼干哥哥AGI"  # 指定日期之后
+
 # 批量抓取多个 URL
 feedgrab https://url1.com https://url2.com
 
@@ -150,7 +154,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | YouTube | Jina | yt-dlp 字幕 → Groq Whisper 兜底 |
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
-| 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（关键词批量，`mpweixin-so`） | — |
+| 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`） | — |
 | 小红书 | Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
@@ -478,6 +482,8 @@ cp .env.example .env
 | `MPWEIXIN_SOGOU_ENABLED` | 否 | 启用搜狗微信文章搜索（默认：`false`） |
 | `MPWEIXIN_SOGOU_MAX_RESULTS` | 否 | 每次搜索最大文章数（默认：`10`，最多 `100`） |
 | `MPWEIXIN_SOGOU_DELAY` | 否 | 文章处理间隔秒数（默认：`3.0`） |
+| `MPWEIXIN_ID_SINCE` | 否 | 按账号批量：仅抓取该日期之后的文章（`YYYY-MM-DD`，留空=全部） |
+| `MPWEIXIN_ID_DELAY` | 否 | 按账号批量：文章处理间隔秒数（默认：`3.0`） |
 | `BROWSER_USER_AGENT` | 否 | 全局浏览器 UA（推荐 `feedgrab detect-ua` 自动检测） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |
