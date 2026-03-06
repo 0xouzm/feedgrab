@@ -2,6 +2,30 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-06 · v0.9.4 · 微信单篇抓取策略反转：Browser 优先
+
+### 背景
+微信单篇抓取原先采用 Jina 优先策略（Tier 1 Jina → Tier 2 Browser → Tier 3 Browser retry），但实际运行中 Jina 几乎每次都因微信 CDN 超时而白等 30 秒，且返回数据不完整（缺少 author/date/cover/tags）。而 Browser 使用 WeChat JS evaluate 提取的数据最全（9 类元数据 + 富文本 Markdown），成功率高。参考 X/Twitter 的 GraphQL 优先策略，将 Browser 提升为 Tier 1。
+
+### 方案决策
+- 反转抓取层级：Browser → Jina → Browser retry（与 X/Twitter 的 GraphQL-first 策略对齐）
+- 提取 `_browser_fetch()` 内部函数，Tier 1 和 Tier 3 复用同一段浏览器抓取逻辑
+- Jina 降级为 Tier 2 轻量兜底，仅在浏览器环境不可用时触发
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/wechat.py` | 重写 | 抓取策略从 Jina→Browser 反转为 Browser→Jina→Browser retry |
+
+### 验证结果
+- 普通长文（`mp.weixin.qq.com/s/pQioMCCW9sCOZ1BW8fRD9A`）：Browser Tier 1 直接成功，约 4 秒完成（原方案需 34+ 秒等待 Jina 超时）✅
+- 小绿书图片帖（`mp.weixin.qq.com/s/lk60C8tBWknMzFTQRUIFTQ`）：Browser Tier 1 成功提取标题+作者+内容 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-06 · v0.9.3 · 微信代码块修复 + 小绿书元数据回退
 
 ### 背景
