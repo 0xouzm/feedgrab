@@ -150,7 +150,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | YouTube | Jina | yt-dlp 字幕 → Groq Whisper 兜底 |
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
-| 微信公众号 | Jina → Playwright（单篇）/ 搜狗搜索（关键词批量，`mpweixin-so`） | — |
+| 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（关键词批量，`mpweixin-so`） | — |
 | 小红书 | Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
@@ -516,8 +516,8 @@ feedgrab/
 │   │   ├── twitter_api.py       # TwitterAPI.io 付费 API 客户端（搜索+用户推文）
 │   │   ├── twitter_api_user_tweets.py# 付费 API 补充/全量抓取（替代浏览器搜索）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
-│   │   ├── wechat.py          # Jina → Playwright 兜底
-│   │   ├── wechat_search.py   # 搜狗微信搜索（关键词 → 文章发现 + 抓取）
+│   │   ├── wechat.py          # Jina → Playwright WeChat JS 提取
+│   │   ├── wechat_search.py   # 搜狗微信搜索（markdownify 富文本转换）
 │   │   ├── xhs.py             # Jina → Playwright + Session 兜底
 │   │   ├── xhs_user_notes.py  # 小红书作者批量抓取（__INITIAL_STATE__ + XHR 拦截 + 滚动加载）
 │   │   └── xhs_search_notes.py# 小红书搜索批量抓取（搜索结果页滚动 + 逐篇深度抓取）

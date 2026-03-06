@@ -184,143 +184,157 @@ async def _resolve_sogou_redirect(page, sogou_url: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# WeChat article HTML → Markdown conversion
+# WeChat article HTML → Markdown conversion (markdownify + code block handling)
 # ---------------------------------------------------------------------------
 
-_WECHAT_EXTRACT_JS = """
-() => {
-    const content = document.querySelector('#js_content');
-    if (!content) return null;
+def _preprocess_wechat_html(html: str) -> tuple:
+    """Pre-process WeChat HTML before markdownify conversion.
 
-    const title = (document.querySelector('#activity-name') || {}).innerText || '';
-    const author = (document.querySelector('#js_name') || {}).innerText || '';
+    Handles:
+    - Lazy-loaded images (data-src → src)
+    - SVG/tracking pixel filtering
+    - WeChat code blocks (.code-snippet__fix) → placeholder
+    - Script/style removal
 
-    // Extract rich content as simplified HTML
-    const html = content.innerHTML;
-    return { title: title.trim(), author: author.trim(), html: html };
-}
-"""
+    Returns:
+        (cleaned_html, code_blocks) where code_blocks is a list of
+        (language, code_text) tuples for placeholder restoration.
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Remove script/style
+    for tag in soup.find_all(["script", "style"]):
+        tag.decompose()
+
+    # Remove WeChat noise elements
+    for sel in [".qr_code_pc", ".reward_area", "#js_pc_qr_code"]:
+        for el in soup.select(sel):
+            el.decompose()
+
+    # Fix lazy-loaded images: data-src → src, filter SVG/tiny
+    for img in soup.find_all("img"):
+        data_src = img.get("data-src")
+        if data_src:
+            img["src"] = data_src
+
+        src = img.get("src", "")
+        # Skip SVG icons and base64 images
+        if "wx_fmt=svg" in src or src.startswith("data:image"):
+            img.decompose()
+            continue
+        # Skip tiny tracking pixels
+        data_w = img.get("data-w")
+        if data_w and data_w.isdigit() and int(data_w) < 20:
+            img.decompose()
+
+    # Handle WeChat code blocks (.code-snippet__fix) — placeholder strategy
+    code_blocks = []
+    for snippet in soup.select(".code-snippet__fix"):
+        # Remove line number elements
+        for line_idx in snippet.select(".code-snippet__line-index"):
+            line_idx.decompose()
+
+        # Extract language from pre[data-lang]
+        pre = snippet.find("pre", attrs={"data-lang": True})
+        lang = pre.get("data-lang", "") if pre else ""
+
+        # Extract code text from all <code> tags
+        code_parts = []
+        for code_tag in snippet.find_all("code"):
+            text = code_tag.get_text()
+            # Filter CSS counter leak lines
+            if re.match(r'^[ce]?ounter\(line', text):
+                continue
+            code_parts.append(text)
+
+        code_text = "\n".join(code_parts)
+        placeholder = f"WECHAT-CODEBLOCK-{len(code_blocks)}"
+        code_blocks.append((lang, code_text))
+
+        # Replace snippet with placeholder paragraph
+        snippet.replace_with(soup.new_string(f"\n\n{placeholder}\n\n"))
+
+    # Also handle standard <pre> code blocks not inside .code-snippet__fix
+    for pre in soup.find_all("pre"):
+        lang = pre.get("data-lang", "")
+        code_tag = pre.find("code")
+        code_text = code_tag.get_text() if code_tag else pre.get_text()
+
+        placeholder = f"WECHAT-CODEBLOCK-{len(code_blocks)}"
+        code_blocks.append((lang, code_text))
+        pre.replace_with(soup.new_string(f"\n\n{placeholder}\n\n"))
+
+    return str(soup), code_blocks
 
 
 def _html_to_markdown(html: str) -> str:
     """Convert WeChat article HTML to Markdown.
 
-    Handles: headings, paragraphs, bold, italic, images, links, lists, blockquotes.
+    Uses markdownify for robust conversion with pre-processing for
+    WeChat-specific elements (lazy images, code snippets).
     """
     if not html:
         return ""
 
-    text = html
+    import markdownify
 
-    # Remove script/style
-    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # Pre-process: fix images, extract code blocks as placeholders
+    cleaned_html, code_blocks = _preprocess_wechat_html(html)
 
-    # Headings (h1-h4)
-    for level in range(1, 5):
-        tag = f'h{level}'
-        prefix = '#' * level
-        text = re.sub(
-            rf'<{tag}[^>]*>(.*?)</{tag}>',
-            lambda m, p=prefix: f'\n\n{p} {_strip_tags(m.group(1)).strip()}\n\n',
-            text, flags=re.DOTALL | re.IGNORECASE,
-        )
-
-    # Blockquote
-    text = re.sub(
-        r'<blockquote[^>]*>(.*?)</blockquote>',
-        lambda m: '\n' + '\n'.join(f'> {line}' for line in _strip_tags(m.group(1)).strip().split('\n') if line.strip()) + '\n',
-        text, flags=re.DOTALL | re.IGNORECASE,
+    # Convert with markdownify
+    md = markdownify.markdownify(
+        cleaned_html,
+        heading_style="ATX",
+        bullets="-",
+        convert=[
+            "p", "h1", "h2", "h3", "h4", "h5", "h6",
+            "strong", "em", "b", "i", "a", "img",
+            "ul", "ol", "li", "blockquote", "br", "hr",
+            "table", "thead", "tbody", "tr", "th", "td",
+            "pre", "code", "del", "sub", "sup",
+        ],
     )
 
-    # Bold: <strong>, <b>
-    text = re.sub(r'<(?:strong|b)[^>]*>(.*?)</(?:strong|b)>', r'**\1**', text, flags=re.DOTALL | re.IGNORECASE)
-    # Italic: <em>, <i>
-    text = re.sub(r'<(?:em|i)[^>]*>(.*?)</(?:em|i)>', r'*\1*', text, flags=re.DOTALL | re.IGNORECASE)
-
-    # Images: data-src (lazy) or src
-    def _img_replace(m):
-        attrs = m.group(1)
-        # WeChat uses data-src for lazy loading
-        src_m = re.search(r'data-src="([^"]+)"', attrs)
-        if not src_m:
-            src_m = re.search(r'src="([^"]+)"', attrs)
-        if not src_m:
-            return ''
-        src = src_m.group(1)
-        # Skip tiny tracking pixels and SVG icons
-        if 'wx_fmt=svg' in src or 'data:image' in src:
-            return ''
-        width_m = re.search(r'data-w="(\d+)"', attrs)
-        if width_m and int(width_m.group(1)) < 20:
-            return ''
-        return f'\n\n![image]({src})\n\n'
-
-    text = re.sub(r'<img([^>]*)/?>', _img_replace, text, flags=re.IGNORECASE)
-
-    # Links
-    text = re.sub(
-        r'<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>',
-        lambda m: f'[{_strip_tags(m.group(2)).strip()}]({m.group(1)})' if m.group(1) and not m.group(1).startswith('javascript:') else _strip_tags(m.group(2)),
-        text, flags=re.DOTALL | re.IGNORECASE,
-    )
-
-    # List items
-    text = re.sub(r'<li[^>]*>(.*?)</li>', lambda m: f'\n- {_strip_tags(m.group(1)).strip()}', text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r'</?[ou]l[^>]*>', '', text, flags=re.IGNORECASE)
-
-    # Horizontal rules
-    text = re.sub(r'<hr[^>]*/?>','\n\n---\n\n', text, flags=re.IGNORECASE)
-
-    # Line breaks
-    text = re.sub(r'<br\s*/?>','\n', text, flags=re.IGNORECASE)
-
-    # Paragraphs and sections → double newline
-    text = re.sub(r'<(?:p|section|div)[^>]*>', '\n\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'</(?:p|section|div)>', '', text, flags=re.IGNORECASE)
-
-    # Strip remaining HTML tags
-    text = re.sub(r'<[^>]+>', '', text)
-
-    # Decode HTML entities
-    text = text.replace('&nbsp;', ' ')
-    text = text.replace('&amp;', '&')
-    text = text.replace('&lt;', '<')
-    text = text.replace('&gt;', '>')
-    text = text.replace('&quot;', '"')
-    text = text.replace('&#39;', "'")
-    text = text.replace('&ldquo;', '\u201c')
-    text = text.replace('&rdquo;', '\u201d')
-    text = text.replace('&mdash;', '\u2014')
-    text = text.replace('&ndash;', '\u2013')
-    text = text.replace('&hellip;', '\u2026')
+    # Restore code block placeholders → fenced code blocks
+    for idx, (lang, code_text) in enumerate(code_blocks):
+        placeholder = f"WECHAT-CODEBLOCK-{idx}"
+        fence = f"```{lang}\n{code_text}\n```"
+        md = md.replace(placeholder, fence)
 
     # Clean up whitespace
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    text = text.strip()
+    md = md.replace('\u00a0', ' ')
+    md = re.sub(r'\n{4,}', '\n\n\n', md)
+    md = re.sub(r'[ \t]+$', '', md, flags=re.MULTILINE)
+    md = md.strip()
 
-    return text
-
-
-def _strip_tags(html: str) -> str:
-    """Remove all HTML tags from a string."""
-    return re.sub(r'<[^>]+>', '', html)
+    return md
 
 
 async def _fetch_wechat_article_via_browser(context, wx_url: str) -> Dict[str, Any]:
     """Fetch WeChat article content using the shared browser context.
 
-    Extracts rich HTML from #js_content and converts to Markdown.
-    Returns dict with: title, content, author, url.
+    Uses the unified WeChat extraction (rich HTML + full metadata).
+    Returns dict with: title, content, author, url, cover_image, publish_date, etc.
     """
+    from feedgrab.fetchers.browser import (
+        WECHAT_ARTICLE_JS_EVALUATE, _build_wechat_result,
+    )
+
     new_page = await context.new_page()
     try:
         await new_page.goto(wx_url, wait_until="domcontentloaded", timeout=20000)
         await new_page.wait_for_timeout(2000)
 
-        data = await new_page.evaluate(_WECHAT_EXTRACT_JS)
-        if not data:
+        try:
+            await new_page.wait_for_selector("#js_content", timeout=5000)
+        except Exception:
+            pass
+
+        data = await new_page.evaluate(WECHAT_ARTICLE_JS_EVALUATE)
+
+        if not data or not data.get("hasContent"):
             # Fallback: grab raw text
             text = await new_page.evaluate("() => document.body.innerText")
             page_title = await new_page.title()
@@ -329,15 +343,14 @@ async def _fetch_wechat_article_via_browser(context, wx_url: str) -> Dict[str, A
                 "content": (text or "").strip(),
                 "author": "",
                 "url": wx_url,
+                "cover_image": "",
+                "publish_date": "",
+                "summary": "",
+                "tags": [],
+                "original_url": "",
             }
 
-        md_content = _html_to_markdown(data.get("html", ""))
-        return {
-            "title": data.get("title", ""),
-            "content": md_content,
-            "author": data.get("author", ""),
-            "url": wx_url,
-        }
+        return _build_wechat_result(data, wx_url, md_converter=_html_to_markdown)
     finally:
         await new_page.close()
 
@@ -355,14 +368,15 @@ def _save_article(article_data: Dict[str, Any], item: Dict[str, Any], keyword: s
     if not article_data.get("title") and item.get("title"):
         article_data["title"] = item["title"]
 
-    # Enrich with search metadata
-    if item.get("author"):
+    # Enrich with search metadata (fallback only — article page data takes priority)
+    if item.get("author") and not article_data.get("author"):
         article_data["author"] = item["author"]
-    if item.get("publish_date"):
+    if item.get("publish_date") and not article_data.get("publish_date"):
         article_data["publish_date"] = item["publish_date"]
-    if item.get("thumbnail"):
+    # Sogou thumbnail as fallback when article page cover not available
+    if item.get("thumbnail") and not article_data.get("cover_image"):
         article_data["thumbnail"] = item["thumbnail"]
-    if item.get("summary"):
+    if item.get("summary") and not article_data.get("summary"):
         article_data["summary"] = item["summary"]
     article_data["search_keyword"] = keyword
 

@@ -141,7 +141,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | YouTube | Jina | yt-dlp subtitles → Groq Whisper fallback |
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
-| WeChat (微信公众号) | Jina → Playwright (single) / Sogou search (keyword batch, `mpweixin-so`) | — |
+| WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (keyword batch, `mpweixin-so`) | — |
 | Xiaohongshu (小红书) | Jina → **Playwright deep fetch** (single + **author batch** + **search batch**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
@@ -491,13 +491,14 @@ feedgrab/
 │   │   ├── twitter_api.py     # TwitterAPI.io paid API client
 │   │   ├── twitter_api_user_tweets.py # Paid API supplement/full fetch
 │   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)
-│   │   ├── wechat.py          # Jina → Playwright fallback
+│   │   ├── wechat.py          # Jina → Playwright WeChat JS extraction
 │   │   ├── xhs.py             # Jina → Playwright + session fallback
 │   │   ├── xhs_user_notes.py  # XHS author batch fetch (__INITIAL_STATE__ + XHR intercept + scroll)
 │   │   └── xhs_search_notes.py # XHS search batch fetch
 │   └── utils/
 │       ├── storage.py         # Per-platform Markdown + JSON dual output
-│       └── dedup.py           # Global dedup index (cross-mode unified tracking)
+│       ├── dedup.py           # Global dedup index (cross-mode unified tracking)
+│       └── http_client.py     # Unified HTTP client (curl_cffi TLS fingerprint → requests fallback)
 ├── sessions/                  # Cookie/session storage (auto-created, git-ignored)
 ├── skills/                    # Claude Code skills
 │   ├── video/                 # Video/podcast → transcript + summary

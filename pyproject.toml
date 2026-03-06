@@ -26,7 +26,8 @@ telegram = ["telethon>=1.34"]
 mcp = ["mcp[cli]>=1.0"]
 browser = ["playwright>=1.40"]
 stealth = ["patchright>=1.0", "browserforge>=1.1", "curl_cffi>=0.7"]
-all = ["telethon>=1.34", "mcp[cli]>=1.0", "playwright>=1.40", "patchright>=1.0", "browserforge>=1.1", "curl_cffi>=0.7"]
+wechat = ["markdownify>=0.13", "beautifulsoup4>=4.12"]
+all = ["telethon>=1.34", "mcp[cli]>=1.0", "playwright>=1.40", "patchright>=1.0", "browserforge>=1.1", "curl_cffi>=0.7", "markdownify>=0.13", "beautifulsoup4>=4.12"]
 
 [project.scripts]
 feedgrab = "feedgrab.cli:main"

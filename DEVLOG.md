@@ -2,6 +2,56 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-06 · v0.9.1 · 微信公众号抓取增强（元数据 + markdownify + 图片防盗链）
+
+### 背景
+feedgrab 的微信公众号单篇抓取（`wechat.py`）浏览器回退路径使用通用 `innerText` 提取，丢失了标题层级、图片、链接等富文本结构，也无法提取封面图、发布日期、摘要等元数据。与 `wechat_search.py` 的深度提取能力存在差距。同时 `_html_to_markdown()` 使用手写正则转换 HTML，不支持表格、有序列表、代码块、h5-h6 等复杂结构。微信图片（mmbiz.qpic.cn）有 Referer 校验，在 Obsidian 中查看会 403。
+
+通过对比分析 [wechat-article-to-markdown](https://github.com/jackwener/wechat-article-to-markdown) 和 [wechat-article-exporter](https://github.com/nichenke/wechat-article-exporter) 两个 GitHub 项目，提取了可融合的技术方案。
+
+### 方案决策（三阶段）
+
+**P0 — 元数据提取 + 路径统一**
+1. `browser.py` 新增 `WECHAT_ARTICLE_JS_EVALUATE`：在 JS 层面一次性提取 `#activity-name`（标题）、`#js_name`（作者）、`#publish_time`（发布时间）、`og:image`（封面）、`og:description`（摘要）、`#js_tags`（标签）、`#js_view_source`（原文链接）、`create_time`（三层正则从 JS 脚本提取精确时间戳）、`msg_cdn_url`（高质量封面图）、`#js_content innerHTML`（富文本 HTML）。
+2. `browser.py` 新增 `_build_wechat_result()` + `evaluate_wechat_article()` 统一处理函数。
+3. `wechat.py` Tier 2 从通用 `fetch_via_browser()` 改为 `evaluate_wechat_article()` + `_html_to_markdown()`，与 `wechat_search.py` 共享同一套提取逻辑。
+4. `schema.py` `from_wechat()` 更新：cover_image 优先级（文章页 > 搜狗缩略图）、tags 支持、新增 extra 字段。
+5. `storage.py` 修复 WeChat `cover_image` 重复输出。
+
+**P1 — markdownify 替换正则转换器**
+1. `wechat_search.py` 的 `_html_to_markdown()` 重写：markdownify + BeautifulSoup 预处理。
+2. `_preprocess_wechat_html()` 处理：lazy image（data-src→src）、SVG/tracking pixel 过滤、WeChat `.code-snippet__fix` 代码块（占位符策略）、噪音元素移除。
+3. 移除旧的 `_WECHAT_EXTRACT_JS` 和 `_strip_tags()` 正则转换器。
+
+**P2 — 图片防盗链修复**
+1. `storage.py` 为 WeChat 文章在 front matter 后插入 `<meta name="referrer" content="no-referrer">`，让 Obsidian/浏览器不发送 Referer，避免 mmbiz.qpic.cn 图片 403。
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/browser.py` | 修改 | 新增 `WECHAT_ARTICLE_JS_EVALUATE` + `_build_wechat_result()` + `evaluate_wechat_article()` |
+| `feedgrab/fetchers/wechat.py` | 修改 | Tier 2 改为 WeChat 专用提取（evaluate_wechat_article + _html_to_markdown） |
+| `feedgrab/fetchers/wechat_search.py` | 修改 | `_html_to_markdown()` 重写（markdownify + BS4 预处理 + 代码块占位符） |
+| `feedgrab/schema.py` | 修改 | `from_wechat()` 更新 cover_image 优先级 + tags + 新 extra 字段 |
+| `feedgrab/utils/storage.py` | 修改 | WeChat cover_image 去重 + no-referrer meta 标签 |
+| `pyproject.toml` | 修改 | 新增 `wechat` 依赖组（markdownify + beautifulsoup4） |
+
+### 验证结果
+- 单篇抓取 `mp.weixin.qq.com/s/ng_0-madiZ2eiXBU2dTNgQ`：
+  - 标题 "给OpenClaw开天眼！解决了10个跨境电商网站爬虫难题" ✅
+  - 作者 "饼干哥哥AGI" ✅
+  - 发布日期 "2026-03-03 19:02"（create_time JS 提取） ✅
+  - 封面图 msg_cdn_url 高质量 ✅
+  - 摘要 "解决90%跨境数据抓取问题。"（og:description） ✅
+  - 富文本保留：##/### 标题层级、超链接、图片、有序/无序列表 ✅
+  - cover_image 不再重复 ✅
+  - no-referrer meta 标签已插入 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-06 · v0.9.0 · curl_cffi TLS 指纹 + 搜狗浏览器统一
 
 ### 背景

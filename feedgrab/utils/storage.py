@@ -194,7 +194,8 @@ def _generate_filename(item: UnifiedContent) -> str:
             raw = raw_title
     elif item.source_type == SourceType.WECHAT:
         author_display = (item.source_name or "").strip()
-        published = extra.get("publish_date", "")
+        # Only use date (no time) in filename
+        published = extra.get("publish_date", "")[:10]
 
         if author_display and published:
             raw = f"{author_display}_{published}：{raw_title}"
@@ -312,11 +313,15 @@ def _format_markdown(item: UnifiedContent) -> str:
 
     # WeChat metadata
     if is_wechat:
-        if extra.get("thumbnail"):
-            fm_lines.append(f'thumbnail: "{extra["thumbnail"]}"')
+        # cover_image already handled by the generic block above;
+        # only add thumbnail fallback when no cover_image exists
+        if not extra.get("cover_image") and extra.get("thumbnail"):
+            fm_lines.append(f'cover_image: "{extra["thumbnail"]}"')
         if extra.get("summary"):
             fm_summary = extra["summary"].replace('"', '\\"')[:200]
             fm_lines.append(f'summary: "{fm_summary}"')
+        if extra.get("original_url"):
+            fm_lines.append(f'original_url: "{extra["original_url"]}"')
         if extra.get("search_keyword"):
             fm_lines.append(f'search_keyword: "{extra["search_keyword"]}"')
 
@@ -340,6 +345,11 @@ def _format_markdown(item: UnifiedContent) -> str:
 
     fm_lines.append("---")
     fm_lines.append("")  # blank line after front matter
+
+    # WeChat images require no-referrer to avoid 403 from mmbiz.qpic.cn
+    if is_wechat:
+        fm_lines.append('<meta name="referrer" content="no-referrer">')
+        fm_lines.append("")
 
     # --- body ---
     if is_twitter:
@@ -403,8 +413,9 @@ def _format_markdown(item: UnifiedContent) -> str:
                 fm_lines.append(f"![{i}]({img})")
                 fm_lines.append("")
     else:
-        # Non-Twitter: add a title heading + full content
-        if item.title and item.title.strip():
+        # Non-Twitter/XHS: add title heading + full content
+        # WeChat: skip title heading (already in filename + front matter)
+        if not is_wechat and item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
         fm_lines.append(item.content)

@@ -304,14 +304,15 @@ def from_twitter(data: dict) -> UnifiedContent:
 
 
 def from_wechat(article: dict) -> UnifiedContent:
-    thumbnail = article.get('thumbnail', '')
+    # Best cover image: article page cover > sogou thumbnail
+    cover_image = article.get('cover_image', '') or article.get('thumbnail', '')
     content_text = article.get('content', '')
 
-    # Prepend thumbnail as cover image at top of content
-    if thumbnail and content_text:
-        content_text = f"![cover]({thumbnail})\n\n{content_text}"
-    elif thumbnail:
-        content_text = f"![cover]({thumbnail})"
+    # Prepend cover image at top of content
+    if cover_image and content_text:
+        content_text = f"![cover]({cover_image})\n\n{content_text}"
+    elif cover_image:
+        content_text = f"![cover]({cover_image})"
 
     return UnifiedContent(
         source_type=SourceType.WECHAT,
@@ -319,10 +320,13 @@ def from_wechat(article: dict) -> UnifiedContent:
         title=article.get('title', ''),
         content=content_text,
         url=article.get('url', ''),
+        tags=article.get('tags', []),
         extra={
             "publish_date": article.get('publish_date', ''),
-            "thumbnail": thumbnail,
+            "cover_image": cover_image,
+            "thumbnail": article.get('thumbnail', ''),
             "summary": article.get('summary', ''),
+            "original_url": article.get('original_url', ''),
             "search_keyword": article.get('search_keyword', ''),
         },
     )

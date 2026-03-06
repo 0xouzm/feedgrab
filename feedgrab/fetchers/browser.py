@@ -433,6 +433,151 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
             await browser.close()
 
 
+# ---------------------------------------------------------------------------
+# WeChat article JS evaluate — extract rich content + full metadata
+# ---------------------------------------------------------------------------
+
+WECHAT_ARTICLE_JS_EVALUATE = """() => {
+    const result = {};
+
+    // 1. DOM elements
+    const titleEl = document.querySelector('#activity-name');
+    result.title = titleEl ? titleEl.innerText.trim() : '';
+
+    const authorEl = document.querySelector('#js_name');
+    result.author = authorEl ? authorEl.innerText.trim() : '';
+
+    const timeEl = document.querySelector('#publish_time');
+    result.publishTime = timeEl ? timeEl.innerText.trim() : '';
+
+    // 2. OG meta tags (reliable, always present)
+    const ogImage = document.querySelector('meta[property="og:image"]');
+    result.ogImage = ogImage ? ogImage.content || '' : '';
+
+    const ogDesc = document.querySelector('meta[property="og:description"]');
+    result.ogDescription = ogDesc ? ogDesc.content || '' : '';
+
+    // 3. Article tags
+    const tagEls = document.querySelectorAll('#js_tags .article-tag__item');
+    result.tags = Array.from(tagEls).map(el => el.innerText.trim()).filter(Boolean);
+
+    // 4. "Read original" link
+    const readOriginal = document.querySelector('#js_view_source');
+    result.originalUrl = (readOriginal && readOriginal.href &&
+        !readOriginal.href.startsWith('javascript:')) ? readOriginal.href : '';
+
+    // 5. create_time from JS scripts (precise Unix timestamp)
+    result.createTime = 0;
+    const scripts = document.querySelectorAll('script');
+    for (const s of scripts) {
+        const text = s.textContent || '';
+        // Try multiple formats: JsDecode('N'), 'N', "N", =N
+        let m = text.match(/create_time\\s*:\\s*JsDecode\\('(\\d+)'\\)/);
+        if (!m) m = text.match(/create_time\\s*:\\s*'(\\d+)'/);
+        if (!m) m = text.match(/create_time\\s*[:=]\\s*["']?(\\d{10})["']?/);
+        if (m) { result.createTime = parseInt(m[1]); break; }
+    }
+
+    // 6. Cover image from JS (higher quality than og:image)
+    result.coverImage = '';
+    for (const s of scripts) {
+        const text = s.textContent || '';
+        const m = text.match(/msg_cdn_url\\s*[:=]\\s*['"]([^'"]+)['"]/);
+        if (m) { result.coverImage = m[1]; break; }
+    }
+    // Fallback to og:image
+    if (!result.coverImage) result.coverImage = result.ogImage;
+
+    // 7. Rich content HTML from #js_content
+    const content = document.querySelector('#js_content');
+    result.html = content ? content.innerHTML : '';
+    result.hasContent = !!content;
+
+    return result;
+}"""
+
+
+def _build_wechat_result(data: dict, page_url: str, md_converter=None) -> dict:
+    """Convert raw WeChat JS evaluate output to a standardized result dict.
+
+    Args:
+        data: Raw JS evaluate output.
+        page_url: Final page URL.
+        md_converter: Function to convert HTML to Markdown.
+                      If None, uses a simple tag-stripping fallback.
+    """
+    html = data.get("html", "")
+
+    if md_converter and html:
+        content = md_converter(html)
+    elif html:
+        # Simple fallback: strip tags
+        import re
+        content = re.sub(r'<[^>]+>', '', html)
+        content = re.sub(r'\s+', ' ', content).strip()
+    else:
+        content = ""
+
+    # Determine best cover image
+    cover = data.get("coverImage", "") or data.get("ogImage", "")
+
+    # Determine best publish date
+    publish_date = ""
+    create_time = data.get("createTime", 0)
+    if create_time:
+        from datetime import datetime
+        publish_date = datetime.fromtimestamp(create_time).strftime("%Y-%m-%d %H:%M")
+    elif data.get("publishTime"):
+        publish_date = data["publishTime"]
+
+    return {
+        "title": (data.get("title") or "").strip()[:200],
+        "content": content,
+        "author": (data.get("author") or "").strip(),
+        "url": page_url,
+        "platform": "wechat",
+        "cover_image": cover,
+        "publish_date": publish_date,
+        "summary": (data.get("ogDescription") or "").strip(),
+        "tags": data.get("tags", []),
+        "original_url": data.get("originalUrl", ""),
+    }
+
+
+async def evaluate_wechat_article(page, md_converter=None) -> dict:
+    """Wait for WeChat article to render, then extract structured data.
+
+    Assumes the page has already navigated to a mp.weixin.qq.com URL.
+    Returns standardized result dict with rich metadata.
+    """
+    try:
+        await page.wait_for_selector("#js_content", timeout=8000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(1500)
+
+    data = await page.evaluate(WECHAT_ARTICLE_JS_EVALUATE)
+
+    if not data or not data.get("hasContent"):
+        # Fallback: grab raw text
+        title = await page.title()
+        text = await page.evaluate("() => document.body.innerText")
+        return {
+            "title": (title or "").strip()[:200],
+            "content": (text or "").strip(),
+            "author": "",
+            "url": page.url,
+            "platform": "wechat",
+            "cover_image": "",
+            "publish_date": "",
+            "summary": "",
+            "tags": [],
+            "original_url": "",
+        }
+
+    return _build_wechat_result(data, page.url, md_converter)
+
+
 def get_session_path(platform: str) -> str:
     """Get the session file path for a platform."""
     return str(SESSION_DIR / f"{platform}.json")
