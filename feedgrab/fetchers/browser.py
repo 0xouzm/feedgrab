@@ -10,6 +10,7 @@ Install: pip install "feedgrab[browser]" && playwright install chromium
 
 from loguru import logger
 from pathlib import Path
+from urllib.parse import urlparse
 
 from feedgrab.config import get_session_dir, get_user_agent
 
@@ -169,6 +170,88 @@ def get_stealth_context_options(**overrides) -> dict:
     return opts
 
 
+# ---------------------------------------------------------------------------
+# Referer — convincing search engine origin (adapted from Scrapling)
+# ---------------------------------------------------------------------------
+
+_CHINESE_DOMAINS = frozenset({
+    "xiaohongshu.com", "xhslink.com", "weixin.sogou.com",
+    "mp.weixin.qq.com", "sogou.com", "bilibili.com",
+    "weibo.com", "zhihu.com", "douyin.com", "baidu.com",
+})
+
+
+def generate_referer(url: str) -> str:
+    """Generate a convincing search engine referer for the target URL.
+
+    Chinese platforms → Baidu search, others → Google search.
+    Makes traffic appear as organic search rather than direct bot access.
+    """
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+
+    # Extract meaningful site name (skip short subdomains like en/mp/m/api)
+    parts = hostname.replace("www.", "").split(".")
+    site_name = parts[0]
+    if len(parts) >= 3 and len(parts[0]) <= 3:
+        site_name = parts[1]
+
+    if any(d in hostname for d in _CHINESE_DOMAINS):
+        return f"https://www.baidu.com/s?wd={site_name}"
+    return f"https://www.google.com/search?q={site_name}"
+
+
+# ---------------------------------------------------------------------------
+# Resource interception — block non-essential requests for speed
+# ---------------------------------------------------------------------------
+
+# Resource types that are never needed for content extraction
+_BLOCKED_RESOURCE_TYPES = frozenset({
+    "font",         # Web fonts
+    "media",        # Video / audio playback
+    "texttrack",    # Subtitle tracks
+    "beacon",       # Analytics beacons (navigator.sendBeacon)
+    "eventsource",  # Server-sent events
+    "manifest",     # Service worker / PWA manifest
+    "websocket",    # WebSocket connections
+})
+
+# Tracking / analytics domains to block
+_BLOCKED_DOMAINS = frozenset({
+    "google-analytics.com",
+    "googletagmanager.com",
+    "connect.facebook.net",
+    "doubleclick.net",
+    "hotjar.com",
+    "clarity.ms",
+    "plausible.io",
+    "umami.is",
+    "cdn.mxpnl.com",          # Mixpanel
+    "sentry.io",
+    "browser.sentry-cdn.com",
+})
+
+
+async def setup_resource_blocking(target) -> None:
+    """Install route handler to block non-essential resources.
+
+    Args:
+        target: A Playwright Page or BrowserContext.
+                Context-level blocking applies to all pages in that context.
+    """
+    async def _handle_route(route):
+        if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
+            await route.abort()
+            return
+        req_url = route.request.url
+        if any(d in req_url for d in _BLOCKED_DOMAINS):
+            await route.abort()
+            return
+        await route.continue_()
+
+    await target.route("**/*", _handle_route)
+
+
 # XHS note page JS evaluate — extracted for reuse by batch fetcher
 XHS_NOTE_JS_EVALUATE = """() => {
     const title = document.querySelector('#detail-title');
@@ -304,9 +387,13 @@ async def fetch_via_browser(url: str, storage_state: str = None) -> dict:
             **get_stealth_context_options(**ctx_opts)
         )
         page = await context.new_page()
+        await setup_resource_blocking(page)
 
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=TIMEOUT_MS)
+            await page.goto(
+                url, wait_until="domcontentloaded", timeout=TIMEOUT_MS,
+                referer=generate_referer(url),
+            )
 
             if is_xhs:
                 # XHS SPA needs the note container to render

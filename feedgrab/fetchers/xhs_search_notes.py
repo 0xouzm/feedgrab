@@ -287,7 +287,7 @@ async def fetch_search_notes(search_url: str) -> dict:
     from feedgrab.fetchers.browser import (
         evaluate_xhs_note, get_session_path,
         get_async_playwright, stealth_launch, get_stealth_context_options,
-        get_stealth_engine_name,
+        get_stealth_engine_name, setup_resource_blocking, generate_referer,
     )
     from feedgrab.fetchers.xhs_user_notes import _handle_captcha_or_login
     from feedgrab.schema import from_xiaohongshu
@@ -322,11 +322,13 @@ async def fetch_search_notes(search_url: str) -> dict:
             **get_stealth_context_options(storage_state=session_path)
         )
         page = await context.new_page()
+        await setup_resource_blocking(context)
 
         try:
             # 5a. Navigate to search results page
             await page.goto(
-                search_url, wait_until="domcontentloaded", timeout=30_000
+                search_url, wait_until="domcontentloaded", timeout=30_000,
+                referer=generate_referer(search_url),
             )
             await page.wait_for_timeout(5000)
 

@@ -450,7 +450,7 @@ async def search_wechat_articles(
     try:
         from feedgrab.fetchers.browser import (
             get_async_playwright, stealth_launch, get_stealth_context_options,
-            get_stealth_engine_name,
+            get_stealth_engine_name, setup_resource_blocking, generate_referer,
         )
 
         async_pw = get_async_playwright()
@@ -459,11 +459,15 @@ async def search_wechat_articles(
         browser = await stealth_launch(pw, headless=False)
         context = await browser.new_context(**get_stealth_context_options())
         page = await context.new_page()
+        await setup_resource_blocking(context)
 
         # Visit search page to acquire Sogou cookies (required for redirect links)
         encoded = urllib.parse.quote(keyword)
         search_url = f"https://weixin.sogou.com/weixin?type=2&query={encoded}&ie=utf8&page=1"
-        await page.goto(search_url, wait_until="domcontentloaded", timeout=15000)
+        await page.goto(
+            search_url, wait_until="domcontentloaded", timeout=15000,
+            referer=generate_referer(search_url),
+        )
         await page.wait_for_timeout(2000)
         logger.info("[mpweixin-so] Browser ready, Sogou cookies acquired")
     except ImportError:

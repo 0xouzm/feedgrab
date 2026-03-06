@@ -362,7 +362,7 @@ async def fetch_user_notes(profile_url: str) -> dict:
     from feedgrab.fetchers.browser import (
         evaluate_xhs_note, get_session_path,
         get_async_playwright, stealth_launch, get_stealth_context_options,
-        get_stealth_engine_name,
+        get_stealth_engine_name, setup_resource_blocking, generate_referer,
     )
     from feedgrab.schema import from_xiaohongshu
     from feedgrab.utils.storage import save_to_markdown, _parse_xhs_date
@@ -400,11 +400,13 @@ async def fetch_user_notes(profile_url: str) -> dict:
             **get_stealth_context_options(storage_state=session_path)
         )
         page = await context.new_page()
+        await setup_resource_blocking(context)
 
         try:
             # 5a. Navigate to profile page
             await page.goto(
-                profile_url, wait_until="domcontentloaded", timeout=30_000
+                profile_url, wait_until="domcontentloaded", timeout=30_000,
+                referer=generate_referer(profile_url),
             )
             await page.wait_for_timeout(3000)
 

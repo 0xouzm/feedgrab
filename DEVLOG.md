@@ -2,6 +2,31 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-06 · v0.8.4 · Referer 伪装 + 资源拦截
+
+### 背景
+浏览器导航无 referer（从 about:blank 直接访问目标站），服务端可轻易识别为机器流量。批量抓取时加载了所有字体、媒体、tracking 脚本，浪费带宽且拖慢速度。
+
+### 方案决策
+1. **Referer 伪装**（adapted from Scrapling `fingerprints.py`）：根据目标 URL 域名自动生成搜索引擎 referer — 中国平台→百度、其他→Google。短子域名（en/mp/m/api）自动跳过取主域名。仅首次导航设置，后续页面间导航由浏览器自动携带前一页 URL。
+2. **资源拦截**（adapted from Scrapling `navigation.py`）：在 context 级别通过 `route("**/*")` 拦截 7 类非必要资源（font/media/beacon/websocket/manifest/texttrack/eventsource）+ 11 个 tracking 域名（Google Analytics/GTM/Facebook/Hotjar/Sentry 等）。保留 image/stylesheet/xhr 确保 SPA 渲染和内容提取不受影响。
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/browser.py` | 修改 | 新增 `generate_referer()` + `setup_resource_blocking()` + `fetch_via_browser()` 应用两者 |
+| `feedgrab/fetchers/xhs_user_notes.py` | 修改 | context 级资源拦截 + 首次导航 referer |
+| `feedgrab/fetchers/xhs_search_notes.py` | 修改 | context 级资源拦截 + 首次导航 referer |
+| `feedgrab/fetchers/wechat_search.py` | 修改 | context 级资源拦截 + 首次导航 referer |
+
+### 验证结果
+- Referer 生成正确：XHS/微信→百度，通用→Google，子域名（en/mp/m）正确跳过
+- 端到端测试（sspai.com）：81 请求通过 + 7 请求拦截（6 字体 + 1 tracking 脚本），页面正常提取
+- 所有 4 个模块导入无错误
+
+### 状态：已完成 ✅
+
 ## 2026-03-06 · v0.8.3 · browserforge 浏览器指纹一致性
 
 ### 背景
