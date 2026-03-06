@@ -554,3 +554,7 @@ Maintained by [@iBigQiang](https://github.com/iBigQiang)
 ## License
 
 MIT
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=iBigQiang/feedgrab&type=Date)](https://star-history.com/#iBigQiang/feedgrab&Date)
