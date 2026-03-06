@@ -658,33 +658,33 @@ def cmd_setup():
     print()
 
 
-def cmd_youtube_download(url: str, mode: str = "video"):
-    """Download YouTube video/audio/subtitles to the same dir as MD output.
+def _youtube_resolve_meta(url: str) -> dict:
+    """Get YouTube video metadata for filename/directory construction.
 
-    Args:
-        url: YouTube video URL
-        mode: 'video', 'audio', or 'subtitle'
+    Returns dict with keys: video_id, author, pub, title, filename_prefix, output_dir.
     """
     import re as _re
-    from feedgrab.fetchers.youtube_search import download_video, download_subtitles
 
-    # Resolve output directory (same as MD output: {OUTPUT_DIR}/YouTube/)
+    # Resolve output base directory
     vault_path = os.getenv("OBSIDIAN_VAULT", "")
     output_dir_env = os.getenv("OUTPUT_DIR", "")
     if vault_path:
-        output_dir = os.path.join(vault_path, "YouTube")
+        base_dir = os.path.join(vault_path, "YouTube")
     elif output_dir_env:
-        output_dir = os.path.join(output_dir_env, "YouTube")
+        base_dir = os.path.join(output_dir_env, "YouTube")
     else:
-        output_dir = os.path.expanduser("~/Downloads")
+        base_dir = os.path.expanduser("~/Downloads/YouTube")
 
-    # Try to get API metadata for consistent filename
     video_id = ""
     match = _re.search(r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})', url)
     if match:
         video_id = match.group(1)
 
+    author = ""
+    pub = ""
+    title = ""
     filename_prefix = ""
+
     if video_id and os.getenv("YOUTUBE_API_KEY", "").strip():
         try:
             from feedgrab.fetchers.youtube_search import get_single_video
@@ -693,7 +693,6 @@ def cmd_youtube_download(url: str, mode: str = "video"):
                 author = meta.get("channel_title", "").strip()
                 pub = meta.get("published_at", "")[:10]
                 title = meta.get("title", "").strip()
-                # Sanitize for filename
                 parts = []
                 if author:
                     parts.append(author)
@@ -705,7 +704,75 @@ def cmd_youtube_download(url: str, mode: str = "video"):
         except Exception:
             pass
 
-    print(f"\n📥 YouTube download ({mode}): {url}")
+    # Add author subdirectory: YouTube/{author}/
+    if author:
+        safe_author = _re.sub(r'[\\/:*?"<>|\x00-\x1f]', '_', author).strip('. ')
+        output_dir = os.path.join(base_dir, safe_author)
+    else:
+        output_dir = base_dir
+
+    return {
+        "video_id": video_id,
+        "author": author,
+        "pub": pub,
+        "title": title,
+        "filename_prefix": filename_prefix,
+        "output_dir": output_dir,
+    }
+
+
+def cmd_youtube_download(url: str, mode: str = "video"):
+    """Download YouTube video/audio/subtitles to {OUTPUT_DIR}/YouTube/{author}/.
+
+    Args:
+        url: YouTube video URL
+        mode: 'video', 'audio', 'subtitle', or 'all'
+    """
+    from feedgrab.fetchers.youtube_search import download_video, download_subtitles
+
+    meta = _youtube_resolve_meta(url)
+    output_dir = meta["output_dir"]
+    filename_prefix = meta["filename_prefix"]
+    quality = os.getenv("YOUTUBE_DOWNLOAD_QUALITY", "1080p").strip()
+
+    if mode == "all":
+        # Run all 4 tasks: MD + video + audio + subtitle
+        print(f"\n📥 YouTube ALL-IN-ONE: {url}")
+        print(f"   Output: {output_dir}\n")
+
+        # Task 1: MD (feedgrab url)
+        print("── [1/4] Saving Markdown...")
+        try:
+            reader = UniversalReader()
+            item = asyncio.run(reader.read(url))
+            print(f"   ✅ MD saved: {item.title[:60]}")
+        except Exception as e:
+            print(f"   ⚠️ MD failed: {e}")
+
+        # Task 2: Video
+        print("── [2/4] Downloading video (MP4)...")
+        vpath = download_video(url, output_dir=output_dir, quality=quality,
+                               filename_prefix=filename_prefix)
+        print(f"   {'✅' if vpath else '❌'} Video: {vpath or 'failed'}")
+
+        # Task 3: Audio
+        print("── [3/4] Downloading audio (MP3)...")
+        apath = download_video(url, output_dir=output_dir, audio_only=True,
+                               filename_prefix=filename_prefix)
+        print(f"   {'✅' if apath else '❌'} Audio: {apath or 'failed'}")
+
+        # Task 4: Subtitle
+        print("── [4/4] Downloading subtitles (SRT)...")
+        spath = download_subtitles(url, output_dir=output_dir,
+                                   filename_prefix=filename_prefix)
+        print(f"   {'✅' if spath else '⚠️'} Subtitle: {spath or 'not available'}")
+
+        print(f"\n✅ All tasks completed → {output_dir}")
+        return
+
+    # Single mode
+    mode_label = {"video": "MP4", "audio": "MP3", "subtitle": "SRT"}.get(mode, mode)
+    print(f"\n📥 YouTube download ({mode_label}): {url}")
     print(f"   Output: {output_dir}\n")
 
     if mode == "subtitle":
@@ -714,7 +781,8 @@ def cmd_youtube_download(url: str, mode: str = "video"):
         path = download_video(url, output_dir=output_dir, audio_only=True,
                               filename_prefix=filename_prefix)
     else:
-        path = download_video(url, output_dir=output_dir, filename_prefix=filename_prefix)
+        path = download_video(url, output_dir=output_dir, quality=quality,
+                              filename_prefix=filename_prefix)
 
     if path:
         print(f"\n✅ Downloaded: {path}")
@@ -892,6 +960,7 @@ Usage:
     feedgrab ytb-dlv <url>      Download YouTube video (MP4)
     feedgrab ytb-dla <url>      Download YouTube audio (MP3)
     feedgrab ytb-dlz <url>      Download YouTube subtitles (SRT)
+    feedgrab ytb-all <url>      Download ALL: MD + video + audio + subtitles
     feedgrab login <platform>   Login to a platform (saves session for browser fallback)
     feedgrab detect-ua          Detect real Chrome UA and save to .env
     feedgrab list               Show content statistics
@@ -916,6 +985,7 @@ Examples:
     feedgrab ytb-dlv https://www.youtube.com/watch?v=xxx   # Download video
     feedgrab ytb-dla https://www.youtube.com/watch?v=xxx   # Download audio
     feedgrab ytb-dlz https://www.youtube.com/watch?v=xxx   # Download subtitles
+    feedgrab ytb-all https://www.youtube.com/watch?v=xxx   # All: MD+video+audio+srt
     feedgrab login xhs
     feedgrab setup              # First-time setup wizard
 """)
@@ -987,12 +1057,12 @@ Examples:
             print("     --audio-only         Download audio only (MP3)")
             sys.exit(1)
         cmd_youtube_search(sys.argv[2:])
-    elif cmd in ("ytb-dlv", "ytb-dla", "ytb-dlz"):
+    elif cmd in ("ytb-dlv", "ytb-dla", "ytb-dlz", "ytb-all"):
         if len(sys.argv) < 3:
             print(f"❌ Usage: feedgrab {cmd} <youtube_url>")
             print(f"   Example: feedgrab {cmd} https://www.youtube.com/watch?v=xxx")
             sys.exit(1)
-        mode_map = {"ytb-dlv": "video", "ytb-dla": "audio", "ytb-dlz": "subtitle"}
+        mode_map = {"ytb-dlv": "video", "ytb-dla": "audio", "ytb-dlz": "subtitle", "ytb-all": "all"}
         cmd_youtube_download(sys.argv[2], mode=mode_map[cmd])
     elif cmd.startswith("http") or cmd.startswith("www.") or "." in cmd:
         urls = [arg for arg in sys.argv[1:] if arg.startswith(("http", "www.")) or "." in arg]

@@ -559,6 +559,14 @@ def save_to_markdown(item: UnifiedContent, filepath: str = None):
     folder = PLATFORM_FOLDER_MAP.get(item.source_type, "Other")
     platform_dir = base_dir / folder
 
+    # YouTube: add author subdirectory (YouTube/{author}/)
+    if item.source_type == SourceType.YOUTUBE and not item.category:
+        author = (item.source_name or "").strip()
+        if author:
+            safe_author = _sanitize_filename(author)
+            if safe_author:
+                item.category = safe_author
+
     # Category subdirectory (e.g., "bookmarks/OpenClaw" for bookmark folders)
     if item.category:
         parts = item.category.split("/")
