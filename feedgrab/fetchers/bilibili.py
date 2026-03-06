@@ -6,8 +6,8 @@ import requests
 from loguru import logger
 from typing import Dict, Any
 
-
 from feedgrab.config import get_user_agent
+from feedgrab.utils import http_client
 
 
 API_URL = "https://api.bilibili.com/x/web-interface/view"
@@ -28,8 +28,8 @@ async def fetch_bilibili(url_or_bv: str) -> Dict[str, Any]:
         else:
             raise ValueError(f"Cannot extract BV ID from: {url_or_bv}")
 
-    resp = requests.get(API_URL, params={"bvid": bv_id}, headers=HEADERS, timeout=10)
-    resp.raise_for_status()
+    resp = http_client.get(API_URL, params={"bvid": bv_id}, headers=HEADERS, timeout=10)
+    http_client.raise_for_status(resp)
     data = resp.json()
 
     if data.get("code") != 0:

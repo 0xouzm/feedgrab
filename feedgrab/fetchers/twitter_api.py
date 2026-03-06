@@ -20,6 +20,7 @@ from loguru import logger
 from typing import Dict, Any, Optional, List
 
 from feedgrab.config import twitterapi_io_key
+from feedgrab.utils import http_client
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -74,7 +75,7 @@ def _request_with_retry(
 
     for attempt in range(max_retries + 1):
         try:
-            resp = requests.get(
+            resp = http_client.get(
                 url,
                 params=params,
                 headers=headers,

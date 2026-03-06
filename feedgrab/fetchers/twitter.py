@@ -22,6 +22,7 @@ from typing import Dict, Any
 
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.config import get_user_agent
+from feedgrab.utils import http_client
 
 
 OEMBED_URL = "https://publish.twitter.com/oembed"
@@ -323,7 +324,7 @@ def _fetch_via_syndication(url: str, tweet_id: str) -> Dict[str, Any]:
     Richer than oEmbed but no thread/quoted tweet/views/bookmarks/note_tweet.
     """
     token = _syndication_token(tweet_id)
-    resp = requests.get(
+    resp = http_client.get(
         SYNDICATION_URL,
         params={"id": tweet_id, "token": token},
         headers={"User-Agent": get_user_agent()},
@@ -331,7 +332,7 @@ def _fetch_via_syndication(url: str, tweet_id: str) -> Dict[str, Any]:
     )
     if resp.status_code == 404:
         raise RuntimeError(f"Syndication: tweet {tweet_id} not found")
-    resp.raise_for_status()
+    http_client.raise_for_status(resp)
     if not resp.text.strip():
         raise RuntimeError(f"Syndication: empty response for {tweet_id}")
 
@@ -448,12 +449,12 @@ def _fetch_via_oembed(url: str) -> Dict[str, Any]:
     Note: oEmbed requires twitter.com URLs (not x.com).
     """
     oembed_query_url = url.replace("x.com", "twitter.com")
-    resp = requests.get(
+    resp = http_client.get(
         OEMBED_URL,
         params={"url": oembed_query_url, "omit_script": "true"},
         timeout=10,
     )
-    resp.raise_for_status()
+    http_client.raise_for_status(resp)
     data = resp.json()
 
     html = data.get("html", "")

@@ -368,7 +368,7 @@ item_id: db22cbe3d9c0
 # 从 GitHub 安装（推荐）
 pip install git+https://github.com/iBigQiang/feedgrab.git
 
-# 带隐身浏览器（patchright + browserforge — 推荐，反检测能力更强）
+# 带隐身浏览器 + TLS 指纹（patchright + browserforge + curl_cffi — 推荐，反检测能力最强）
 pip install "feedgrab[stealth] @ git+https://github.com/iBigQiang/feedgrab.git"
 patchright install chromium
 
@@ -523,7 +523,8 @@ feedgrab/
 │   │   └── xhs_search_notes.py# 小红书搜索批量抓取（搜索结果页滚动 + 逐篇深度抓取）
 │   └── utils/
 │       ├── storage.py         # 按平台分目录 Markdown + JSON 双重输出
-│       └── dedup.py           # 全局去重索引（跨模式统一 item_id 追踪）
+│       ├── dedup.py           # 全局去重索引（跨模式统一 item_id 追踪）
+│       └── http_client.py     # 统一 HTTP 客户端（curl_cffi TLS 指纹 → requests fallback）
 ├── sessions/                  # Cookie/Session 存储（自动创建，git 忽略）
 ├── skills/                    # Claude Code 技能
 │   ├── video/                 # 视频/播客 → 转录 + 摘要

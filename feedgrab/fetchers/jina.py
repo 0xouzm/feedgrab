@@ -10,6 +10,7 @@ import requests
 from loguru import logger
 
 from feedgrab.config import get_user_agent
+from feedgrab.utils import http_client
 
 
 JINA_BASE = "https://r.jina.ai"
@@ -35,8 +36,8 @@ def fetch_via_jina(url: str) -> dict:
     logger.info(f"Jina fetch: {url}")
 
     try:
-        resp = requests.get(jina_url, headers=HEADERS, timeout=TIMEOUT)
-        resp.raise_for_status()
+        resp = http_client.get(jina_url, headers=HEADERS, timeout=TIMEOUT)
+        http_client.raise_for_status(resp)
         text = resp.text
 
         # Jina returns markdown; first line is usually the title
@@ -86,8 +87,8 @@ def fetch_via_jina_text(url: str) -> str:
 
     headers = {**HEADERS, "X-Return-Format": "text"}
     try:
-        resp = requests.get(jina_url, headers=headers, timeout=TIMEOUT)
-        resp.raise_for_status()
+        resp = http_client.get(jina_url, headers=headers, timeout=TIMEOUT)
+        http_client.raise_for_status(resp)
         return resp.text.strip()
     except requests.RequestException as e:
         logger.warning(f"Jina text-mode fetch failed: {url} — {e}")

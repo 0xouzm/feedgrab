@@ -14,12 +14,12 @@ Limitations:
 
 import re
 import json
-import urllib.request
-import urllib.error
+import requests
 from loguru import logger
 from typing import Dict, Any, Optional
 
 from feedgrab.config import get_user_agent
+from feedgrab.utils import http_client
 
 # Module-level circuit breaker for batch mode
 _consecutive_failures: int = 0
@@ -139,16 +139,20 @@ def fetch_via_fxtwitter(url: str, tweet_id: str) -> Dict[str, Any]:
     api_url = f"https://api.fxtwitter.com/{username}/status/{tweet_id}"
 
     try:
-        req = urllib.request.Request(
+        resp = http_client.get(
             api_url,
             headers={"User-Agent": get_user_agent(), "Accept": "application/json"},
+            timeout=15,
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            raw = resp.read()
-            data = json.loads(raw)
-    except urllib.error.HTTPError as e:
+        if resp.status_code != 200:
+            _record_failure()
+            raise RuntimeError(f"FxTwitter HTTP {resp.status_code}")
+        data = resp.json()
+    except requests.RequestException as e:
         _record_failure()
-        raise RuntimeError(f"FxTwitter HTTP {e.code}: {e.reason}")
+        raise RuntimeError(f"FxTwitter request failed: {e}")
+    except RuntimeError:
+        raise
     except Exception as e:
         _record_failure()
         raise RuntimeError(f"FxTwitter request failed: {e}")

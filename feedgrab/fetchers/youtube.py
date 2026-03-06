@@ -136,10 +136,10 @@ def _transcribe_via_whisper(url: str) -> str:
 
         logger.info(f"Transcribing {file_size // 1024}KB audio via Groq Whisper...")
 
-        import requests
+        from feedgrab.utils import http_client
         try:
             with open(audio_path, "rb") as f:
-                response = requests.post(
+                response = http_client.post(
                     "https://api.groq.com/openai/v1/audio/transcriptions",
                     headers={"Authorization": f"Bearer {api_key}"},
                     files={"file": (os.path.basename(audio_path), f, "audio/mp4")},

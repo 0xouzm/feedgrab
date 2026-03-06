@@ -2,6 +2,40 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-06 · v0.9.0 · curl_cffi TLS 指纹 + 搜狗浏览器统一
+
+### 背景
+feedgrab 的 HTTP 请求使用标准 `requests` 库，Python 默认 TLS 指纹（JA3/JA4）与真实浏览器差异明显，服务端可在 TLS 握手阶段直接识别为机器流量。此外，搜狗微信搜索存在 HTTP 搜索→浏览器抓取的"指纹分裂"——搜索用 urllib（Python TLS），抓取用 Playwright（Chrome TLS），两阶段指纹不一致。
+
+### 方案决策
+1. **统一 HTTP 客户端**（`utils/http_client.py`）：curl_cffi `Session(impersonate="chrome")` 模拟 Chrome TLS 指纹（JA3/JA4 完全匹配），fallback 到标准 requests。连接复用（persistent session）。异常兼容层将 curl_cffi 异常重新包装为 `requests.Timeout`/`requests.ConnectionError`/`requests.RequestException`。`raise_for_status()` 辅助函数确保 curl_cffi Response 的状态码异常也被包装为 `requests.HTTPError`。
+2. **全量迁移**：9 个文件的 `requests.get()`/`requests.post()`/`urllib.request.urlopen()` 全部迁移到 `http_client.get()`/`http_client.post()`，异常处理代码无需改动。
+3. **搜狗搜索浏览器统一**：`fetch_content=True` 时搜索也走浏览器（获取 Cookie + 提取结果一步完成），消除 HTTP↔浏览器指纹分裂。HTTP 模式仅在浏览器不可用时兜底。
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/utils/http_client.py` | 新建 | 统一 HTTP 客户端：curl_cffi TLS 指纹 → requests fallback + 异常兼容 + raise_for_status |
+| `feedgrab/fetchers/jina.py` | 修改 | 2 个 `requests.get` → `http_client.get` |
+| `feedgrab/fetchers/bilibili.py` | 修改 | 1 个 `requests.get` → `http_client.get` |
+| `feedgrab/fetchers/twitter.py` | 修改 | 2 个 `requests.get`（Syndication + oEmbed）→ `http_client.get` |
+| `feedgrab/fetchers/twitter_fxtwitter.py` | 修改 | `urllib.request.urlopen` → `http_client.get` + 异常处理重写 |
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 3 个 `requests.get`（GraphQL + JS bundle）→ `http_client.get` |
+| `feedgrab/fetchers/twitter_api.py` | 修改 | 1 个 `requests.get`（付费 API）→ `http_client.get` |
+| `feedgrab/fetchers/wechat_search.py` | 修改 | `urllib.request.urlopen` → `http_client.get` + 浏览器搜索统一 |
+| `feedgrab/fetchers/youtube.py` | 修改 | 1 个 `requests.post`（Whisper）→ `http_client.post` |
+| `pyproject.toml` | 修改 | `curl_cffi>=0.7` 加入 stealth/all 依赖组 |
+
+### 验证结果
+- curl_cffi 引擎正确启用：UA 显示 Chrome/142.0.0.0
+- Jina Reader 端到端测试：200 OK，内容正确
+- `raise_for_status` 兼容性：404 响应正确抛出 `requests.HTTPError`
+- 所有 9 个模块导入无错误
+- 本地 CDP 连接（twitter_cookies.py）保持原样不迁移
+
+### 状态：已完成 ✅
+
 ## 2026-03-06 · v0.8.4 · Referer 伪装 + 资源拦截
 
 ### 背景

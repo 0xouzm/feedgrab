@@ -27,6 +27,7 @@ from feedgrab.fetchers.twitter_cookies import (
     build_graphql_headers,
     DEFAULT_USER_AGENT,
 )
+from feedgrab.utils import http_client
 
 # ---------------------------------------------------------------------------
 # Fallback queryIds — from baoyu constants.ts
@@ -1468,7 +1469,7 @@ def _execute_graphql(
     url = f"{GRAPHQL_BASE}/{query_id}/{operation_name}"
 
     try:
-        resp = requests.get(url, params=params, headers=headers, timeout=30)
+        resp = http_client.get(url, params=params, headers=headers, timeout=30)
 
         if resp.status_code in (401, 403):
             logger.error(f"GraphQL {resp.status_code} — cookies may have expired or account restricted")
@@ -1480,7 +1481,7 @@ def _execute_graphql(
             mark_cookie_rate_limited()
             return None
 
-        resp.raise_for_status()
+        http_client.raise_for_status(resp)
         data = resp.json()
 
         if "errors" in data:
@@ -1543,12 +1544,12 @@ def _fetch_home_html(user_agent: str) -> str:
 
     try:
         logger.debug("Fetching x.com homepage for JS bundle discovery...")
-        resp = requests.get(
+        resp = http_client.get(
             "https://x.com",
             headers={"user-agent": user_agent},
             timeout=15,
         )
-        resp.raise_for_status()
+        http_client.raise_for_status(resp)
         _cached_home_html = resp.text
         return _cached_home_html
     except Exception as e:
@@ -1561,12 +1562,12 @@ def _fetch_and_extract_query_id(
 ) -> Optional[str]:
     """Download a JS bundle chunk and extract queryId for an operation."""
     try:
-        resp = requests.get(
+        resp = http_client.get(
             chunk_url,
             headers={"user-agent": user_agent},
             timeout=15,
         )
-        resp.raise_for_status()
+        http_client.raise_for_status(resp)
         return _extract_query_id(resp.text, operation_name)
     except Exception as e:
         logger.debug(f"Failed to fetch/parse {chunk_url}: {e}")
