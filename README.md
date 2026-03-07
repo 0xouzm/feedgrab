@@ -323,7 +323,7 @@ output/
 │   ├── status_xxx/       #   用户推文（按 display_name）
 │   ├── bookmarks/        #   全部书签
 │   ├── bookmarks_xxx/    #   书签文件夹（按名称）
-│   └── search/           #   关键词搜索结果（x-so 命令）
+│   └── search/           #   关键词搜索结果（x-so 命令，.md + .csv）
 │       └── 1day_new/     #     按天数+排序分目录
 ├── XHS/                  # 小红书
 │   ├── index/            #   去重索引 + 批量抓取记录

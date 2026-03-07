@@ -310,7 +310,7 @@ output/
 │   ├── status_xxx/       #   User tweets (by display_name)
 │   ├── bookmarks/        #   All bookmarks
 │   ├── bookmarks_xxx/    #   Bookmark folders (by name)
-│   └── search/           #   Keyword search results (x-so command)
+│   └── search/           #   Keyword search results (x-so command, .md + .csv)
 │       └── 1day_new/     #     By days + sort mode
 ├── XHS/                  # Xiaohongshu
 │   ├── index/            #   Dedup index + batch fetch records

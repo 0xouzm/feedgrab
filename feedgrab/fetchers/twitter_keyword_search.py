@@ -11,14 +11,16 @@ Architecture:
     1. Build Twitter search query from keyword + config defaults + CLI overrides
     2. Call SearchTimeline GraphQL endpoint directly (no browser needed)
     3. Paginate via cursor until max_results reached
-    4. extract_tweet_data() on each entry → engagement-ranked summary table
+    4. extract_tweet_data() on each entry → views-ranked summary table
     5. Optionally save individual tweet .md files (X_SEARCH_SAVE_TWEETS=true)
 
 Output:
     X/search/{days}day_{sort_label}/{keyword}_{date}.md    ← summary table (always)
+    X/search/{days}day_{sort_label}/{keyword}_{date}.csv   ← CSV table (always)
     X/search/{days}day_{sort_label}/{keyword}/{tweet}.md   ← individual tweets (optional)
 """
 
+import csv
 import os
 import re
 import time
@@ -137,14 +139,15 @@ def _generate_summary_table(
     tweets: List[dict],
     output_path: Path,
 ) -> None:
-    """Generate a summary Markdown table sorted by engagement score.
+    """Generate summary Markdown table + CSV, sorted by views.
 
-    Writes directly to output_path (not via save_to_markdown).
+    MD: 内容摘要 is a hyperlink (no separate link column).
+    CSV: has explicit link column with plain URL.
     """
     sort_label_zh = "最新" if sort == "live" else "热门"
     date_str = datetime.now().strftime("%Y-%m-%d")
 
-    # YAML front matter
+    # --- Markdown ---
     lines = [
         "---",
         f'title: "X 搜索：{keyword}"',
@@ -152,6 +155,7 @@ def _generate_summary_table(
         f'search_tab: "{sort_label_zh}"',
         f"total: {len(tweets)}",
         f"created: {date_str}",
+        "cssclasses: wide",
         "---",
         "",
     ]
@@ -159,22 +163,21 @@ def _generate_summary_table(
     if not tweets:
         lines.append("*No results found.*")
     else:
-        # Table header
         lines.append(
-            "| # | 作者 | 内容摘要 | 👍 | 🔄 | 💬 | 👁 | 📌 | 日期 | 链接 |"
+            "| # | 作者👨🏻‍💻 | 内容摘要💻 | 日期🗓 | 点赞👍 | 转帖🔄 | 回复💬 | 查看👁 | 收藏📌 |"
         )
         lines.append(
-            "|---|------|----------|---:|---:|---:|---:|---:|------|------|"
+            "|:---:|------|----------|:---:|:---:|:---:|:---:|:---:|:------:|"
         )
 
-        # Table rows (already sorted by caller)
         for i, td in enumerate(tweets, 1):
             author = td.get("author", "")
             if author and not author.startswith("@"):
                 author = f"@{author}"
             summary = _clean_title(td.get("text", ""), max_len=40)
-            # Escape pipe chars in summary for table
             summary = summary.replace("|", "\\|")
+            # Escape brackets for markdown link
+            summary = summary.replace("[", "\\[").replace("]", "\\]")
             likes = int(td.get("likes", 0) or 0)
             retweets = int(td.get("retweets", 0) or 0)
             replies_count = int(td.get("replies", 0) or 0)
@@ -187,17 +190,47 @@ def _generate_summary_table(
             tweet_author = td.get("author", "")
             tweet_url = f"https://x.com/{tweet_author}/status/{tweet_id}"
 
+            # Summary as hyperlink (no separate link column)
+            summary_link = f"[{summary}]({tweet_url})"
+
             lines.append(
-                f"| {i} | {author} | {summary} "
-                f"| {likes} | {retweets} | {replies_count} "
-                f"| {views} | {bookmarks} | {date_short} "
-                f"| [→]({tweet_url}) |"
+                f"| {i} | {author} | {summary_link} "
+                f"| {date_short} | {likes} | {retweets} | {replies_count} "
+                f"| {views} | {bookmarks} |"
             )
 
-    # Write file
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     logger.info(f"[X-SO] Summary table saved: {output_path}")
+
+    # --- CSV ---
+    csv_path = output_path.with_suffix(".csv")
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "#", "作者", "内容摘要", "日期", "点赞", "转帖",
+            "回复", "查看", "收藏", "链接",
+        ])
+        for i, td in enumerate(tweets, 1):
+            author = td.get("author", "")
+            if author and not author.startswith("@"):
+                author = f"@{author}"
+            summary = _clean_title(td.get("text", ""), max_len=80)
+            likes = int(td.get("likes", 0) or 0)
+            retweets = int(td.get("retweets", 0) or 0)
+            replies_count = int(td.get("replies", 0) or 0)
+            views = int(td.get("views", 0) or 0)
+            bookmarks = int(td.get("bookmarks", 0) or 0)
+            created_at = td.get("created_at", "")
+            date_short = parse_twitter_date_local(created_at, "%m-%d")
+            tweet_id = td.get("id", "")
+            tweet_author = td.get("author", "")
+            tweet_url = f"https://x.com/{tweet_author}/status/{tweet_id}"
+            writer.writerow([
+                i, author, summary, date_short, likes, retweets,
+                replies_count, views, bookmarks, tweet_url,
+            ])
+    logger.info(f"[X-SO] CSV table saved: {csv_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -318,8 +351,8 @@ def search_twitter_keyword(
     tweets = tweets[:max_results]
     logger.info(f"[X-SO] Extracted {len(tweets)} tweets")
 
-    # Sort by engagement score
-    tweets.sort(key=_engagement_score, reverse=True)
+    # Sort by views (descending)
+    tweets.sort(key=lambda td: int(td.get("views", 0) or 0), reverse=True)
 
     # Generate summary table
     _generate_summary_table(keyword, query, sort, effective_days, tweets, summary_path)
@@ -367,4 +400,5 @@ def search_twitter_keyword(
         "saved": saved,
         "query": query,
         "output_path": str(summary_path),
+        "csv_path": str(summary_path.with_suffix(".csv")),
     }

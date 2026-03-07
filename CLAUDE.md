@@ -120,7 +120,7 @@ feedgrab/
 
 ### Twitter 关键词搜索（`twitter_keyword_search.py`）
 
-`feedgrab x-so <keyword>` 通过纯 GraphQL SearchTimeline 端点搜索 Twitter，输出按互动量排序的 Markdown 汇总表格。直接调用 `fetch_search_timeline_page()` 分页获取结果（无需浏览器），`extract_tweet_data()` 提取结构化数据。`build_search_query()` 自动拼接高级搜索运算符（lang/since/min_faves/-is:retweet 等），关键词自动包引号。`_engagement_score()` = `likes*3 + retweets*2 + bookmarks*2 + replies`。`_generate_summary_table()` 直接写 Markdown 文件（不经过 `save_to_markdown`）。11 个 `X_SEARCH_*` 配置函数提供默认值。`--raw` 模式让用户完全控制查询语法。`X_SEARCH_SAVE_TWEETS=true` 可选保存单篇推文 .md 到子目录。输出路径：`X/search/{days}day_{new|hot}/{keyword}_{date}.md`。
+`feedgrab x-so <keyword>` 通过纯 GraphQL SearchTimeline 端点搜索 Twitter，输出按查看数降序排列的 Markdown 汇总表格 + CSV。直接调用 `fetch_search_timeline_page()` 分页获取结果（无需浏览器），`extract_tweet_data()` 提取结构化数据。`build_search_query()` 自动拼接高级搜索运算符（lang/since/min_faves/-is:retweet 等），关键词自动包引号。MD 表格中内容摘要为超链接（无独立链接列），CSV 保留明文链接列。`_generate_summary_table()` 同时输出 `.md`（Obsidian `cssclasses: wide`）和 `.csv`（UTF-8 BOM）。11 个 `X_SEARCH_*` 配置函数提供默认值。`--raw` 模式让用户完全控制查询语法。`X_SEARCH_SAVE_TWEETS=true` 可选保存单篇推文 .md 到子目录。输出路径：`X/search/{days}day_{new|hot}/{keyword}_{date}.{md,csv}`。
 
 ### x-client-transaction-id 反检测（`twitter_graphql.py`）
 

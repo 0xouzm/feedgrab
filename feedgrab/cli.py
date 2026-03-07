@@ -957,6 +957,8 @@ def cmd_twitter_search(args: list):
         print(f"   Total tweets: {result['total']}")
         if result.get("output_path"):
             print(f"   Summary: {result['output_path']}")
+        if result.get("csv_path"):
+            print(f"   CSV: {result['csv_path']}")
         if result.get("saved"):
             print(f"   Individual tweets saved: {result['saved']}")
     except KeyboardInterrupt:
