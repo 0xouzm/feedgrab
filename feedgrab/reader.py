@@ -7,7 +7,7 @@ The core dispatcher: give it a URL, get back structured content.
 
 import asyncio
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from loguru import logger
 from typing import Dict, Any, Optional
 
@@ -81,6 +81,22 @@ class UniversalReader:
             return "rss"
         return "generic"
 
+    @staticmethod
+    def _normalize_wechat_url(url: str) -> str:
+        """Strip tracking params from WeChat URLs.
+
+        Keep only __biz, mid, idx, sn which uniquely identify an article.
+        Short-link format (mp.weixin.qq.com/s/xxx) is returned unchanged.
+        """
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query, keep_blank_values=False)
+        essential = {k: v for k, v in qs.items()
+                     if k in ("__biz", "mid", "idx", "sn")}
+        if not essential:
+            return url  # short link or no query params
+        clean_query = urlencode(essential, doseq=True)
+        return urlunparse(parsed._replace(query=clean_query))
+
     async def read(self, url: str) -> UnifiedContent:
         """
         Fetch content from any URL and return as UnifiedContent.
@@ -95,6 +111,11 @@ class UniversalReader:
         validate_url(url)
 
         platform = self._detect_platform(url)
+
+        # WeChat URL normalization: keep only essential params
+        if platform == "wechat":
+            url = self._normalize_wechat_url(url)
+
         logger.info(f"[{platform}] {url[:60]}...")
 
         # Bookmark batch mode: special flow, returns summary

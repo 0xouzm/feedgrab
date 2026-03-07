@@ -171,9 +171,12 @@ def _generate_summary_table(
         )
 
         for i, td in enumerate(tweets, 1):
-            author = td.get("author", "")
-            if author and not author.startswith("@"):
-                author = f"@{author}"
+            # Prefer display name; fall back to @handle
+            author_name = td.get("author_name", "")
+            handle = td.get("author", "")
+            author = author_name if author_name else (f"@{handle}" if handle else "")
+            if td.get("is_blue_verified"):
+                author = f"\u2705{author}"
             summary = _clean_title(td.get("text", ""), max_len=40)
             summary = summary.replace("|", "\\|")
             # Escape brackets for markdown link
@@ -212,9 +215,11 @@ def _generate_summary_table(
             "回复", "查看", "收藏", "链接",
         ])
         for i, td in enumerate(tweets, 1):
-            author = td.get("author", "")
-            if author and not author.startswith("@"):
-                author = f"@{author}"
+            author_name = td.get("author_name", "")
+            handle = td.get("author", "")
+            author = author_name if author_name else (f"@{handle}" if handle else "")
+            if td.get("is_blue_verified"):
+                author = f"\u2705{author}"
             summary = _clean_title(td.get("text", ""), max_len=80)
             likes = int(td.get("likes", 0) or 0)
             retweets = int(td.get("retweets", 0) or 0)
