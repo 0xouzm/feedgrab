@@ -17,9 +17,9 @@ Give it a URL (article, video, podcast, tweet), get back structured content. Wor
 Any URL → Platform Detection → Fetch Content → Unified Output
               ↓                      ↓                ↓
          auto-detect           text: Jina Reader    → output/X/Author_Date：Title.md
-         7+ platforms          video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
+         8+ platforms          video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
                                audio: Whisper transcription
-                               API: Bilibili / RSS / Telegram / YouTube Data API v3
+                               API: Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API
                                X/Twitter: GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
 ```
 
@@ -74,6 +74,11 @@ feedgrab ytb-dlv https://www.youtube.com/watch?v=xxx   # Download video (MP4)
 feedgrab ytb-dla https://www.youtube.com/watch?v=xxx   # Download audio (MP3)
 feedgrab ytb-dlz https://www.youtube.com/watch?v=xxx   # Download subtitles (SRT)
 feedgrab ytb-dla https://youtu.be/xxx?si=xxx           # Short share links work too
+
+# Fetch GitHub repo README (auto-detects Chinese README priority)
+feedgrab https://github.com/nicepkg/aide                          # Repo homepage
+feedgrab https://github.com/nicepkg/aide/blob/main/README.md      # README file page
+feedgrab https://github.com/nicepkg/aide/tree/main/src             # Sub-page (auto fallback to repo level)
 
 # Fetch multiple URLs
 feedgrab https://url1.com https://url2.com
@@ -153,6 +158,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) | — |
+| GitHub | **REST API** (repo metadata + Chinese README priority + summary extraction) | — |
 | Xiaohongshu (小红书) | Jina → **Playwright deep fetch** (single + **author batch** + **search batch**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
@@ -304,6 +310,8 @@ output/
 │   └── search_xxx/       #   Search notes (subdirectory per keyword)
 ├── WeChat/               # WeChat articles
 ├── YouTube/
+├── GitHub/               # GitHub repos
+│   └── index/            #   Dedup index
 ├── Bilibili/
 ├── Telegram/
 └── RSS/
@@ -465,6 +473,7 @@ cp .env.example .env
 | `MPWEIXIN_SOGOU_ENABLED` | No | Enable Sogou WeChat article search (default: `false`) |
 | `MPWEIXIN_SOGOU_MAX_RESULTS` | No | Max articles per search (default: `10`, max `100`) |
 | `MPWEIXIN_SOGOU_DELAY` | No | Delay between article fetches in seconds (default: `3.0`) |
+| `GITHUB_TOKEN` | No | GitHub personal access token (without: 60 req/h, with: 5000 req/h) |
 | `BROWSER_USER_AGENT` | No | Global browser UA (recommend `feedgrab detect-ua` for auto-detection) |
 | `TG_API_ID` | Telegram only | From https://my.telegram.org |
 | `TG_API_HASH` | Telegram only | From https://my.telegram.org |
@@ -489,6 +498,7 @@ feedgrab/
 │   │   ├── browser.py         # Playwright headless (anti-scraping fallback)
 │   │   ├── bilibili.py        # Bilibili API
 │   │   ├── youtube.py         # yt-dlp subtitle extraction
+│   │   ├── github.py          # GitHub REST API (repo metadata + Chinese README priority)
 │   │   ├── rss.py             # RSS (feedparser)
 │   │   ├── telegram.py        # Telegram (Telethon)
 │   │   ├── twitter.py         # X/Twitter six-tier dispatcher

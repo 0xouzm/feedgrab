@@ -143,6 +143,7 @@ PLATFORM_FOLDER_MAP = {
     SourceType.BILIBILI: "Bilibili",
     SourceType.WECHAT: "mpweixin",
     SourceType.YOUTUBE: "YouTube",
+    SourceType.GITHUB: "GitHub",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",
     SourceType.MANUAL: "Manual",
@@ -252,6 +253,13 @@ def _generate_filename(item: UnifiedContent) -> str:
             raw = f"{author_display}_{published}：{raw_title}"
         elif author_display:
             raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
+    elif item.source_type == SourceType.GITHUB:
+        owner = extra.get("owner", "")
+        repo = extra.get("repo", "")
+        if owner and repo:
+            raw = f"{owner}_{repo}：{raw_title}" if raw_title else f"{owner}_{repo}"
         else:
             raw = raw_title
     else:
@@ -415,6 +423,31 @@ def _format_markdown(item: UnifiedContent) -> str:
         if extra.get("search_keyword"):
             fm_lines.append(f'search_keyword: "{extra["search_keyword"]}"')
 
+    # GitHub extras
+    is_github = item.source_type == SourceType.GITHUB
+    if is_github:
+        if extra.get("description"):
+            fm_desc = extra["description"].replace('"', '\\"')[:200]
+            fm_lines.append(f'description: "{fm_desc}"')
+        fm_lines.append(f"stars: {extra.get('stars', 0)}")
+        fm_lines.append(f"forks: {extra.get('forks', 0)}")
+        if extra.get("language"):
+            fm_lines.append(f'language: "{extra["language"]}"')
+        if extra.get("license"):
+            fm_lines.append(f'license: "{extra["license"]}"')
+        if extra.get("default_branch"):
+            fm_lines.append(f'default_branch: "{extra["default_branch"]}"')
+        if extra.get("open_issues"):
+            fm_lines.append(f"open_issues: {extra['open_issues']}")
+        if extra.get("created_at"):
+            fm_lines.append(f'repo_created: "{extra["created_at"][:10]}"')
+        if extra.get("updated_at"):
+            fm_lines.append(f'repo_updated: "{extra["updated_at"][:10]}"')
+        if extra.get("pushed_at"):
+            fm_lines.append(f'last_push: "{extra["pushed_at"][:10]}"')
+        if extra.get("readme_file") and extra["readme_file"] != "README.md":
+            fm_lines.append(f'readme_file: "{extra["readme_file"]}"')
+
     # Tags (from tweet hashtags or other sources)
     if item.tags:
         # XHS: only top 3 tags in front matter (full list goes in body)
@@ -497,9 +530,9 @@ def _format_markdown(item: UnifiedContent) -> str:
                 fm_lines.append("")
     else:
         # Non-Twitter/XHS: add title heading + full content
-        # WeChat / YouTube: skip title heading (already in filename + front matter)
+        # WeChat / YouTube / GitHub: skip title heading
         is_youtube = item.source_type == SourceType.YOUTUBE
-        if not is_wechat and not is_youtube and item.title and item.title.strip():
+        if not is_wechat and not is_youtube and not is_github and item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
 

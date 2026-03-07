@@ -15,6 +15,7 @@ from feedgrab.schema import (
     UnifiedContent, SourceType,
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
+    from_github,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.utils.url_validator import validate_url
@@ -74,6 +75,8 @@ class UniversalReader:
             return "podcast"
         if "t.me" in domain or "telegram.org" in domain:
             return "telegram"
+        if "github.com" in domain:
+            return "github"
         if url.endswith(".xml") or "/rss" in url or "/feed" in url or "/atom" in url:
             return "rss"
         return "generic"
@@ -126,7 +129,14 @@ class UniversalReader:
             # Register in global dedup index (single fetch: always save, never skip)
             try:
                 from feedgrab.utils.dedup import load_index, save_index, add_item
-                plat = "XHS" if content.source_type == SourceType.XIAOHONGSHU else "X"
+                _dedup_plat_map = {
+                    SourceType.XIAOHONGSHU: "XHS",
+                    SourceType.GITHUB: "GitHub",
+                    SourceType.YOUTUBE: "YouTube",
+                    SourceType.WECHAT: "mpweixin",
+                    SourceType.BILIBILI: "Bilibili",
+                }
+                plat = _dedup_plat_map.get(content.source_type, "X")
                 index = load_index(platform=plat)
                 if content.id not in index:
                     add_item(content.id, content.url, index)
@@ -167,6 +177,11 @@ class UniversalReader:
             from feedgrab.fetchers.youtube import fetch_youtube
             data = await fetch_youtube(url)
             return from_youtube(data)
+
+        if platform == "github":
+            from feedgrab.fetchers.github import fetch_github
+            data = await fetch_github(url)
+            return from_github(data)
 
         if platform == "rss":
             from feedgrab.fetchers.rss import fetch_rss

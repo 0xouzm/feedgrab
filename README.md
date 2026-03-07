@@ -17,9 +17,9 @@
 任意 URL → 平台检测 → 抓取内容 → 统一输出
               ↓                ↓          ↓
          自动识别          文本：Jina Reader    → output/X/作者_日期：标题.md
-         7+ 平台           视频：yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
+         8+ 平台           视频：yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
                            音频：Whisper 转录
-                           API：Bilibili / RSS / Telegram / YouTube Data API v3
+                           API：Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API
                            X/Twitter：GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
 ```
 
@@ -82,6 +82,11 @@ feedgrab ytb-dla https://youtu.be/xxx?si=xxx           # 支持短分享链接
 # 按公众号账号批量抓取全部历史文章（需要 feedgrab login wechat）
 feedgrab mpweixin-id "饼干哥哥AGI"
 MPWEIXIN_ID_SINCE=2025-01-01 feedgrab mpweixin-id "饼干哥哥AGI"  # 指定日期之后
+
+# 抓取 GitHub 仓库 README（自动检测中文 README 优先）
+feedgrab https://github.com/nicepkg/aide                          # 仓库首页
+feedgrab https://github.com/nicepkg/aide/blob/main/README.md      # README 文件页
+feedgrab https://github.com/nicepkg/aide/tree/main/src             # 内页（自动回退到仓库级别）
 
 # 批量抓取多个 URL
 feedgrab https://url1.com https://url2.com
@@ -166,6 +171,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`） | — |
+| GitHub | **REST API**（仓库元数据 + 中文 README 优先 + 摘要提取） | — |
 | 小红书 | Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
@@ -318,6 +324,8 @@ output/
 ├── WeChat/               # 微信公众号
 ├── YouTube/              # YouTube
 │   └── search_xxx/       #   搜索结果（按关键词分目录）
+├── GitHub/               # GitHub 仓库
+│   └── index/            #   去重索引
 ├── Bilibili/             # B 站
 ├── Telegram/             # Telegram
 └── RSS/                  # RSS
@@ -328,6 +336,8 @@ output/
 文件命名格式（YouTube）：`作者名_YYYY-MM-DD：标题.{md,mp4,mp3,srt}`（如 `影视飓风_2026-02-12：能卖上亿美金？国产短剧如何征服世界？.md`）
 
 文件命名格式（小红书）：`作者名_YYYY-MM-DD：标题.md`（如 `墨客老师资料库_2026-02-18：开学第一课还没思路的班主任看过来👀.md`）
+
+文件命名格式（GitHub）：`owner_repo：README摘要.md`（如 `nicepkg_aide：在 VSCode 中征服任何代码：一键注释、转换、UI 图生成代码、AI 批量处理文件！.md`）
 
 文件使用 Obsidian 兼容的 YAML front matter：
 
@@ -375,6 +385,33 @@ tags:
   - "开学第一课"
   - "教师开学第一课"
 item_id: db22cbe3d9c0
+---
+```
+
+**GitHub 示例：**
+
+```yaml
+---
+title: "在 VSCode 中征服任何代码：一键注释、转换、UI 图生成代码、AI 批量处理文件！💪"
+source: "https://github.com/nicepkg/aide"
+author:
+  - "nicepkg"
+published: 2024-07-03
+created: 2026-03-07
+description: "Conquer Any Code in VSCode..."
+stars: 2684
+forks: 207
+language: "TypeScript"
+license: "MIT"
+default_branch: "master"
+repo_created: "2024-07-02"
+repo_updated: "2026-03-06"
+last_push: "2025-05-06"
+readme_file: "README_CN.md"
+tags:
+  - "agent"
+  - "ai"
+item_id: 8f3a1b2c4d5e
 ---
 ```
 
@@ -498,6 +535,7 @@ cp .env.example .env
 | `MPWEIXIN_SOGOU_DELAY` | 否 | 文章处理间隔秒数（默认：`3.0`） |
 | `MPWEIXIN_ID_SINCE` | 否 | 按账号批量：仅抓取该日期之后的文章（`YYYY-MM-DD`，留空=全部） |
 | `MPWEIXIN_ID_DELAY` | 否 | 按账号批量：文章处理间隔秒数（默认：`3.0`） |
+| `GITHUB_TOKEN` | 否 | GitHub personal access token（无 token 60 次/小时，有 token 5000 次/小时） |
 | `BROWSER_USER_AGENT` | 否 | 全局浏览器 UA（推荐 `feedgrab detect-ua` 自动检测） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |
@@ -522,6 +560,7 @@ feedgrab/
 │   │   ├── browser.py         # 隐身浏览器引擎（patchright Tier 1 → playwright Tier 3 + 52 stealth flags）
 │   │   ├── bilibili.py        # B 站 API
 │   │   ├── youtube.py         # yt-dlp 字幕提取
+│   │   ├── github.py          # GitHub REST API（仓库元数据 + 中文 README 优先）
 │   │   ├── rss.py             # RSS 解析（feedparser）
 │   │   ├── telegram.py        # Telegram 频道（Telethon）
 │   │   ├── twitter.py         # X/Twitter 六级兜底调度器
@@ -563,6 +602,9 @@ feedgrab/
     │
     ├─ X/Twitter 推文或线程
     │   └─ GraphQL（完整线程 + 媒体）→ FxTwitter → Syndication → oEmbed → Jina → Playwright
+    │
+    ├─ GitHub 仓库
+    │   └─ REST API → 仓库元数据 + 中文 README 优先 → Markdown
     │
     ├─ 视频（YouTube、B站、X 视频）
     │   ├─ Python 抓取器 → 元数据（标题、描述）

@@ -31,6 +31,7 @@ class SourceType(str, Enum):
     TWITTER = "twitter"
     WECHAT = "wechat"
     YOUTUBE = "youtube"
+    GITHUB = "github"
     MANUAL = "manual"
 
 
@@ -391,6 +392,43 @@ def from_youtube(video: dict) -> UnifiedContent:
             "has_caption": video.get('has_caption', False),
             "has_transcript": video.get('has_transcript', False),
             "thumbnail": video.get('thumbnail', ''),
+        },
+    )
+
+
+def from_github(data: dict) -> UnifiedContent:
+    """Convert GitHub repo data dict to UnifiedContent."""
+    owner = data.get("owner", "")
+    repo = data.get("repo", "")
+    repo_key = f"{owner}/{repo}"
+    item_id = hashlib.md5(repo_key.encode()).hexdigest()[:12]
+
+    title = data.get("title", repo)
+
+    return UnifiedContent(
+        source_type=SourceType.GITHUB,
+        source_name=owner,
+        title=title,
+        content=data.get("content", ""),
+        url=data.get("url", f"https://github.com/{owner}/{repo}"),
+        id=item_id,
+        tags=data.get("topics", []),
+        extra={
+            "owner": owner,
+            "repo": repo,
+            "full_name": data.get("full_name", repo_key),
+            "description": data.get("description", ""),
+            "stars": data.get("stars", 0),
+            "forks": data.get("forks", 0),
+            "language": data.get("language", ""),
+            "license": data.get("license", ""),
+            "default_branch": data.get("default_branch", "main"),
+            "open_issues": data.get("open_issues", 0),
+            "created_at": data.get("created_at", ""),
+            "updated_at": data.get("updated_at", ""),
+            "pushed_at": data.get("pushed_at", ""),
+            "owner_avatar": data.get("owner_avatar", ""),
+            "readme_file": data.get("readme_file", "README.md"),
         },
     )
 

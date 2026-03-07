@@ -498,3 +498,12 @@ def parse_twitter_date_local(created_at: str, fmt: str = "%Y-%m-%d") -> str:
         return dt.strftime(fmt)
     except Exception:
         return ""
+
+
+# ---------------------------------------------------------------------------
+# GitHub
+# ---------------------------------------------------------------------------
+
+def github_token() -> str:
+    """GitHub personal access token. Without: 60 req/h, with: 5000 req/h."""
+    return os.getenv("GITHUB_TOKEN", "").strip()

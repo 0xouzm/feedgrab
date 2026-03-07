@@ -2,6 +2,42 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-07 · v0.9.6 · GitHub 仓库 README 抓取（中文优先）
+
+### 背景
+feedgrab 在平台覆盖上缺少 GitHub 支持。用户需要丢一个 GitHub 仓库 URL，就能自动抓取 README（中文优先）并保存为 Obsidian Markdown。支持仓库首页、README 文件页、其他内页三种 URL 格式，统一回退到仓库级别。
+
+### 方案决策
+- **GitHub REST API**：3 次 API 调用完成抓取（仓库元数据 + 根目录列表 + README 内容），无需浏览器
+- **中文 README 优先**：列出根目录所有文件，按优先级匹配 8 种中文 README 变体（`README_CN.md`、`README.zh-CN.md` 等），匹配后直接获取中文版本
+- **README 摘要提取**：从 README 内容中提取第一行有意义的描述文本作为标题（跳过 heading、badge、HTML、blockquote、短文本），替代 GitHub API 的英文 description
+- **仓库级去重**：`item_id = MD5("{owner}/{repo}")[:12]`，同一仓库无论从哪个 URL 进入都产生相同 ID
+- **无 Token 可用**：未配置 `GITHUB_TOKEN` 时 60 次/小时（按 IP），配置后 5000 次/小时
+- **URL 解析**：`parse_github_url()` 统一处理仓库首页/blob 文件页/tree 目录页/issues 等内页，取前两段 path 作为 owner/repo
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/github.py` | 新建 | GitHub REST API 抓取核心（URL 解析 + 元数据 + 中文 README 优先 + 摘要提取） |
+| `feedgrab/schema.py` | 修改 | 新增 `SourceType.GITHUB` 枚举值 + `from_github()` 工厂方法 |
+| `feedgrab/reader.py` | 修改 | 新增 `github.com` 域名检测 + 路由分发 + 多平台去重映射 |
+| `feedgrab/utils/storage.py` | 修改 | 新增 GitHub 文件夹映射 + 文件名格式（`{owner}_{repo}：{摘要}`）+ front matter |
+| `feedgrab/config.py` | 修改 | 新增 `github_token()` 配置函数 |
+| `.env.example` | 修改 | 新增 `GITHUB_TOKEN` 配置说明 |
+
+### 验证结果
+- `feedgrab https://github.com/iBigQiang/feedgrab` — 仓库首页抓取 ✅，文件名 `iBigQiang_feedgrab：万能内容抓取器 — 从任意平台抓取、转录和消化内容。.md`
+- `feedgrab https://github.com/iBigQiang/feedgrab/blob/main/README.md` — README 文件页 ✅，正确回退到仓库级别
+- `feedgrab https://github.com/iBigQiang/feedgrab/tree/main/feedgrab/fetchers` — 内页 URL ✅，正确回退到仓库级别
+- `feedgrab https://github.com/nicepkg/aide` — 中文 README 优先 ✅，检测到 `README_CN.md` 并使用
+- front matter 包含 stars/forks/language/license/topics 等完整元数据 ✅
+- 去重索引生成在 `GitHub/index/item_id_url.json` ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-06 · v0.9.5 · YouTube Data API v3 搜索 + 单视频下载命令
 
 ### 背景
