@@ -903,6 +903,74 @@ def cmd_mpweixin_account(account_name: str):
         sys.exit(1)
 
 
+def cmd_twitter_search(args: list):
+    """Search Twitter for tweets by keyword and generate engagement-ranked summary."""
+    from feedgrab.config import (
+        x_search_enabled, x_search_lang, x_search_days,
+        x_search_min_faves, x_search_min_retweets,
+        x_search_sort, x_search_exclude_retweets,
+        x_search_delay, x_search_max_results, x_search_save_tweets,
+    )
+
+    if not x_search_enabled():
+        print("\u274c X keyword search is disabled.")
+        print("   Set X_SEARCH_ENABLED=true in .env to enable.")
+        return
+
+    keyword = args[0]
+
+    # Parse CLI options
+    def _opt(name: str, default: str = "") -> str:
+        if name in args:
+            idx = args.index(name)
+            if idx + 1 < len(args):
+                return args[idx + 1]
+        return default
+
+    lang = _opt("--lang", x_search_lang())
+    days = int(_opt("--days", str(x_search_days())))
+    min_faves = int(_opt("--min-faves", str(x_search_min_faves())))
+    min_retweets = int(_opt("--min-retweets", str(x_search_min_retweets())))
+    sort = _opt("--sort", x_search_sort())
+    max_results = int(_opt("--limit", str(x_search_max_results())))
+    raw = "--raw" in args
+    save_tweets = x_search_save_tweets() or "--save" in args
+
+    from feedgrab.fetchers.twitter_keyword_search import search_twitter_keyword
+
+    async def run():
+        result = await search_twitter_keyword(
+            keyword=keyword,
+            lang=lang,
+            days=days,
+            min_faves=min_faves,
+            min_retweets=min_retweets,
+            sort=sort,
+            exclude_retweets=x_search_exclude_retweets(),
+            max_results=max_results,
+            scroll_delay=x_search_delay(),
+            save_tweets=save_tweets,
+            raw=raw,
+        )
+        print(f"\n\u2705 X search complete: '{keyword}'")
+        print(f"   Query: {result['query']}")
+        print(f"   Total tweets: {result['total']}")
+        if result.get("output_path"):
+            print(f"   Summary: {result['output_path']}")
+        if result.get("saved"):
+            print(f"   Individual tweets saved: {result['saved']}")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n\u23f9 Cancelled")
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"\u274c {e}")
+        sys.exit(1)
+
+
 def cmd_wechat_search(keyword: str, max_results: int = 0):
     """Search WeChat articles by keyword via Sogou."""
     from feedgrab.config import mpweixin_sogou_enabled, mpweixin_sogou_max_results, mpweixin_sogou_delay
@@ -954,6 +1022,7 @@ Usage:
     feedgrab setup              First-time deployment guide (recommended for new users)
     feedgrab <url>              Fetch content from any URL
     feedgrab <url1> <url2>      Fetch multiple URLs
+    feedgrab x-so <keyword>     Search Twitter by keyword (engagement table)
     feedgrab mpweixin-id <name> Fetch all articles from a WeChat public account
     feedgrab mpweixin-so <keyword>  Search WeChat articles by keyword
     feedgrab ytb-so <keyword>   Search YouTube videos by keyword
@@ -978,6 +1047,8 @@ Examples:
     feedgrab https://x.com/iBigQiang
     feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
     feedgrab "https://www.xiaohongshu.com/search_result?keyword=..."
+    feedgrab x-so openclaw
+    feedgrab x-so "AI Agent" --days 7 --min-faves 50 --sort top
     feedgrab mpweixin-id "饼干哥哥AGI"
     feedgrab mpweixin-so "AI Agent"
     feedgrab ytb-so "AI Agent"
@@ -1038,6 +1109,24 @@ Examples:
                 except ValueError:
                     pass
         cmd_wechat_search(keyword, max_results=limit)
+    elif cmd == "x-so":
+        if len(sys.argv) < 3:
+            print("\u274c Usage: feedgrab x-so <keyword> [options]")
+            print('   Example: feedgrab x-so openclaw')
+            print('            feedgrab x-so openclaw --days 3 --lang en')
+            print('            feedgrab x-so "AI Agent" --min-faves 100 --sort top')
+            print("            feedgrab x-so 'openclaw lang:zh since:2026-03-06' --raw")
+            print("   Options:")
+            print("     --days N           Time range in days (default: 1)")
+            print("     --lang LANG        Language filter (default: zh)")
+            print("     --min-faves N      Minimum likes (default: 0)")
+            print("     --min-retweets N   Minimum retweets (default: 0)")
+            print("     --sort MODE        live=Latest, top=Top (default: live)")
+            print("     --limit N          Max results (default: 100)")
+            print("     --raw              Use keyword as raw query (skip defaults)")
+            print("     --save             Save individual tweet .md files")
+            sys.exit(1)
+        cmd_twitter_search(sys.argv[2:])
     elif cmd == "ytb-so":
         if len(sys.argv) < 3:
             print("\u274c Usage: feedgrab ytb-so <keyword> [options]")

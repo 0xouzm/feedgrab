@@ -73,6 +73,12 @@ feedgrab ytb-so "AI Agent"
 feedgrab ytb-so "教程" --channel @AndrewNg --order viewCount
 feedgrab ytb-so "ML" --after 2025-01-01 --limit 5
 
+# 搜索 Twitter 推文（按互动量排序的汇总表格）
+feedgrab x-so openclaw                                        # 默认：最近1天 + 中文 + 最新tab
+feedgrab x-so "AI Agent" --days 7 --min-faves 50 --sort top   # 自定义参数
+feedgrab x-so '"openclaw" lang:zh since:2026-03-01' --raw     # 原始查询模式
+feedgrab x-so openclaw --save                                  # 同时保存单篇推文 .md
+
 # 下载 YouTube 视频/音频/字幕（输出到 OUTPUT_DIR/YouTube/ 目录）
 feedgrab ytb-dlv https://www.youtube.com/watch?v=xxx   # 下载视频 (MP4)
 feedgrab ytb-dla https://www.youtube.com/watch?v=xxx   # 下载音频 (MP3)
@@ -316,7 +322,9 @@ output/
 │   ├── status/           #   单篇推文
 │   ├── status_xxx/       #   用户推文（按 display_name）
 │   ├── bookmarks/        #   全部书签
-│   └── bookmarks_xxx/    #   书签文件夹（按名称）
+│   ├── bookmarks_xxx/    #   书签文件夹（按名称）
+│   └── search/           #   关键词搜索结果（x-so 命令）
+│       └── 1day_new/     #     按天数+排序分目录
 ├── XHS/                  # 小红书
 │   ├── index/            #   去重索引 + 批量抓取记录
 │   ├── notes_xxx/        #   作者笔记（按作者名分目录）
@@ -523,6 +531,13 @@ cp .env.example .env
 | `X_API_MIN_RETWEETS` | 否 | 最低转发数过滤（留空=不过滤） |
 | `X_API_MIN_VIEWS` | 否 | 最低阅读量过滤（留空=不过滤） |
 | `FORCE_REFETCH` | 否 | 强制重新抓取，跳过去重并覆盖已有文件（默认：`false`） |
+| `X_SEARCH_ENABLED` | 否 | 启用 Twitter 关键词搜索（默认：`true`） |
+| `X_SEARCH_LANG` | 否 | 搜索默认语言（默认：`zh`，留空=不限语言） |
+| `X_SEARCH_DAYS` | 否 | 搜索默认天数（默认：`1`，最近24小时） |
+| `X_SEARCH_MIN_FAVES` | 否 | 搜索默认最低点赞数（默认：`0`=不过滤） |
+| `X_SEARCH_SORT` | 否 | 搜索排序模式：`live`=最新 / `top`=热门（默认：`live`） |
+| `X_SEARCH_MAX_RESULTS` | 否 | 每次搜索最大推文数（默认：`100`） |
+| `X_SEARCH_SAVE_TWEETS` | 否 | 是否同时保存单篇推文 .md（默认：`false`，仅汇总表格） |
 | `XHS_USER_NOTES_ENABLED` | 否 | 启用小红书作者批量抓取（默认：`false`） |
 | `XHS_USER_NOTE_MAX_SCROLLS` | 否 | 作者主页最大滚动次数（默认：`50`） |
 | `XHS_USER_NOTE_DELAY` | 否 | 笔记处理间隔秒数（默认：`3.0`） |
@@ -572,6 +587,7 @@ feedgrab/
 │   │   ├── twitter_user_tweets.py# 用户推文批量抓取（分页+日期过滤+会话去重+RT跳过）
 │   │   ├── twitter_list_tweets.py# List 列表批量抓取（按天数过滤+会话去重+线程深度抓取）
 │   │   ├── twitter_search_tweets.py# 浏览器搜索补充（突破 UserTweets 800 条限制，按月分片+响应拦截）
+│   │   ├── twitter_keyword_search.py# 关键词搜索（x-so 命令，互动排序汇总表格）
 │   │   ├── twitter_api.py       # TwitterAPI.io 付费 API 客户端（搜索+用户推文）
 │   │   ├── twitter_api_user_tweets.py# 付费 API 补充/全量抓取（替代浏览器搜索）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）

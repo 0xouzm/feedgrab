@@ -297,6 +297,76 @@ def x_search_max_pages_per_chunk() -> int:
 
 
 # ---------------------------------------------------------------------------
+# Twitter/X keyword search (x-so)
+# ---------------------------------------------------------------------------
+
+def x_search_enabled() -> bool:
+    """Whether Twitter keyword search is enabled."""
+    return os.getenv("X_SEARCH_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def x_search_lang() -> str:
+    """Default language filter for keyword search (e.g. 'zh', 'en'). Empty = no filter."""
+    return os.getenv("X_SEARCH_LANG", "zh").strip()
+
+
+def x_search_days() -> int:
+    """Default time range in days for keyword search (default 1)."""
+    try:
+        return int(os.getenv("X_SEARCH_DAYS", "1"))
+    except ValueError:
+        return 1
+
+
+def x_search_min_faves() -> int:
+    """Default minimum likes filter (default 0 = no filter)."""
+    try:
+        return int(os.getenv("X_SEARCH_MIN_FAVES", "0"))
+    except ValueError:
+        return 0
+
+
+def x_search_min_retweets() -> int:
+    """Default minimum retweets filter (default 0 = no filter)."""
+    try:
+        return int(os.getenv("X_SEARCH_MIN_RETWEETS", "0"))
+    except ValueError:
+        return 0
+
+
+def x_search_sort() -> str:
+    """Default search sort mode: 'live' (Latest) or 'top' (Top). Default: live."""
+    val = os.getenv("X_SEARCH_SORT", "live").strip().lower()
+    return val if val in ("live", "top") else "live"
+
+
+def x_search_exclude_retweets() -> bool:
+    """Whether to exclude retweets from search results. Default: true."""
+    return os.getenv("X_SEARCH_EXCLUDE_RETWEETS", "true").lower() in ("true", "1", "yes")
+
+
+def x_search_delay() -> float:
+    """Scroll delay in seconds between search result pages (default 2.0)."""
+    try:
+        return float(os.getenv("X_SEARCH_DELAY", "2.0"))
+    except ValueError:
+        return 2.0
+
+
+def x_search_max_results() -> int:
+    """Maximum tweets to collect per search (default 100)."""
+    try:
+        return int(os.getenv("X_SEARCH_MAX_RESULTS", "100"))
+    except ValueError:
+        return 100
+
+
+def x_search_save_tweets() -> bool:
+    """Whether to save individual tweet .md files in addition to summary table."""
+    return os.getenv("X_SEARCH_SAVE_TWEETS", "false").lower() in ("true", "1", "yes")
+
+
+# ---------------------------------------------------------------------------
 # TwitterAPI.io paid API (supplementary / standalone)
 # ---------------------------------------------------------------------------
 

@@ -2,6 +2,39 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-07 · v0.9.7 · Twitter 关键词搜索（x-so 命令）
+
+### 背景
+feedgrab 已有 Twitter 单篇/书签/用户推文/列表等抓取方式，但缺少按关键词搜索 Twitter 的能力。用户需要快速了解某个关键词（如 "openclaw"）在 Twitter 上的讨论热度和观点分布，输出按互动量排序的汇总表格即可，不需要逐篇保存。
+
+### 方案决策
+- **浏览器搜索 + GraphQL 拦截**：复用 `twitter_search_tweets.py` 的 `SearchResponseCollector` 和 `_scroll_and_collect_search()`，通过 `page.on("response")` 拦截 SearchTimeline GraphQL 响应获取结构化数据
+- **汇总表格为主**：默认只输出一个按互动量排序的 Markdown 表格（YAML front matter + 表格），不保存单篇推文 .md
+- **可选单篇保存**：`X_SEARCH_SAVE_TWEETS=true` 或 `--save` 开关，保存完整推文到子目录
+- **自动引号包装**：`feedgrab x-so openclaw` 自动在搜索时添加引号精确匹配，用户无需手动加引号
+- **Raw 模式**：`--raw` 标志让用户完全控制搜索查询语法（lang/since/filter 等操作符）
+- **互动排序公式**：`likes*3 + retweets*2 + bookmarks*2 + replies`
+- **配置默认值**：11 个 `X_SEARCH_*` 环境变量提供默认语言(zh)、天数(1)、排序(live)等
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_keyword_search.py` | 新建 | 核心搜索逻辑（查询拼接 + 浏览器搜索 + 互动排序 + 表格生成） |
+| `feedgrab/cli.py` | 修改 | 新增 `x-so` 命令路由 + `cmd_twitter_search()` |
+| `feedgrab/config.py` | 修改 | 新增 `x_search_*` 系列 11 个配置函数 |
+| `.env.example` | 修改 | 新增 Twitter/X 关键词搜索配置段 |
+
+### 验证结果
+- `feedgrab x-so openclaw` — 40 条推文，按互动排序输出汇总表 ✅
+- 查询自动构建：`"openclaw" lang:zh since:2026-03-06 -is:retweet` ✅
+- YAML front matter 包含 query/total/search_tab/created ✅
+- 表格含 作者/内容摘要/👍/🔄/💬/👁/📌/日期/链接 九列 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-07 · v0.9.6 · GitHub 仓库 README 抓取（中文优先）
 
 ### 背景

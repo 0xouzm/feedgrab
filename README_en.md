@@ -69,6 +69,12 @@ feedgrab ytb-so "AI Agent"
 feedgrab ytb-so "tutorial" --channel @AndrewNg --order viewCount
 feedgrab ytb-so "ML" --after 2025-01-01 --limit 5
 
+# Search Twitter tweets (engagement-ranked summary table)
+feedgrab x-so openclaw                                        # Default: last 1 day + Chinese + Latest tab
+feedgrab x-so "AI Agent" --days 7 --min-faves 50 --sort top   # Custom params
+feedgrab x-so '"openclaw" lang:zh since:2026-03-01' --raw     # Raw query mode
+feedgrab x-so openclaw --save                                  # Also save individual tweet .md files
+
 # Download YouTube video/audio/subtitles (output to OUTPUT_DIR/YouTube/)
 feedgrab ytb-dlv https://www.youtube.com/watch?v=xxx   # Download video (MP4)
 feedgrab ytb-dla https://www.youtube.com/watch?v=xxx   # Download audio (MP3)
@@ -303,7 +309,9 @@ output/
 │   ├── status/           #   Single tweets
 │   ├── status_xxx/       #   User tweets (by display_name)
 │   ├── bookmarks/        #   All bookmarks
-│   └── bookmarks_xxx/    #   Bookmark folders (by name)
+│   ├── bookmarks_xxx/    #   Bookmark folders (by name)
+│   └── search/           #   Keyword search results (x-so command)
+│       └── 1day_new/     #     By days + sort mode
 ├── XHS/                  # Xiaohongshu
 │   ├── index/            #   Dedup index + batch fetch records
 │   ├── notes_xxx/        #   Author notes (subdirectory per author)
@@ -463,6 +471,13 @@ cp .env.example .env
 | `X_API_MIN_RETWEETS` | No | Min retweets filter (empty=no filter) |
 | `X_API_MIN_VIEWS` | No | Min views filter (empty=no filter) |
 | `FORCE_REFETCH` | No | Force re-fetch, skip dedup and overwrite existing files (default: `false`) |
+| `X_SEARCH_ENABLED` | No | Enable Twitter keyword search (default: `true`) |
+| `X_SEARCH_LANG` | No | Default search language (default: `zh`, empty=any) |
+| `X_SEARCH_DAYS` | No | Default search time range in days (default: `1`) |
+| `X_SEARCH_MIN_FAVES` | No | Default min likes filter (default: `0`=no filter) |
+| `X_SEARCH_SORT` | No | Search sort: `live`=Latest / `top`=Top (default: `live`) |
+| `X_SEARCH_MAX_RESULTS` | No | Max tweets per search (default: `100`) |
+| `X_SEARCH_SAVE_TWEETS` | No | Save individual tweet .md files (default: `false`, summary table only) |
 | `XHS_USER_NOTES_ENABLED` | No | Enable XHS author batch fetch (default: `false`) |
 | `XHS_USER_NOTE_MAX_SCROLLS` | No | Max scroll iterations on author profile (default: `50`) |
 | `XHS_USER_NOTE_DELAY` | No | Delay between note fetches in seconds (default: `3.0`) |
@@ -509,6 +524,7 @@ feedgrab/
 │   │   ├── twitter_user_tweets.py # User tweets batch fetch
 │   │   ├── twitter_list_tweets.py # List tweets batch fetch (day-filtered + conversation dedup)
 │   │   ├── twitter_search_tweets.py # Browser search supplement (breaks 800 limit)
+│   │   ├── twitter_keyword_search.py # Keyword search (x-so command, engagement-ranked table)
 │   │   ├── twitter_api.py     # TwitterAPI.io paid API client
 │   │   ├── twitter_api_user_tweets.py # Paid API supplement/full fetch
 │   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)
