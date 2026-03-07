@@ -389,6 +389,9 @@ pip install "feedgrab[telegram] @ git+https://github.com/iBigQiang/feedgrab.git"
 pip install "feedgrab[browser] @ git+https://github.com/iBigQiang/feedgrab.git"
 playwright install chromium
 
+# Twitter search enhancement (x-client-transaction-id signing, required for x-so command)
+pip install "feedgrab[twitter] @ git+https://github.com/iBigQiang/feedgrab.git"
+
 # With all optional dependencies
 pip install "feedgrab[all] @ git+https://github.com/iBigQiang/feedgrab.git"
 playwright install chromium
@@ -518,13 +521,13 @@ feedgrab/
 │   │   ├── telegram.py        # Telegram (Telethon)
 │   │   ├── twitter.py         # X/Twitter six-tier dispatcher
 │   │   ├── twitter_cookies.py # Cookie multi-source management + rotation
-│   │   ├── twitter_graphql.py # X GraphQL API client (TweetDetail, UserTweets, Bookmarks, SearchTimeline)
+│   │   ├── twitter_graphql.py # X GraphQL API client (TweetDetail, UserTweets, Bookmarks, SearchTimeline + x-client-transaction-id)
 │   │   ├── twitter_thread.py  # Thread reconstruction + comment classification
 │   │   ├── twitter_bookmarks.py  # Bookmark batch fetch
 │   │   ├── twitter_user_tweets.py # User tweets batch fetch
 │   │   ├── twitter_list_tweets.py # List tweets batch fetch (day-filtered + conversation dedup)
 │   │   ├── twitter_search_tweets.py # Browser search supplement (breaks 800 limit)
-│   │   ├── twitter_keyword_search.py # Keyword search (x-so command, engagement-ranked table)
+│   │   ├── twitter_keyword_search.py # Keyword search (x-so command, pure GraphQL + engagement-ranked table)
 │   │   ├── twitter_api.py     # TwitterAPI.io paid API client
 │   │   ├── twitter_api_user_tweets.py # Paid API supplement/full fetch
 │   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)

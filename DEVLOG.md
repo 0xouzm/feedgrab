@@ -2,6 +2,35 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-07 · v0.9.8 · x-so 纯 GraphQL 升级 + x-client-transaction-id 反检测
+
+### 背景
+v0.9.7 的 `x-so` 命令使用 headed 浏览器（Playwright）打开 Twitter 搜索页面，通过滚动加载 + GraphQL 响应拦截收集推文数据。问题：需要弹出浏览器窗口、占用桌面、启动慢（~10 秒）、滚动等待慢。`twitter_graphql.py` 中已有 `fetch_search_timeline_page()` 纯 GraphQL 函数，应该直接复用。
+
+### 方案决策
+- **纯 GraphQL 替代浏览器**：`search_twitter_keyword()` 改为同步函数，直接调用 `fetch_search_timeline_page()` 分页获取搜索结果，无需 Playwright 浏览器
+- **`x-client-transaction-id` 反检测**：Twitter 对 SearchTimeline 端点强制要求此签名头（缺失返回 404）。集成 `XClientTransaction` 库在 `_execute_graphql()` 中自动为所有 GraphQL 请求生成此头。算法基于 x.com 主页 SVG 动画 + `ondemand.s` JS 索引 + SHA-256 签名
+- **优雅降级**：未安装 `XClientTransaction` 时警告提示，不影响不需要此头的端点（如 TweetDetail）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增 `_get_transaction_id()` 生成 x-client-transaction-id，注入 `_execute_graphql()` |
+| `feedgrab/fetchers/twitter_keyword_search.py` | 修改 | 替换浏览器搜索为纯 GraphQL 分页调用，`async def` → `def` |
+| `feedgrab/cli.py` | 修改 | `asyncio.run()` → 直接调用（不再需要 async） |
+| `pyproject.toml` | 修改 | 新增 `twitter` 可选依赖组（XClientTransaction + beautifulsoup4） |
+
+### 验证结果
+- `feedgrab x-so "AI Agent" --days 1 --limit 5` — 秒级完成，无浏览器弹出 ✅
+- `feedgrab x-so openclaw --days 3 --sort top --limit 10` — 热门排序正常 ✅
+- 单篇推文抓取 `feedgrab https://x.com/xxx/status/xxx` — TweetDetail 正常工作 ✅
+- x-client-transaction-id 30 分钟缓存复用 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-07 · v0.9.7 · Twitter 关键词搜索（x-so 命令）
 
 ### 背景

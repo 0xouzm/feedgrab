@@ -435,6 +435,9 @@ pip install git+https://github.com/iBigQiang/feedgrab.git
 pip install "feedgrab[stealth] @ git+https://github.com/iBigQiang/feedgrab.git"
 patchright install chromium
 
+# Twitter 搜索增强（x-client-transaction-id 反检测签名，x-so 命令必需）
+pip install "feedgrab[twitter] @ git+https://github.com/iBigQiang/feedgrab.git"
+
 # 或使用 Playwright 兜底
 pip install "feedgrab[browser] @ git+https://github.com/iBigQiang/feedgrab.git"
 
@@ -581,13 +584,13 @@ feedgrab/
 │   │   ├── twitter.py         # X/Twitter 六级兜底调度器
 │   │   ├── twitter_cookies.py # Cookie 多源管理（环境变量/文件/Playwright/CDP）
 │   │   ├── twitter_fxtwitter.py # FxTwitter API 客户端（Tier 0.3 兜底 + circuit breaker）
-│   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, UserTweets, Bookmarks, SearchTimeline, 动态 queryId）
+│   │   ├── twitter_graphql.py # X GraphQL API 客户端（TweetDetail, UserTweets, Bookmarks, SearchTimeline, 动态 queryId + x-client-transaction-id）
 │   │   ├── twitter_thread.py  # 线程重建 + 评论分类（分页 + 去重 + 根推文追溯）
 │   │   ├── twitter_bookmarks.py# 书签批量抓取（全部/文件夹，分页+去重+分类）
 │   │   ├── twitter_user_tweets.py# 用户推文批量抓取（分页+日期过滤+会话去重+RT跳过）
 │   │   ├── twitter_list_tweets.py# List 列表批量抓取（按天数过滤+会话去重+线程深度抓取）
 │   │   ├── twitter_search_tweets.py# 浏览器搜索补充（突破 UserTweets 800 条限制，按月分片+响应拦截）
-│   │   ├── twitter_keyword_search.py# 关键词搜索（x-so 命令，互动排序汇总表格）
+│   │   ├── twitter_keyword_search.py# 关键词搜索（x-so 命令，纯 GraphQL + 互动排序汇总表格）
 │   │   ├── twitter_api.py       # TwitterAPI.io 付费 API 客户端（搜索+用户推文）
 │   │   ├── twitter_api_user_tweets.py# 付费 API 补充/全量抓取（替代浏览器搜索）
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）

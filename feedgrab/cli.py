@@ -938,8 +938,8 @@ def cmd_twitter_search(args: list):
 
     from feedgrab.fetchers.twitter_keyword_search import search_twitter_keyword
 
-    async def run():
-        result = await search_twitter_keyword(
+    try:
+        result = search_twitter_keyword(
             keyword=keyword,
             lang=lang,
             days=days,
@@ -959,9 +959,6 @@ def cmd_twitter_search(args: list):
             print(f"   Summary: {result['output_path']}")
         if result.get("saved"):
             print(f"   Individual tweets saved: {result['saved']}")
-
-    try:
-        asyncio.run(run())
     except KeyboardInterrupt:
         print("\n\u23f9 Cancelled")
     except SystemExit:

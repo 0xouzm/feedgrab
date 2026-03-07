@@ -9,20 +9,19 @@ Usage:
 
 Architecture:
     1. Build Twitter search query from keyword + config defaults + CLI overrides
-    2. Launch Playwright browser, load Twitter session
-    3. Register SearchResponseCollector (reused from twitter_search_tweets.py)
-    4. Navigate to search URL, auto-scroll to collect GraphQL responses
-    5. extract_tweet_data() on each entry → engagement-ranked summary table
-    6. Optionally save individual tweet .md files (X_SEARCH_SAVE_TWEETS=true)
+    2. Call SearchTimeline GraphQL endpoint directly (no browser needed)
+    3. Paginate via cursor until max_results reached
+    4. extract_tweet_data() on each entry → engagement-ranked summary table
+    5. Optionally save individual tweet .md files (X_SEARCH_SAVE_TWEETS=true)
 
 Output:
     X/search/{days}day_{sort_label}/{keyword}_{date}.md    ← summary table (always)
     X/search/{days}day_{sort_label}/{keyword}/{tweet}.md   ← individual tweets (optional)
 """
 
-import asyncio
 import os
 import re
+import time
 import urllib.parse
 from datetime import date, timedelta, datetime
 from pathlib import Path
@@ -30,15 +29,14 @@ from loguru import logger
 from typing import Dict, Any, List
 
 from feedgrab.config import (
-    get_session_dir,
-    get_user_agent,
     parse_twitter_date_local,
 )
-from feedgrab.fetchers.twitter_search_tweets import (
-    SearchResponseCollector,
-    _scroll_and_collect_search,
+from feedgrab.fetchers.twitter_graphql import (
+    extract_tweet_data,
+    fetch_search_timeline_page,
+    parse_search_entries,
 )
-from feedgrab.fetchers.twitter_graphql import extract_tweet_data
+from feedgrab.fetchers.twitter_cookies import load_twitter_cookies
 from feedgrab.fetchers.twitter import _clean_title
 
 
@@ -206,7 +204,7 @@ def _generate_summary_table(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-async def search_twitter_keyword(
+def search_twitter_keyword(
     keyword: str,
     lang: str = "",
     days: int = 1,
@@ -221,17 +219,11 @@ async def search_twitter_keyword(
 ) -> dict:
     """Search Twitter for tweets matching a keyword and generate engagement-ranked output.
 
+    Uses SearchTimeline GraphQL endpoint directly (no browser needed).
+
     Returns:
         dict with: total, saved, query, output_path
     """
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        raise RuntimeError(
-            "Playwright 未安装。运行: "
-            'pip install "feedgrab[browser]" && playwright install chromium'
-        )
-
     # Build query
     query = build_search_query(
         keyword, lang=lang, days=days, min_faves=min_faves,
@@ -242,12 +234,11 @@ async def search_twitter_keyword(
     logger.info(f"[X-SO] Query: {query}")
     logger.info(f"[X-SO] URL: {search_url}")
 
-    # Check session
-    session_dir = get_session_dir()
-    session_path = session_dir / "twitter.json"
-    if not session_path.exists():
+    # Load cookies (supports multi-account rotation)
+    cookies = load_twitter_cookies()
+    if not cookies:
         raise RuntimeError(
-            "未找到 Twitter session 文件，请先运行: feedgrab login twitter"
+            "未找到 Twitter Cookie，请先运行: feedgrab login twitter"
         )
 
     # Resolve output paths
@@ -260,95 +251,61 @@ async def search_twitter_keyword(
     summary_dir = base_dir / "X" / subdir
     summary_path = summary_dir / f"{safe_keyword}_{date_str}.md"
 
-    # Launch browser
-    collector = SearchResponseCollector()
+    # Map sort to GraphQL product parameter
+    product = "Latest" if sort == "live" else "Top"
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=False,
-            channel="chrome",
-            args=["--disable-blink-features=AutomationControlled"],
+    # GraphQL pagination loop
+    all_entries = []
+    cursor = None
+    max_pages = max_results // 20 + 5  # ~20 entries per page
+
+    for page in range(max_pages):
+        response = fetch_search_timeline_page(
+            raw_query=query,
+            cookies=cookies,
+            cursor=cursor,
+            count=20,
+            product=product,
         )
-        context = await browser.new_context(
-            user_agent=get_user_agent(),
-            storage_state=str(session_path),
-            viewport={"width": 1280, "height": 900},
+
+        # Retry once (cookie may have rotated after 429)
+        if not response:
+            cookies = load_twitter_cookies()
+            if not cookies:
+                logger.warning("[X-SO] No available cookies after retry")
+                break
+            time.sleep(3)
+            response = fetch_search_timeline_page(
+                raw_query=query, cookies=cookies,
+                cursor=cursor, count=20, product=product,
+            )
+            if not response:
+                logger.warning("[X-SO] GraphQL request failed after retry, stopping")
+                break
+
+        entries, cursors = parse_search_entries(response)
+        if not entries:
+            logger.info(f"[X-SO] No more entries at page {page + 1}")
+            break
+
+        all_entries.extend(entries)
+        logger.info(
+            f"[X-SO] Page {page + 1}: +{len(entries)} entries "
+            f"(total: {len(all_entries)})"
         )
-        page = await context.new_page()
-        page.on("response", collector.handle_response)
 
-        try:
-            # Warm up session
-            logger.info("[X-SO] Warming up session...")
-            try:
-                await page.goto(
-                    "https://x.com/home",
-                    wait_until="domcontentloaded",
-                    timeout=20000,
-                )
-                await asyncio.sleep(3)
-            except Exception as e:
-                logger.warning(f"[X-SO] Warm-up navigation error: {e}, continuing")
+        if len(all_entries) >= max_results:
+            break
 
-            # Navigate to search
-            logger.info(f"[X-SO] Navigating to search page...")
-            try:
-                await page.goto(
-                    search_url,
-                    wait_until="domcontentloaded",
-                    timeout=30000,
-                )
-            except Exception as e:
-                raise RuntimeError(f"搜索页面导航失败: {e}")
+        cursor = cursors.get("bottom")
+        if not cursor:
+            break
 
-            # Wait for results or empty state
-            try:
-                await page.wait_for_selector(
-                    '[data-testid="tweet"], '
-                    '[data-testid="empty_state_header_text"]',
-                    timeout=15000,
-                )
-            except Exception:
-                logger.info("[X-SO] Page load timeout, attempting to continue")
-
-            # Check empty results
-            empty_state = await page.query_selector(
-                '[data-testid="empty_state_header_text"]'
-            )
-            if empty_state:
-                logger.info("[X-SO] No search results")
-                await context.close()
-                await browser.close()
-                return {
-                    "total": 0, "saved": 0,
-                    "query": query, "output_path": "",
-                }
-
-            # Wait for initial GraphQL response
-            await asyncio.sleep(2)
-            initial_count = len(collector.entries)
-            logger.info(f"[X-SO] Initial load captured {initial_count} entries")
-
-            # Scroll to load more
-            max_scrolls = max_results // 5 + 20
-            await _scroll_and_collect_search(
-                page, collector,
-                max_scrolls=max_scrolls,
-                scroll_delay_min=scroll_delay * 0.75,
-                scroll_delay_max=scroll_delay * 1.5,
-            )
-
-            logger.info(
-                f"[X-SO] Total captured: {len(collector.entries)} raw entries"
-            )
-
-        finally:
-            await context.close()
-            await browser.close()
+    logger.info(f"[X-SO] Total collected: {len(all_entries)} raw entries")
 
     # Process entries
     tweets = []
-    for entry in collector.entries:
+    for entry in all_entries:
         td = extract_tweet_data(entry)
         if not td:
             continue

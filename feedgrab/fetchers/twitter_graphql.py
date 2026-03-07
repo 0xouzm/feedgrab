@@ -41,7 +41,7 @@ FALLBACK_BOOKMARK_FOLDERS_QUERY_ID = "i78YDd0Tza-dV4SYs58kRg"
 FALLBACK_BOOKMARK_FOLDER_TIMELINE_QUERY_ID = "8HoabOvl7jl9IC1Aixj-vg"
 FALLBACK_USER_BY_SCREEN_NAME_QUERY_ID = "k5XapwcSikNsEsILW5FvgA"
 FALLBACK_USER_TWEETS_QUERY_ID = "V7H0Ap3_Hh2FyS75OCDO3Q"
-FALLBACK_SEARCH_TIMELINE_QUERY_ID = "9AW3D-T7t9Vkvfdmq2L-iQ"
+FALLBACK_SEARCH_TIMELINE_QUERY_ID = "nWemVnGJ6A5eQAR5-oQeAg"
 FALLBACK_LIST_BY_REST_ID_QUERY_ID = "BpXQqi3VImT8bR7pAf26rg"
 FALLBACK_LIST_LATEST_TWEETS_QUERY_ID = "vtC97Oo9d09Axx-NDuTaAA"
 
@@ -224,17 +224,17 @@ SEARCH_TIMELINE_FEATURES = {
     "freedom_of_speech_not_reach_fetch_enabled": True,
     "standardized_nudges_misinfo": True,
     "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": True,
-    "rweb_video_timestamps_enabled": True,
     "longform_notetweets_rich_text_read_enabled": True,
     "longform_notetweets_inline_media_enabled": True,
+    "responsive_web_grok_image_annotation_enabled": False,
+    "responsive_web_grok_imagine_annotation_enabled": False,
+    "responsive_web_grok_community_note_auto_translation_is_enabled": False,
     "responsive_web_enhance_cards_enabled": False,
-    "tweetypie_unmention_optimization_enabled": True,
-    "responsive_web_text_conversations_enabled": True,
-    "responsive_web_media_download_video_enabled": True,
-    "responsive_web_graphql_exclude_directive_enabled": True,
 }
 
 SEARCH_TIMELINE_FIELD_TOGGLES = {
+    "withPayments": False,
+    "withAuxiliaryUserLabels": False,
     "withArticleRichContentState": True,
     "withArticlePlainText": False,
     "withGrokAnalyze": False,
@@ -256,6 +256,11 @@ _query_cache: Dict[str, Any] = {}
 _cache_timestamp: float = 0
 _cached_home_html: str = ""
 CACHE_TTL = 3600  # 1 hour
+
+# Cache for x-client-transaction-id generator
+_transaction_generator = None
+_transaction_generator_timestamp: float = 0
+_TRANSACTION_TTL = 1800  # 30 min — homepage/ondemand.s can change
 
 
 # ---------------------------------------------------------------------------
@@ -1138,6 +1143,19 @@ def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
                         logger.debug(f"Resolved SearchTimeline from bundle.{bundle_name}: queryId={qid}")
                         break
 
+            # Last resort: extract main JS URL from <script src="...main.HASH.js">
+            # (handles cases where HTML uses script tags instead of inline chunk maps)
+            if "SearchTimeline" not in result:
+                main_src = re.search(
+                    r'src="(https://abs\.twimg\.com/responsive-web/client-web/main\.[a-zA-Z0-9]+\.js)"',
+                    html,
+                )
+                if main_src:
+                    qid = _fetch_and_extract_query_id(main_src.group(1), "SearchTimeline", ua)
+                    if qid:
+                        result["SearchTimeline"] = qid
+                        logger.debug(f"Resolved SearchTimeline from script src: queryId={qid}")
+
     except Exception as e:
         logger.warning(f"Dynamic queryId resolution failed ({e}), using fallbacks")
 
@@ -1448,6 +1466,62 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _get_transaction_id(method: str, path: str) -> str:
+    """Generate x-client-transaction-id for Twitter anti-bot verification.
+
+    Uses XClientTransaction library to compute a signed header value
+    based on x.com homepage SVG animations + ondemand.s JS indices.
+    Caches the generator instance for reuse (TTL 30 min).
+    Returns empty string if generation fails (graceful degradation).
+    """
+    global _transaction_generator, _transaction_generator_timestamp
+
+    now = time.time()
+
+    # Re-initialize if expired or not yet created
+    if _transaction_generator is None or (now - _transaction_generator_timestamp) >= _TRANSACTION_TTL:
+        try:
+            import bs4
+            from x_client_transaction import ClientTransaction
+            from x_client_transaction.utils import get_ondemand_file_url
+
+            ua = DEFAULT_USER_AGENT
+            home_resp = http_client.get(
+                "https://x.com", headers={"user-agent": ua}, timeout=15,
+            )
+            home_soup = bs4.BeautifulSoup(home_resp.content, "html.parser")
+
+            ondemand_url = get_ondemand_file_url(response=home_soup)
+            ondemand_resp = http_client.get(
+                ondemand_url, headers={"user-agent": ua}, timeout=15,
+            )
+
+            _transaction_generator = ClientTransaction(
+                home_page_response=home_soup,
+                ondemand_file_response=ondemand_resp.text,
+            )
+            _transaction_generator_timestamp = now
+            logger.debug("x-client-transaction-id generator initialized")
+        except ImportError:
+            logger.warning(
+                "[GraphQL] XClientTransaction not installed. "
+                "Some endpoints (SearchTimeline) may return 404.\n"
+                "  pip install XClientTransaction"
+            )
+            return ""
+        except Exception as e:
+            logger.warning(f"[GraphQL] Failed to init transaction generator: {e}")
+            return ""
+
+    try:
+        return _transaction_generator.generate_transaction_id(
+            method=method, path=path,
+        )
+    except Exception as e:
+        logger.debug(f"[GraphQL] Failed to generate transaction id: {e}")
+        return ""
+
+
 def _execute_graphql(
     query_id: str,
     operation_name: str,
@@ -1467,6 +1541,12 @@ def _execute_graphql(
     }
 
     url = f"{GRAPHQL_BASE}/{query_id}/{operation_name}"
+
+    # Inject x-client-transaction-id (required by SearchTimeline etc.)
+    path = f"/i/api/graphql/{query_id}/{operation_name}"
+    tid = _get_transaction_id("GET", path)
+    if tid:
+        headers["x-client-transaction-id"] = tid
 
     try:
         resp = http_client.get(url, params=params, headers=headers, timeout=30)
