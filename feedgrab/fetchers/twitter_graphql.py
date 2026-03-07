@@ -1004,6 +1004,19 @@ def parse_search_entries(response: Dict[str, Any]) -> tuple:
             for item in instruction.get("moduleItems", []):
                 entries.append(item)
 
+        elif inst_type == "TimelineReplaceEntry":
+            # Page 2+ returns cursors via ReplaceEntry instead of AddEntries
+            entry = instruction.get("entry", {})
+            entry_id = entry.get("entryId", "")
+            content = entry.get("content", {})
+            if entry_id.startswith("cursor-"):
+                cursor_type = content.get("cursorType", "")
+                value = content.get("value", "")
+                if cursor_type == "Top" and value:
+                    cursors["top"] = value
+                elif cursor_type == "Bottom" and value:
+                    cursors["bottom"] = value
+
     return entries, cursors
 
 def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
