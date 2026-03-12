@@ -2,6 +2,29 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-12 · v0.9.10 · Feature Flags 紧凑编码
+
+### 背景
+Twitter GraphQL 请求的 URL 中包含 `features` 参数，包含约 30 个 feature flag（True/False 布尔值）。当前实现将所有 flag 都发送（包括 False 值），导致 URL 过长，增加被 HTTP 414 URI Too Long 拒绝的风险。参考 [jackwener/twitter-cli](https://github.com/jackwener/twitter-cli) 只发送 True 值的做法进行优化。
+
+### 方案决策
+- **紧凑编码**：在 `_execute_graphql()` 中，将 `features` dict 过滤为只含 True 值的子集后再 JSON 序列化。Twitter 服务端将缺失的 key 视为 false，行为不变
+- **效果**：SearchTimeline URL 减少约 689 字节（~30%），其他端点减少约 485 字节
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | `_execute_graphql()` 中新增 `compact_features` 过滤，仅发送 True 值的 features |
+
+### 验证结果
+- `feedgrab x-so "Claude Code" --days 1 --limit 3` — SearchTimeline 正常 ✅
+- `feedgrab https://x.com/0xMilkRabbit/status/2032018202134212868` — TweetDetail Tier 0 命中 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-12 · v0.9.9 · GraphQL 冷启动加速（磁盘缓存 + 社区 queryId 源）
 
 ### 背景

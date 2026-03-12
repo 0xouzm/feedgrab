@@ -1700,9 +1700,14 @@ def _execute_graphql(
     # Always inject this feature (matches baoyu http.ts buildFeatureMap)
     features["responsive_web_graphql_exclude_directive_enabled"] = True
 
+    # Compact encoding: only send True-valued features (Twitter ignores
+    # absent keys, treating them as false).  This reduces URL length by
+    # ~30%, avoiding potential HTTP 414 URI Too Long errors.
+    compact_features = {k: v for k, v in features.items() if v}
+
     params = {
         "variables": json.dumps(variables, separators=(",", ":")),
-        "features": json.dumps(features, separators=(",", ":")),
+        "features": json.dumps(compact_features, separators=(",", ":")),
         "fieldToggles": json.dumps(field_toggles, separators=(",", ":")),
     }
 
