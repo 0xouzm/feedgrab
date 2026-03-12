@@ -95,6 +95,12 @@ feedgrab login xhs
 # Auto-detect local Chrome UA and write to .env (recommended on first setup)
 feedgrab detect-ua
 
+# Run diagnostic checks (cookies, deps, queryId, network)
+feedgrab doctor             # All platforms
+feedgrab doctor x           # Twitter/X only
+feedgrab doctor xhs         # Xiaohongshu only
+feedgrab doctor mpweixin    # WeChat MP only
+
 # View content stats
 feedgrab list
 

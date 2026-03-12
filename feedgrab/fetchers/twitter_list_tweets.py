@@ -287,8 +287,12 @@ async def fetch_list_tweets(
             if tweet_type == "single":
                 data = _build_single_tweet_data(tweet_data, tweet_url)
             elif tweet_type == "thread":
-                data = await _fetch_via_graphql(tweet_url, tweet_id)
-                if not data or not data.get("text"):
+                try:
+                    data = await _fetch_via_graphql(tweet_url, tweet_id)
+                    if not data or not data.get("text"):
+                        data = _build_single_tweet_data(tweet_data, tweet_url)
+                except Exception as thread_err:
+                    logger.warning(f"[ListTweets] 线程获取失败 ({thread_err})，退化为单条保存")
                     data = _build_single_tweet_data(tweet_data, tweet_url)
                 _time.sleep(delay)
             elif tweet_type == "article":

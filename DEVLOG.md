@@ -2,6 +2,35 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-12 · v0.9.14 · 批量抓取数据完整性 + 线程退化保护
+
+### 背景
+全面审计所有 Twitter 批量抓取路径后发现两个问题：
+1. `_build_single_tweet_data()` 缺少 8 个扩展元数据字段（`quote_count`/`lang`/`source_app`/`possibly_sensitive`/`is_blue_verified`/`followers_count`/`statuses_count`/`listed_count`），导致批量模式单条保存的推文 front matter 不如 GraphQL 全线程抓取完整
+2. 书签/用户推文/搜索补充/列表抓取中，线程推文 `_fetch_via_graphql()` 失败时异常冒泡，导致整条推文被跳过而非退化为单条保存
+
+### 方案决策
+- **扩展元数据**：在 `_build_single_tweet_data()` 中补齐 8 个字段，全部 5 个批量 fetcher 共用此函数，改一处全部生效
+- **线程退化保护**：在 4 个文件的 thread 分支中加 try/except，GraphQL 线程重建失败时退化为 `_build_single_tweet_data()` 单条保存（`api_user_tweets` 已有统一 GraphQL try/except 无需改动）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_bookmarks.py` | 修改 | `_build_single_tweet_data()` 新增 8 个扩展元数据 + thread 退化保护 |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 修改 | thread 退化保护 |
+| `feedgrab/fetchers/twitter_search_tweets.py` | 修改 | thread 退化保护 |
+| `feedgrab/fetchers/twitter_list_tweets.py` | 修改 | thread 退化保护 |
+
+### 验证结果
+- 代码审查确认 `extract_tweet_data()` 已填充全部 8 个字段 ✅
+- 5 个批量 fetcher 全部 import `_build_single_tweet_data()`，改一处全部受益 ✅
+- 线程退化：4 个文件 + `api_user_tweets` 已有 = 全部 5 个批量 fetcher 覆盖 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-12 · v0.9.13 · 批量 Article 优先 GraphQL content_state（消除 Jina 瓶颈）
 
 ### 背景

@@ -370,6 +370,15 @@ def _build_single_tweet_data(tweet_data: dict, url: str) -> dict:
         "images": tweet_data.get("images", []),
         "videos": tweet_data.get("videos", []),
         "hashtags": tweet_data.get("hashtags", []),
+        # Extended metadata (matches _fetch_via_graphql output)
+        "quote_count": tweet_data.get("quote_count", 0),
+        "lang": tweet_data.get("lang", ""),
+        "source_app": tweet_data.get("source_app", ""),
+        "possibly_sensitive": tweet_data.get("possibly_sensitive", False),
+        "is_blue_verified": tweet_data.get("is_blue_verified", False),
+        "followers_count": tweet_data.get("followers_count", 0),
+        "statuses_count": tweet_data.get("statuses_count", 0),
+        "listed_count": tweet_data.get("listed_count", 0),
     }
 
 
@@ -542,9 +551,13 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
                 # Direct: use extracted data as-is
                 data = _build_single_tweet_data(tweet_data, tweet_url)
             elif tweet_type == "thread":
-                # Need full thread reconstruction
+                # Need full thread reconstruction via GraphQL
                 logger.info(f"[Bookmarks] [{idx + 1}/{total}] 线程推文，获取完整线程: @{author}")
-                data = await _fetch_via_graphql(tweet_url, tweet_id)
+                try:
+                    data = await _fetch_via_graphql(tweet_url, tweet_id)
+                except Exception as thread_err:
+                    logger.warning(f"[Bookmarks] 线程获取失败 ({thread_err})，退化为单条保存")
+                    data = _build_single_tweet_data(tweet_data, tweet_url)
                 time.sleep(delay)
             elif tweet_type == "article":
                 # Article: prefer GraphQL content_state body, fallback to Jina

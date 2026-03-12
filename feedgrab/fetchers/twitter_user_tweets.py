@@ -446,7 +446,11 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
                     f"[UserTweets] [{idx + 1}/{total}] "
                     f"线程推文，获取完整线程: @{author}"
                 )
-                data = await _fetch_via_graphql(tweet_url, tweet_id)
+                try:
+                    data = await _fetch_via_graphql(tweet_url, tweet_id)
+                except Exception as thread_err:
+                    logger.warning(f"[UserTweets] 线程获取失败 ({thread_err})，退化为单条保存")
+                    data = _build_single_tweet_data(tweet_data, tweet_url)
                 time.sleep(delay)
             elif tweet_type == "article":
                 data = _build_single_tweet_data(tweet_data, tweet_url)
