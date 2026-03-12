@@ -386,6 +386,229 @@ def cmd_detect_ua():
     print(f"   All browser interactions will now use this UA.")
 
 
+def cmd_doctor(platform: str = "all"):
+    """Run diagnostic checks on feedgrab integrations.
+
+    platform: 'all' | 'x' | 'xhs' | 'mpweixin'
+    """
+    import time
+    from pathlib import Path
+    from feedgrab.config import get_data_dir, get_session_dir
+
+    ok_count = 0
+    warn_count = 0
+    fail_count = 0
+    step = 0
+
+    def ok(msg):
+        nonlocal ok_count
+        ok_count += 1
+        print(f"  \u2705 {msg}")
+
+    def warn(msg):
+        nonlocal warn_count
+        warn_count += 1
+        print(f"  \u26a0\ufe0f  {msg}")
+
+    def fail(msg):
+        nonlocal fail_count
+        fail_count += 1
+        print(f"  \u274c {msg}")
+
+    def section(title):
+        nonlocal step
+        step += 1
+        print(f"\n[{step}] {title}")
+
+    # ── Shared: browser engine ───────────────────────────────────────
+    def check_browser():
+        section("Browser engine")
+        try:
+            import patchright  # noqa: F401
+            ok("patchright (stealth browser)")
+        except ImportError:
+            try:
+                import playwright  # noqa: F401
+                ok("playwright (non-stealth)")
+                warn("patchright recommended — pip install patchright")
+            except ImportError:
+                warn("No browser engine — pip install patchright")
+
+    # ── Twitter/X ────────────────────────────────────────────────────
+    def check_x():
+        section("Twitter/X dependencies")
+        for mod, desc, install in [
+            ("curl_cffi", "TLS fingerprint", "pip install curl_cffi"),
+            ("x_client_transaction", "transaction-id signing", "pip install XClientTransaction"),
+            ("bs4", "HTML parsing", "pip install beautifulsoup4"),
+            ("browserforge", "browser fingerprint", "pip install browserforge"),
+        ]:
+            try:
+                __import__(mod)
+                ok(f"{mod} ({desc})")
+            except ImportError:
+                warn(f"{mod} — {install}")
+
+        section("Twitter cookies")
+        try:
+            from feedgrab.fetchers.twitter_cookies import load_twitter_cookies
+            cookies = load_twitter_cookies()
+            if cookies and cookies.get("auth_token") and cookies.get("ct0"):
+                tok = cookies["auth_token"]
+                ok(f"auth_token={tok[:8]}...  ct0=present")
+            else:
+                fail("No valid cookies — run: feedgrab login twitter")
+        except Exception as e:
+            fail(f"Cookie load error: {e}")
+
+        section("queryId resolution")
+        try:
+            from feedgrab.fetchers.twitter_graphql import resolve_query_ids
+            t0 = time.time()
+            ids = resolve_query_ids()
+            elapsed = time.time() - t0
+            if ids:
+                ok(f"{len(ids)} queryIds resolved in {elapsed:.1f}s")
+                for name in ["TweetDetail", "SearchTimeline", "UserTweets", "Bookmarks"]:
+                    qid = ids.get(name, "?")
+                    ok(f"  {name}: {qid}")
+            else:
+                fail("No queryIds resolved")
+        except Exception as e:
+            fail(f"queryId resolution failed: {e}")
+
+        section("x-client-transaction-id")
+        try:
+            from feedgrab.fetchers.twitter_graphql import _get_transaction_id
+            tid = _get_transaction_id("GET", "/i/api/graphql/test")
+            if tid:
+                ok(f"Generated: {tid[:20]}...")
+            else:
+                warn("Failed — SearchTimeline may return 404")
+        except Exception as e:
+            warn(f"Error: {e}")
+
+        section("Twitter network")
+        try:
+            from feedgrab.utils.http_client import get as http_get
+            t0 = time.time()
+            resp = http_get("https://x.com", timeout=10)
+            elapsed = time.time() - t0
+            if resp.status_code == 200:
+                ok(f"x.com reachable ({elapsed:.1f}s)")
+            else:
+                warn(f"x.com status {resp.status_code} ({elapsed:.1f}s)")
+        except Exception as e:
+            fail(f"x.com unreachable: {e}")
+
+        try:
+            from feedgrab.utils.http_client import get as http_get
+            t0 = time.time()
+            resp = http_get(
+                "https://raw.githubusercontent.com/fa0311/twitter-openapi/"
+                "main/src/config/placeholder.json",
+                timeout=10,
+            )
+            elapsed = time.time() - t0
+            if resp.status_code == 200:
+                ok(f"Community queryId source ({elapsed:.1f}s)")
+            else:
+                warn(f"Community source status {resp.status_code}")
+        except Exception as e:
+            warn(f"Community source unreachable: {e}")
+
+    # ── Xiaohongshu ──────────────────────────────────────────────────
+    def check_xhs():
+        check_browser()
+
+        section("XHS session")
+        from feedgrab.fetchers.browser import SESSION_DIR
+        session_path = Path(SESSION_DIR) / "xhs"
+        if session_path.exists():
+            ok(f"Session found: {session_path}")
+        else:
+            warn(f"No session — run: feedgrab login xhs")
+
+        section("XHS network")
+        try:
+            from feedgrab.utils.http_client import get as http_get
+            t0 = time.time()
+            resp = http_get("https://www.xiaohongshu.com", timeout=10)
+            elapsed = time.time() - t0
+            if resp.status_code == 200:
+                ok(f"xiaohongshu.com reachable ({elapsed:.1f}s)")
+            else:
+                warn(f"xiaohongshu.com status {resp.status_code} ({elapsed:.1f}s)")
+        except Exception as e:
+            fail(f"xiaohongshu.com unreachable: {e}")
+
+    # ── WeChat MP ────────────────────────────────────────────────────
+    def check_mpweixin():
+        check_browser()
+
+        section("WeChat MP session")
+        session_path = get_session_dir() / "wechat.json"
+        if session_path.exists():
+            ok(f"Session found: {session_path}")
+            # Check age
+            age_hours = (time.time() - session_path.stat().st_mtime) / 3600
+            if age_hours > 96:
+                warn(f"Session is {age_hours:.0f}h old — likely expired (valid ~4 days). "
+                     "Run: feedgrab login wechat")
+            else:
+                ok(f"Session age: {age_hours:.0f}h (valid ~96h)")
+        else:
+            fail("No session — run: feedgrab login wechat")
+
+        section("WeChat network")
+        try:
+            from feedgrab.utils.http_client import get as http_get
+            t0 = time.time()
+            resp = http_get("https://mp.weixin.qq.com", timeout=10)
+            elapsed = time.time() - t0
+            if resp.status_code == 200:
+                ok(f"mp.weixin.qq.com reachable ({elapsed:.1f}s)")
+            else:
+                ok(f"mp.weixin.qq.com responded ({elapsed:.1f}s, status {resp.status_code})")
+        except Exception as e:
+            fail(f"mp.weixin.qq.com unreachable: {e}")
+
+    # ── Dispatch ─────────────────────────────────────────────────────
+    platform = platform.lower()
+    targets = {
+        "x": ("Twitter/X", check_x),
+        "twitter": ("Twitter/X", check_x),
+        "xhs": ("Xiaohongshu", check_xhs),
+        "mpweixin": ("WeChat MP", check_mpweixin),
+        "wechat": ("WeChat MP", check_mpweixin),
+    }
+
+    if platform == "all":
+        print("feedgrab doctor — full diagnostic\n")
+        check_browser()
+        check_x()
+        check_xhs()
+        check_mpweixin()
+    elif platform in targets:
+        label, fn = targets[platform]
+        print(f"feedgrab doctor {platform} — {label} diagnostic\n")
+        fn()
+    else:
+        print(f"\u274c Unknown platform: {platform}")
+        print("Usage: feedgrab doctor [x | xhs | mpweixin]")
+        return
+
+    # ── Summary ──────────────────────────────────────────────────────
+    print(f"\n{'=' * 50}")
+    print(f"  Result: {ok_count} passed, {warn_count} warnings, {fail_count} errors")
+    if fail_count == 0 and warn_count == 0:
+        print("  All checks passed!")
+    elif fail_count == 0:
+        print("  Core functionality OK, some optional features missing.")
+    else:
+        print("  Some checks failed — see above for fix instructions.")
+
+
 # ---------------------------------------------------------------------------
 # Setup helpers
 # ---------------------------------------------------------------------------
@@ -1031,6 +1254,10 @@ Usage:
     feedgrab ytb-all <url>      Download ALL: MD + video + audio + subtitles
     feedgrab login <platform>   Login to a platform (saves session for browser fallback)
     feedgrab detect-ua          Detect real Chrome UA and save to .env
+    feedgrab doctor             Run all diagnostic checks
+    feedgrab doctor x           Twitter/X diagnostics (cookies, queryId, network)
+    feedgrab doctor xhs         Xiaohongshu diagnostics (session, network)
+    feedgrab doctor mpweixin    WeChat MP diagnostics (session, network)
     feedgrab list               Show content statistics
     feedgrab reset <folder>     Reset a subfolder (delete files + clear dedup index)
     feedgrab clean-index        Clean up batch records and cache files from index
@@ -1074,6 +1301,9 @@ Examples:
         cmd_login(sys.argv[2], headless=headless)
     elif cmd == "detect-ua":
         cmd_detect_ua()
+    elif cmd == "doctor":
+        plat = sys.argv[2] if len(sys.argv) > 2 else "all"
+        cmd_doctor(plat)
     elif cmd == "list":
         cmd_list()
     elif cmd == "reset":

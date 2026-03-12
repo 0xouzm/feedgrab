@@ -103,6 +103,12 @@ feedgrab login xhs
 # 自动检测本机 Chrome UA 并写入 .env（推荐首次部署时运行）
 feedgrab detect-ua
 
+# 一键诊断（Cookie、依赖、queryId、网络）
+feedgrab doctor             # 全平台检查
+feedgrab doctor x           # Twitter/X 专项
+feedgrab doctor xhs         # 小红书专项
+feedgrab doctor mpweixin    # 微信公众号专项
+
 # 查看内容统计
 feedgrab list
 

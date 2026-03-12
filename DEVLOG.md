@@ -2,6 +2,34 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-12 · v0.9.12 · `feedgrab doctor` 诊断命令
+
+### 背景
+feedgrab 的 Twitter 集成依赖多个组件（Cookie、queryId、x-client-transaction-id、可选依赖、网络连通性），任一环节出问题都会导致抓取失败。用户排障困难，需要逐一检查。参考 twitter-cli 的 `twitter doctor` 命令实现一键诊断。
+
+### 方案决策
+- **按平台分区**：`feedgrab doctor [x|xhs|mpweixin]`，不带参数则全平台检查
+- **Twitter/X 检查**：可选依赖 → Cookie 状态 → queryId 解析 → x-client-transaction-id 生成 → x.com + 社区源连通性
+- **小红书检查**：浏览器引擎 → session 存在性 → xiaohongshu.com 连通性
+- **微信公众号检查**：浏览器引擎 → wechat.json session 存在性 + 过期检测（>96h）→ mp.weixin.qq.com 连通性
+- **三级状态**：✅ passed / ⚠️ warning / ❌ error，汇总输出，每个失败项附带修复指令
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/cli.py` | 修改 | 新增 `cmd_doctor()` 函数（~120 行）+ `main()` 路由 + help 信息 |
+
+### 验证结果
+- `feedgrab doctor x` — 13/13 全过 ✅
+- `feedgrab doctor xhs` — 正确提示 session 未登录 ⚠️
+- `feedgrab doctor mpweixin` — 正确检测 session 过期（153h > 96h 阈值）⚠️
+- `feedgrab doctor` — 全平台检查正常 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-12 · v0.9.11 · Feature Flags 动态更新
 
 ### 背景
