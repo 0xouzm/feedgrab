@@ -2,6 +2,35 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-12 · v0.9.13 · 批量 Article 优先 GraphQL content_state（消除 Jina 瓶颈）
+
+### 背景
+用户发现书签批量抓取中，Article 长文章走了 Jina Reader（每篇 ~10-15 秒，2 次 HTTP + hollow 修补），而非预期的 GraphQL 优先策略。经排查发现 v0.6.2 新增 `_render_article_body()` 时只更新了单篇路径（`twitter.py`），5 个批量 fetcher 的 article 分支从未同步更新，仍然直接调 Jina。实际上 GraphQL 层已在 `extract_tweet_data()` → `_extract_article_ref()` 中渲染好了 `article["body"]`，但批量分支不看这个字段。
+
+### 方案决策
+- 在所有批量 fetcher 的 article 分支中，先检查 `article.get("body")` 是否存在且 >200 字
+- 有：直接使用 GraphQL content_state 渲染结果，零额外网络请求
+- 无：fallback 到 `_fetch_article_body()` 走 Jina（与单篇路径 `_try_fetch_article_body()` 的 Priority 1/2 策略一致）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_bookmarks.py` | 修改 | article 分支新增 content_state 优先检查 |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 修改 | 同上 |
+| `feedgrab/fetchers/twitter_list_tweets.py` | 修改 | 同上 |
+| `feedgrab/fetchers/twitter_search_tweets.py` | 修改 | 同上 |
+| `feedgrab/fetchers/twitter_api_user_tweets.py` | 修改 | 同上 |
+
+### 验证结果
+- 书签文件夹 `手机卡esim`（19 条，8 篇 Article）：全部 8 篇 Article 走 GraphQL content_state ✅
+- 修复前：~3 分钟（每篇 Article ~10-15s Jina）→ 修复后：**~30 秒**（零 Jina 调用）
+- 日志确认：`Article — GraphQL content_state: @author` 而非 `Jina fetch`
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-12 · v0.9.12 · `feedgrab doctor` 诊断命令
 
 ### 背景

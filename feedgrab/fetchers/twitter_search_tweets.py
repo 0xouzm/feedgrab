@@ -494,22 +494,27 @@ async def fetch_search_supplementary(
                             )
                             time.sleep(delay)
                         elif tweet_type == "article":
-                            logger.info(
-                                f"[Search] 长文章: @{author}"
-                            )
                             data = _build_single_tweet_data(
                                 tweet_data, tweet_url
                             )
                             article = tweet_data.get("article") or {}
-                            jina_content = _fetch_article_body(
-                                tweet_url, article, author, "[Search]"
-                            )
-                            if jina_content:
-                                data["text"] = jina_content
+                            article_body = article.get("body", "")
+                            if article_body and len(article_body.strip()) > 200:
+                                logger.info(f"[Search] Article — GraphQL content_state: @{author}")
+                                data["text"] = article_body
                                 if data.get("thread_tweets"):
-                                    data["thread_tweets"][0][
-                                        "text"
-                                    ] = jina_content
+                                    data["thread_tweets"][0]["text"] = article_body
+                            else:
+                                logger.info(f"[Search] 长文章，Jina 获取正文: @{author}")
+                                jina_content = _fetch_article_body(
+                                    tweet_url, article, author, "[Search]"
+                                )
+                                if jina_content:
+                                    data["text"] = jina_content
+                                    if data.get("thread_tweets"):
+                                        data["thread_tweets"][0][
+                                            "text"
+                                        ] = jina_content
                             time.sleep(delay)
                         else:
                             data = _build_single_tweet_data(

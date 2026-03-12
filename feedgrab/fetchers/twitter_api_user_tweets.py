@@ -556,16 +556,23 @@ async def _process_tweets(
                     )
                     data = _build_single_tweet_data(tweet_data, tweet_url)
 
-                # For articles, try Jina body fetch
+                # For articles, prefer GraphQL content_state, fallback to Jina
                 if tweet_type == "article":
                     article = data.get("article_data") or tweet_data.get("article") or {}
-                    jina_content = _fetch_article_body(
-                        tweet_url, article, author, log_prefix
-                    )
-                    if jina_content:
-                        data["text"] = jina_content
+                    article_body = article.get("body", "")
+                    if article_body and len(article_body.strip()) > 200:
+                        logger.info(f"{log_prefix} Article — GraphQL content_state: @{author}")
+                        data["text"] = article_body
                         if data.get("thread_tweets"):
-                            data["thread_tweets"][0]["text"] = jina_content
+                            data["thread_tweets"][0]["text"] = article_body
+                    else:
+                        jina_content = _fetch_article_body(
+                            tweet_url, article, author, log_prefix
+                        )
+                        if jina_content:
+                            data["text"] = jina_content
+                            if data.get("thread_tweets"):
+                                data["thread_tweets"][0]["text"] = jina_content
 
                 time.sleep(delay)
             else:

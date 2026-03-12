@@ -449,19 +449,29 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
                 data = await _fetch_via_graphql(tweet_url, tweet_id)
                 time.sleep(delay)
             elif tweet_type == "article":
-                logger.info(
-                    f"[UserTweets] [{idx + 1}/{total}] "
-                    f"长文章，获取正文: @{author}"
-                )
                 data = _build_single_tweet_data(tweet_data, tweet_url)
                 article = tweet_data.get("article") or {}
-                jina_content = _fetch_article_body(
-                    tweet_url, article, author, "[UserTweets]"
-                )
-                if jina_content:
-                    data["text"] = jina_content
+                article_body = article.get("body", "")
+                if article_body and len(article_body.strip()) > 200:
+                    logger.info(
+                        f"[UserTweets] [{idx + 1}/{total}] "
+                        f"Article — GraphQL content_state: @{author}"
+                    )
+                    data["text"] = article_body
                     if data.get("thread_tweets"):
-                        data["thread_tweets"][0]["text"] = jina_content
+                        data["thread_tweets"][0]["text"] = article_body
+                else:
+                    logger.info(
+                        f"[UserTweets] [{idx + 1}/{total}] "
+                        f"长文章，Jina 获取正文: @{author}"
+                    )
+                    jina_content = _fetch_article_body(
+                        tweet_url, article, author, "[UserTweets]"
+                    )
+                    if jina_content:
+                        data["text"] = jina_content
+                        if data.get("thread_tweets"):
+                            data["thread_tweets"][0]["text"] = jina_content
                 time.sleep(delay)
             else:
                 data = _build_single_tweet_data(tweet_data, tweet_url)

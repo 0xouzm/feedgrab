@@ -294,13 +294,20 @@ async def fetch_list_tweets(
             elif tweet_type == "article":
                 data = _build_single_tweet_data(tweet_data, tweet_url)
                 article_info = tweet_data.get("article") or {}
-                jina_content = _fetch_article_body(
-                    tweet_url, article_info, author, "[ListTweets]"
-                )
-                if jina_content:
-                    data["text"] = jina_content
+                article_body = article_info.get("body", "")
+                if article_body and len(article_body.strip()) > 200:
+                    logger.info(f"[ListTweets] Article — GraphQL content_state: @{author}")
+                    data["text"] = article_body
                     if data.get("thread_tweets"):
-                        data["thread_tweets"][0]["text"] = jina_content
+                        data["thread_tweets"][0]["text"] = article_body
+                else:
+                    jina_content = _fetch_article_body(
+                        tweet_url, article_info, author, "[ListTweets]"
+                    )
+                    if jina_content:
+                        data["text"] = jina_content
+                        if data.get("thread_tweets"):
+                            data["thread_tweets"][0]["text"] = jina_content
                 _time.sleep(delay)
             else:
                 data = _build_single_tweet_data(tweet_data, tweet_url)
