@@ -21,8 +21,10 @@ import re
 import time
 import requests
 from loguru import logger
+from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+from feedgrab.config import get_data_dir
 from feedgrab.fetchers.twitter_cookies import (
     build_graphql_headers,
     DEFAULT_USER_AGENT,
@@ -33,17 +35,17 @@ from feedgrab.utils import http_client
 # Fallback queryIds — from baoyu constants.ts
 # ---------------------------------------------------------------------------
 
-FALLBACK_TWEET_DETAIL_QUERY_ID = "_8aYOgEDz35BrBcBal1-_w"
-FALLBACK_TWEET_RESULT_QUERY_ID = "HJ9lpOL-ZlOk5CkCw0JW6Q"
+FALLBACK_TWEET_DETAIL_QUERY_ID = "xd_EMdYvB9hfZsZ6Idri0w"
+FALLBACK_TWEET_RESULT_QUERY_ID = "7xflPyRiUxGVbJd4uWmbfg"
 FALLBACK_ARTICLE_QUERY_ID = "id8pHQbQi7eZ6P9mA1th1Q"
-FALLBACK_BOOKMARKS_QUERY_ID = "-LGfdImKeQz0xS_jjUwzlA"
+FALLBACK_BOOKMARKS_QUERY_ID = "2neUNDqrrFzbLui8yallcQ"
 FALLBACK_BOOKMARK_FOLDERS_QUERY_ID = "i78YDd0Tza-dV4SYs58kRg"
 FALLBACK_BOOKMARK_FOLDER_TIMELINE_QUERY_ID = "8HoabOvl7jl9IC1Aixj-vg"
-FALLBACK_USER_BY_SCREEN_NAME_QUERY_ID = "k5XapwcSikNsEsILW5FvgA"
-FALLBACK_USER_TWEETS_QUERY_ID = "V7H0Ap3_Hh2FyS75OCDO3Q"
-FALLBACK_SEARCH_TIMELINE_QUERY_ID = "nWemVnGJ6A5eQAR5-oQeAg"
+FALLBACK_USER_BY_SCREEN_NAME_QUERY_ID = "1VOOyvKkiI3FMmkeDNxM9A"
+FALLBACK_USER_TWEETS_QUERY_ID = "q6xj5bs0hapm9309hexA_g"
+FALLBACK_SEARCH_TIMELINE_QUERY_ID = "VhUd6vHVmLBcw0uX-6jMLA"
 FALLBACK_LIST_BY_REST_ID_QUERY_ID = "BpXQqi3VImT8bR7pAf26rg"
-FALLBACK_LIST_LATEST_TWEETS_QUERY_ID = "vtC97Oo9d09Axx-NDuTaAA"
+FALLBACK_LIST_LATEST_TWEETS_QUERY_ID = "RlZzktZY_9wJynoepm8ZsA"
 
 # ---------------------------------------------------------------------------
 # Feature switches — per-operation, from baoyu constants.ts
@@ -261,6 +263,15 @@ CACHE_TTL = 3600  # 1 hour
 _transaction_generator = None
 _transaction_generator_timestamp: float = 0
 _TRANSACTION_TTL = 1800  # 30 min — homepage/ondemand.s can change
+
+# Disk cache for homepage + ondemand data (avoids cold-start HTTP requests)
+_DISK_CACHE_TTL = 3600  # 1 hour (matches twitter-cli)
+
+# Community queryId source (fa0311/twitter-openapi)
+_COMMUNITY_QUERYID_URL = (
+    "https://raw.githubusercontent.com/fa0311/twitter-openapi/"
+    "main/src/config/placeholder.json"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1021,162 +1032,189 @@ def parse_search_entries(response: Dict[str, Any]) -> tuple:
 
 def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
     """
-    Dynamically resolve queryIds from X's frontend JS bundles.
+    Dynamically resolve queryIds from multiple sources.
 
-    Process (matches baoyu graphql.ts):
-        - TweetDetail: x.com HTML → api:"<hash>" → api.<hash>a.js → extract queryId
-        - TweetResultByRestId: x.com HTML → main.<hash>.js → extract queryId
+    Resolution order (first wins per operation):
+        Tier 0: Disk cache (queryids from previous run, < 1h old)
+        Tier 1: Community source (fa0311/twitter-openapi, single HTTP request)
+        Tier 2: JS bundle scan (x.com HTML → per-bundle JS downloads)
+        Tier 3: Hardcoded fallback constants
 
     Returns:
         Dict mapping operation_name → query_id.
     """
     ua = user_agent or DEFAULT_USER_AGENT
     result = {}
+    all_ops = set(_fallback_query_ids())
 
-    try:
-        html = _fetch_home_html(ua)
-        if not html:
-            return _fallback_query_ids()
+    # --- Tier 0: Disk cache ---
+    cached_ids = _load_queryid_cache()
+    if cached_ids:
+        for op in all_ops:
+            if op in cached_ids:
+                result[op] = cached_ids[op]
+        if len(result) >= len(all_ops):
+            logger.debug(f"All {len(result)} queryIds loaded from disk cache")
+            return result
 
-        # TweetDetail — from api.<hash>a.js
-        api_match = re.search(r'api:"([a-zA-Z0-9]+)"', html)
-        if api_match:
-            chunk_hash = api_match.group(1)
-            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/api.{chunk_hash}a.js"
-            qid = _fetch_and_extract_query_id(chunk_url, "TweetDetail", ua)
-            if qid:
-                result["TweetDetail"] = qid
-                logger.debug(f"Resolved TweetDetail: queryId={qid}")
+    # --- Tier 1: Community source (fa0311/twitter-openapi) ---
+    if set(result) < all_ops:
+        community = _resolve_community_query_ids()
+        for op in all_ops:
+            if op not in result and op in community:
+                result[op] = community[op]
+        if len(result) >= len(all_ops):
+            logger.debug(f"All {len(result)} queryIds resolved (cache + community)")
+            _save_queryid_cache(result)
+            return result
 
-        # TweetResultByRestId — from main.<hash>.js (different bundle!)
-        main_match = re.search(r'main:"([a-zA-Z0-9]+)"', html)
-        if main_match:
-            chunk_hash = main_match.group(1)
-            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
-            qid = _fetch_and_extract_query_id(chunk_url, "TweetResultByRestId", ua)
-            if qid:
-                result["TweetResultByRestId"] = qid
-                logger.debug(f"Resolved TweetResultByRestId: queryId={qid}")
+    # --- Tier 2: JS bundle scan (only for missing operations) ---
+    missing = all_ops - set(result)
 
-        # ArticleEntityResultByRestId — from bundle.TwitterArticles.<hash>a.js
-        article_match = re.search(r'bundle\.TwitterArticles:"([a-zA-Z0-9]+)"', html)
-        if article_match:
-            chunk_hash = article_match.group(1)
-            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.TwitterArticles.{chunk_hash}a.js"
-            qid = _fetch_and_extract_query_id(chunk_url, "ArticleEntityResultByRestId", ua)
-            if qid:
-                result["ArticleEntityResultByRestId"] = qid
-                logger.debug(f"Resolved ArticleEntityResultByRestId: queryId={qid}")
+    if missing:
+        try:
+            html = _fetch_home_html(ua)
+            if html:
+                # TweetDetail — from api.<hash>a.js
+                if "TweetDetail" in missing:
+                    api_match = re.search(r'api:"([a-zA-Z0-9]+)"', html)
+                    if api_match:
+                        chunk_hash = api_match.group(1)
+                        chunk_url = f"https://abs.twimg.com/responsive-web/client-web/api.{chunk_hash}a.js"
+                        qid = _fetch_and_extract_query_id(chunk_url, "TweetDetail", ua)
+                        if qid:
+                            result["TweetDetail"] = qid
+                            logger.debug(f"Resolved TweetDetail: queryId={qid}")
 
-        # Bookmarks — typically in main.<hash>.js (same bundle as TweetResultByRestId)
-        # Try the main bundle first, which often contains timeline-related operations
-        if main_match and "Bookmarks" not in result:
-            chunk_hash = main_match.group(1)
-            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
-            qid = _fetch_and_extract_query_id(chunk_url, "Bookmarks", ua)
-            if qid:
-                result["Bookmarks"] = qid
-                logger.debug(f"Resolved Bookmarks: queryId={qid}")
-
-        # BookmarkFoldersSlice & BookmarkFolderTimeline
-        # Try dedicated bundle.BookmarkFolders.<hash>a.js first
-        bkf_match = re.search(r'bundle\.BookmarkFolders:"([a-zA-Z0-9]+)"', html)
-        if bkf_match:
-            chunk_hash = bkf_match.group(1)
-            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.BookmarkFolders.{chunk_hash}a.js"
-            for op in ("BookmarkFoldersSlice", "BookmarkFolderTimeline"):
-                if op not in result:
-                    qid = _fetch_and_extract_query_id(chunk_url, op, ua)
+                # TweetResultByRestId — from main.<hash>.js (different bundle!)
+                main_match = re.search(r'main:"([a-zA-Z0-9]+)"', html)
+                if "TweetResultByRestId" in missing and main_match:
+                    chunk_hash = main_match.group(1)
+                    chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
+                    qid = _fetch_and_extract_query_id(chunk_url, "TweetResultByRestId", ua)
                     if qid:
-                        result[op] = qid
-                        logger.debug(f"Resolved {op}: queryId={qid}")
+                        result["TweetResultByRestId"] = qid
+                        logger.debug(f"Resolved TweetResultByRestId: queryId={qid}")
 
-        # Also try main bundle for bookmark folder ops (sometimes bundled together)
-        if main_match:
-            chunk_hash = main_match.group(1)
-            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
-            for op in ("BookmarkFoldersSlice", "BookmarkFolderTimeline"):
-                if op not in result:
-                    qid = _fetch_and_extract_query_id(chunk_url, op, ua)
+                # ArticleEntityResultByRestId — from bundle.TwitterArticles.<hash>a.js
+                if "ArticleEntityResultByRestId" in missing:
+                    article_match = re.search(r'bundle\.TwitterArticles:"([a-zA-Z0-9]+)"', html)
+                    if article_match:
+                        chunk_hash = article_match.group(1)
+                        chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.TwitterArticles.{chunk_hash}a.js"
+                        qid = _fetch_and_extract_query_id(chunk_url, "ArticleEntityResultByRestId", ua)
+                        if qid:
+                            result["ArticleEntityResultByRestId"] = qid
+                            logger.debug(f"Resolved ArticleEntityResultByRestId: queryId={qid}")
+
+                # Bookmarks — typically in main.<hash>.js
+                if "Bookmarks" not in result and main_match:
+                    chunk_hash = main_match.group(1)
+                    chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
+                    qid = _fetch_and_extract_query_id(chunk_url, "Bookmarks", ua)
                     if qid:
-                        result[op] = qid
-                        logger.debug(f"Resolved {op}: queryId={qid}")
+                        result["Bookmarks"] = qid
+                        logger.debug(f"Resolved Bookmarks: queryId={qid}")
 
-        # UserByScreenName & UserTweets — typically in main bundle
-        if main_match:
-            chunk_hash = main_match.group(1)
-            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
-            for op in ("UserByScreenName", "UserTweets", "ListByRestId", "ListLatestTweetsTimeline"):
-                if op not in result:
-                    qid = _fetch_and_extract_query_id(chunk_url, op, ua)
-                    if qid:
-                        result[op] = qid
-                        logger.debug(f"Resolved {op}: queryId={qid}")
+                # BookmarkFoldersSlice & BookmarkFolderTimeline
+                bkf_ops_missing = {"BookmarkFoldersSlice", "BookmarkFolderTimeline"} - set(result)
+                if bkf_ops_missing:
+                    bkf_match = re.search(r'bundle\.BookmarkFolders:"([a-zA-Z0-9]+)"', html)
+                    if bkf_match:
+                        chunk_hash = bkf_match.group(1)
+                        chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.BookmarkFolders.{chunk_hash}a.js"
+                        for op in bkf_ops_missing.copy():
+                            qid = _fetch_and_extract_query_id(chunk_url, op, ua)
+                            if qid:
+                                result[op] = qid
+                                bkf_ops_missing.discard(op)
+                                logger.debug(f"Resolved {op}: queryId={qid}")
 
-        # SearchTimeline — try main bundle first, then search-related bundles
-        if "SearchTimeline" not in result:
-            # Try main bundle
-            if main_match:
-                chunk_hash = main_match.group(1)
-                chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
-                qid = _fetch_and_extract_query_id(chunk_url, "SearchTimeline", ua)
-                if qid:
-                    result["SearchTimeline"] = qid
-                    logger.debug(f"Resolved SearchTimeline from main: queryId={qid}")
+                    # Also try main bundle for bookmark folder ops
+                    if bkf_ops_missing and main_match:
+                        chunk_hash = main_match.group(1)
+                        chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
+                        for op in bkf_ops_missing:
+                            qid = _fetch_and_extract_query_id(chunk_url, op, ua)
+                            if qid:
+                                result[op] = qid
+                                logger.debug(f"Resolved {op}: queryId={qid}")
 
-            # Try dedicated search bundles (bundle.search, bundle.Search, etc.)
-            if "SearchTimeline" not in result:
-                for pattern in [
-                    r'bundle\.search:"([a-zA-Z0-9]+)"',
-                    r'bundle\.Search:"([a-zA-Z0-9]+)"',
-                    r'bundle\.SearchTimeline:"([a-zA-Z0-9]+)"',
-                    r'bundle\.explore:"([a-zA-Z0-9]+)"',
-                    r'bundle\.Explore:"([a-zA-Z0-9]+)"',
-                ]:
-                    bm = re.search(pattern, html)
-                    if bm:
-                        chunk_hash = bm.group(1)
-                        bundle_name = pattern.split(r'\.')[1].split(':')[0].rstrip('\\')
-                        chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.{bundle_name}.{chunk_hash}a.js"
+                # UserByScreenName & UserTweets & List ops — typically in main bundle
+                main_ops_missing = {"UserByScreenName", "UserTweets", "ListByRestId", "ListLatestTweetsTimeline"} - set(result)
+                if main_ops_missing and main_match:
+                    chunk_hash = main_match.group(1)
+                    chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
+                    for op in main_ops_missing:
+                        qid = _fetch_and_extract_query_id(chunk_url, op, ua)
+                        if qid:
+                            result[op] = qid
+                            logger.debug(f"Resolved {op}: queryId={qid}")
+
+                # SearchTimeline — try main bundle first, then search-related bundles
+                if "SearchTimeline" not in result:
+                    if main_match:
+                        chunk_hash = main_match.group(1)
+                        chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
                         qid = _fetch_and_extract_query_id(chunk_url, "SearchTimeline", ua)
                         if qid:
                             result["SearchTimeline"] = qid
-                            logger.debug(f"Resolved SearchTimeline from bundle.{bundle_name}: queryId={qid}")
-                            break
+                            logger.debug(f"Resolved SearchTimeline from main: queryId={qid}")
 
-            # Brute-force: scan all bundle.* entries in HTML for SearchTimeline
-            if "SearchTimeline" not in result:
-                for bm in re.finditer(r'bundle\.(\w+):"([a-zA-Z0-9]+)"', html):
-                    bundle_name = bm.group(1)
-                    chunk_hash = bm.group(2)
-                    chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.{bundle_name}.{chunk_hash}a.js"
-                    qid = _fetch_and_extract_query_id(chunk_url, "SearchTimeline", ua)
-                    if qid:
-                        result["SearchTimeline"] = qid
-                        logger.debug(f"Resolved SearchTimeline from bundle.{bundle_name}: queryId={qid}")
-                        break
+                    if "SearchTimeline" not in result:
+                        for pattern in [
+                            r'bundle\.search:"([a-zA-Z0-9]+)"',
+                            r'bundle\.Search:"([a-zA-Z0-9]+)"',
+                            r'bundle\.SearchTimeline:"([a-zA-Z0-9]+)"',
+                            r'bundle\.explore:"([a-zA-Z0-9]+)"',
+                            r'bundle\.Explore:"([a-zA-Z0-9]+)"',
+                        ]:
+                            bm = re.search(pattern, html)
+                            if bm:
+                                chunk_hash = bm.group(1)
+                                bundle_name = pattern.split(r'\.')[1].split(':')[0].rstrip('\\')
+                                chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.{bundle_name}.{chunk_hash}a.js"
+                                qid = _fetch_and_extract_query_id(chunk_url, "SearchTimeline", ua)
+                                if qid:
+                                    result["SearchTimeline"] = qid
+                                    logger.debug(f"Resolved SearchTimeline from bundle.{bundle_name}: queryId={qid}")
+                                    break
 
-            # Last resort: extract main JS URL from <script src="...main.HASH.js">
-            # (handles cases where HTML uses script tags instead of inline chunk maps)
-            if "SearchTimeline" not in result:
-                main_src = re.search(
-                    r'src="(https://abs\.twimg\.com/responsive-web/client-web/main\.[a-zA-Z0-9]+\.js)"',
-                    html,
-                )
-                if main_src:
-                    qid = _fetch_and_extract_query_id(main_src.group(1), "SearchTimeline", ua)
-                    if qid:
-                        result["SearchTimeline"] = qid
-                        logger.debug(f"Resolved SearchTimeline from script src: queryId={qid}")
+                    # Brute-force: scan all bundle.* entries in HTML for SearchTimeline
+                    if "SearchTimeline" not in result:
+                        for bm in re.finditer(r'bundle\.(\w+):"([a-zA-Z0-9]+)"', html):
+                            bundle_name = bm.group(1)
+                            chunk_hash = bm.group(2)
+                            chunk_url = f"https://abs.twimg.com/responsive-web/client-web/bundle.{bundle_name}.{chunk_hash}a.js"
+                            qid = _fetch_and_extract_query_id(chunk_url, "SearchTimeline", ua)
+                            if qid:
+                                result["SearchTimeline"] = qid
+                                logger.debug(f"Resolved SearchTimeline from bundle.{bundle_name}: queryId={qid}")
+                                break
 
-    except Exception as e:
-        logger.warning(f"Dynamic queryId resolution failed ({e}), using fallbacks")
+                    # Last resort: extract main JS URL from <script src="...main.HASH.js">
+                    if "SearchTimeline" not in result:
+                        main_src = re.search(
+                            r'src="(https://abs\.twimg\.com/responsive-web/client-web/main\.[a-zA-Z0-9]+\.js)"',
+                            html,
+                        )
+                        if main_src:
+                            qid = _fetch_and_extract_query_id(main_src.group(1), "SearchTimeline", ua)
+                            if qid:
+                                result["SearchTimeline"] = qid
+                                logger.debug(f"Resolved SearchTimeline from script src: queryId={qid}")
 
-    # Merge with fallbacks for any missing operations
+        except Exception as e:
+            logger.warning(f"Dynamic queryId resolution failed ({e}), using fallbacks")
+
+    # --- Tier 3: Hardcoded fallbacks ---
     fallbacks = _fallback_query_ids()
     for op, qid in fallbacks.items():
         if op not in result:
             result[op] = qid
+
+    # Save resolved queryIds to disk for next cold start
+    _save_queryid_cache(result)
 
     return result
 
@@ -1476,6 +1514,99 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Disk cache helpers
+# ---------------------------------------------------------------------------
+
+def _disk_cache_path(name: str) -> Path:
+    """Return path to a disk cache file under {data_dir}/cache/."""
+    return get_data_dir() / "cache" / name
+
+
+def _load_transaction_cache() -> Optional[dict]:
+    """Load cached homepage HTML + ondemand.s text from disk (1h TTL)."""
+    path = _disk_cache_path("twitter_transaction_cache.json")
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if time.time() - data.get("ts", 0) >= _DISK_CACHE_TTL:
+            return None
+        if "home_html" not in data or "ondemand_text" not in data:
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _save_transaction_cache(home_html: str, ondemand_text: str):
+    """Save homepage HTML + ondemand.s text to disk cache."""
+    path = _disk_cache_path("twitter_transaction_cache.json")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "ts": time.time(),
+            "home_html": home_html,
+            "ondemand_text": ondemand_text,
+        }
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        logger.debug(f"Transaction cache saved to {path}")
+    except Exception as e:
+        logger.debug(f"Failed to save transaction cache: {e}")
+
+
+def _load_queryid_cache() -> Optional[Dict[str, str]]:
+    """Load cached queryIds from disk (1h TTL)."""
+    path = _disk_cache_path("twitter_queryid_cache.json")
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if time.time() - data.get("ts", 0) >= _DISK_CACHE_TTL:
+            return None
+        return data.get("ids", {})
+    except Exception:
+        return None
+
+
+def _save_queryid_cache(query_ids: Dict[str, str]):
+    """Save resolved queryIds to disk cache."""
+    path = _disk_cache_path("twitter_queryid_cache.json")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {"ts": time.time(), "ids": query_ids}
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        logger.debug(f"QueryId cache saved to {path} ({len(query_ids)} ops)")
+    except Exception as e:
+        logger.debug(f"Failed to save queryId cache: {e}")
+
+
+def _resolve_community_query_ids() -> Dict[str, str]:
+    """Fetch queryIds from fa0311/twitter-openapi community source.
+
+    Returns a dict mapping operationName → queryId. On failure returns {}.
+    The community source is a single HTTP request to GitHub raw content.
+    """
+    try:
+        resp = http_client.get(
+            _COMMUNITY_QUERYID_URL,
+            headers={"user-agent": DEFAULT_USER_AGENT},
+            timeout=8,
+        )
+        http_client.raise_for_status(resp)
+        data = resp.json()
+        result = {}
+        for op_name, op_data in data.items():
+            if isinstance(op_data, dict) and "queryId" in op_data:
+                result[op_name] = op_data["queryId"]
+        if result:
+            logger.debug(f"[GraphQL] Community source: {len(result)} queryIds fetched")
+        return result
+    except Exception as e:
+        logger.debug(f"[GraphQL] Community queryId source unavailable: {e}")
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -1484,10 +1615,11 @@ def _get_transaction_id(method: str, path: str) -> str:
 
     Uses XClientTransaction library to compute a signed header value
     based on x.com homepage SVG animations + ondemand.s JS indices.
-    Caches the generator instance for reuse (TTL 30 min).
+    Caches the generator instance in memory (TTL 30 min) and source
+    data on disk (TTL 1 hour) to avoid cold-start HTTP requests.
     Returns empty string if generation fails (graceful degradation).
     """
-    global _transaction_generator, _transaction_generator_timestamp
+    global _transaction_generator, _transaction_generator_timestamp, _cached_home_html
 
     now = time.time()
 
@@ -1499,19 +1631,40 @@ def _get_transaction_id(method: str, path: str) -> str:
             from x_client_transaction.utils import get_ondemand_file_url
 
             ua = DEFAULT_USER_AGENT
-            home_resp = http_client.get(
-                "https://x.com", headers={"user-agent": ua}, timeout=15,
-            )
-            home_soup = bs4.BeautifulSoup(home_resp.content, "html.parser")
+            home_html = None
+            ondemand_text = None
 
-            ondemand_url = get_ondemand_file_url(response=home_soup)
-            ondemand_resp = http_client.get(
-                ondemand_url, headers={"user-agent": ua}, timeout=15,
-            )
+            # Try disk cache first (avoids 2 HTTP requests on cold start)
+            cached = _load_transaction_cache()
+            if cached:
+                home_html = cached["home_html"]
+                ondemand_text = cached["ondemand_text"]
+                logger.debug("x-client-transaction-id: loaded from disk cache")
+            else:
+                # Fetch from network
+                home_resp = http_client.get(
+                    "https://x.com", headers={"user-agent": ua}, timeout=15,
+                )
+                home_html = home_resp.text
 
+                home_soup = bs4.BeautifulSoup(home_html, "html.parser")
+                ondemand_url = get_ondemand_file_url(response=home_soup)
+                ondemand_resp = http_client.get(
+                    ondemand_url, headers={"user-agent": ua}, timeout=15,
+                )
+                ondemand_text = ondemand_resp.text
+
+                # Save to disk cache for next cold start
+                _save_transaction_cache(home_html, ondemand_text)
+
+            # Also populate _cached_home_html for queryId JS bundle scan
+            if not _cached_home_html and home_html:
+                _cached_home_html = home_html
+
+            home_soup = bs4.BeautifulSoup(home_html, "html.parser")
             _transaction_generator = ClientTransaction(
                 home_page_response=home_soup,
-                ondemand_file_response=ondemand_resp.text,
+                ondemand_file_response=ondemand_text,
             )
             _transaction_generator_timestamp = now
             logger.debug("x-client-transaction-id generator initialized")

@@ -2,6 +2,33 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-12 · v0.9.9 · GraphQL 冷启动加速（磁盘缓存 + 社区 queryId 源）
+
+### 背景
+每次 feedgrab 进程启动时，`_get_transaction_id()` 需要请求 x.com 首页 + ondemand.s JS 文件（2 次 HTTP，~3-5 秒）来初始化签名生成器；`resolve_query_ids()` 需要请求首页 + 多个 JS chunk 来解析 queryId（3-8 次 HTTP）。对 `feedgrab x-so` 等频繁使用的命令，冷启动延迟体感明显。参考 [jackwener/twitter-cli](https://github.com/jackwener/twitter-cli) 的磁盘缓存和社区 queryId 源方案进行优化。
+
+### 方案决策
+- **x-client-transaction-id 磁盘缓存**：将 x.com 首页 HTML + ondemand.s JS 缓存到 `{data_dir}/cache/twitter_transaction_cache.json`（1 小时 TTL）。进程重启时从磁盘加载，避免 2 次 HTTP 请求。同时将 `home_html` 填充到 `_cached_home_html`，使 queryId JS 扫描也受益
+- **queryId 社区源**：新增 `fa0311/twitter-openapi` 社区维护的 queryId 源作为 Tier 1（单次 HTTP 请求获取 87 个 queryId）。解析优先级变为：Tier 0 磁盘缓存 → Tier 1 社区源 → Tier 2 JS bundle 扫描 → Tier 3 硬编码回退。queryId 也缓存到磁盘（`twitter_queryid_cache.json`，1 小时 TTL）
+- **Fallback queryIds 更新**：7 个硬编码 fallback queryId 更新为社区源最新值（`SearchTimeline`、`TweetDetail`、`Bookmarks`、`UserTweets` 等）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增磁盘缓存辅助函数（`_load_transaction_cache`/`_save_transaction_cache`/`_load_queryid_cache`/`_save_queryid_cache`）、社区源函数（`_resolve_community_query_ids`）；改造 `_get_transaction_id()` 支持磁盘缓存；改造 `resolve_query_ids()` 支持四级优先级；更新 7 个 fallback queryId |
+
+### 验证结果
+- `feedgrab x-so "Claude Code" --days 1 --limit 3` — 首次运行：社区源获取 87 个 queryId，搜索正常 ✅
+- 二次运行：queryId + transaction-id 均命中磁盘缓存，零 HTTP 请求 ✅
+- `feedgrab https://x.com/0xMilkRabbit/status/...` — Tier 0 GraphQL 一次命中，社区 queryId 正常 ✅
+- `feedgrab https://x.com/hualun/status/...` — Tier 0 GraphQL 一次命中 ✅
+- 冷启动性能：~5s → ~1s（社区源）；热启动：~3s → **0s**（全磁盘缓存）
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-07 · v0.9.8 · x-so 纯 GraphQL 升级 + x-client-transaction-id 反检测
 
 ### 背景
