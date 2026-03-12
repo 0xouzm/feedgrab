@@ -243,6 +243,60 @@ SEARCH_TIMELINE_FIELD_TOGGLES = {
     "withDisallowedReplyControls": False,
 }
 
+# All mutable features dicts for dynamic update (populated after definition)
+_ALL_FEATURES_DICTS: list = [
+    TWEET_RESULT_FEATURES,
+    TWEET_DETAIL_FEATURES,
+    BOOKMARK_FEATURES,
+    USER_BY_SCREEN_NAME_FEATURES,
+    USER_TWEETS_FEATURES,
+    LIST_TWEETS_FEATURES,
+    SEARCH_TIMELINE_FEATURES,
+]
+
+
+def _update_features_from_html(html: str) -> int:
+    """Extract live feature flags from x.com HTML and update global dicts.
+
+    Twitter embeds feature switch config in inline <script> as JSON like:
+        "responsive_web_graphql_timeline_navigation_enabled": {"value": true}
+
+    Only UPDATES existing keys in our features dicts — never adds new ones
+    to avoid URL bloat and 414 errors.  Returns number of flags changed.
+    """
+    if not html:
+        return 0
+    try:
+        pattern = re.compile(
+            r'"([a-z][a-z0-9_]+)":\s*\{\s*"value"\s*:\s*(true|false)',
+            re.IGNORECASE,
+        )
+        # Build a lookup: key → new bool value
+        live: dict[str, bool] = {}
+        for m in pattern.finditer(html):
+            live[m.group(1)] = m.group(2).lower() == "true"
+
+        if not live:
+            return 0
+
+        changed = 0
+        for fdict in _ALL_FEATURES_DICTS:
+            for key in fdict:
+                if key in live and fdict[key] != live[key]:
+                    logger.debug(
+                        "Feature flag updated: {} = {} → {}",
+                        key, fdict[key], live[key],
+                    )
+                    fdict[key] = live[key]
+                    changed += 1
+        if changed:
+            logger.info("Dynamic feature update: {} flags changed from x.com HTML", changed)
+        return changed
+    except Exception as exc:
+        logger.debug("Feature extraction from HTML failed: %s", exc)
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Rate limiting (safety measure — original baoyu has none)
 # ---------------------------------------------------------------------------
@@ -1660,6 +1714,9 @@ def _get_transaction_id(method: str, path: str) -> str:
             # Also populate _cached_home_html for queryId JS bundle scan
             if not _cached_home_html and home_html:
                 _cached_home_html = home_html
+
+            # Dynamic feature flags update from x.com inline scripts
+            _update_features_from_html(home_html)
 
             home_soup = bs4.BeautifulSoup(home_html, "html.parser")
             _transaction_generator = ClientTransaction(

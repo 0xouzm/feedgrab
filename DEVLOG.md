@@ -2,6 +2,31 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-12 · v0.9.11 · Feature Flags 动态更新
+
+### 背景
+feedgrab 的 GraphQL features 字典是硬编码的，Twitter 前端迭代后可能新增或修改 feature flag 的默认值，导致请求参数过时。参考 [jackwener/twitter-cli](https://github.com/jackwener/twitter-cli) 从 x.com 主页 HTML 提取当前 feature 开关值的做法，实现动态同步。
+
+### 方案决策
+- **正则提取**：`_update_features_from_html(html)` 用正则 `"key": { "value": true/false }` 从 x.com 主页内联脚本中提取 feature flag 值
+- **只更新已有 key**：绝不新增 key（避免 URL 膨胀），仅更新 7 个 features 字典中已存在的 key
+- **零额外 HTTP 请求**：复用 `_get_transaction_id()` 已获取/缓存的 `home_html`，在 transaction 初始化后立即调用
+- **实测效果**：检测到 33 个 flag 变化（如 `tweet_awards_web_tipping_enabled: True→False`、`responsive_web_grok_image_annotation_enabled: False→True`）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | 新增 `_ALL_FEATURES_DICTS` 注册表 + `_update_features_from_html()` 提取函数；在 `_get_transaction_id()` 中调用 |
+
+### 验证结果
+- `feedgrab x-so "Claude Code" --days 1 --limit 3` — 33 flags 动态更新 + SearchTimeline 正常 ✅
+- `feedgrab https://x.com/0xMilkRabbit/status/...` — TweetDetail Tier 0 命中 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-12 · v0.9.10 · Feature Flags 紧凑编码
 
 ### 背景
