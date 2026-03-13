@@ -775,7 +775,7 @@ def _generate_xhs_summary_table(
             comments = int(nd.get("comments", 0) or 0)
             date_raw = nd.get("date", "")
             # Extract just the date part (strip location like "福建")
-            date_short = date_raw[:10] if len(date_raw) >= 10 else date_raw
+            date_short = date_raw[:10] if len(date_raw) >= 10 else (date_raw or "—")
 
             lines.append(
                 f"| {i} | {author} | {summary_link} "

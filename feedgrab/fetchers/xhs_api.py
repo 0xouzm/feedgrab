@@ -851,7 +851,10 @@ class XhsApiClient:
 
 
 def normalize_api_note(note_card: dict[str, Any], note_id: str = "") -> dict[str, Any]:
-    """Convert XHS Feed API note_card to feedgrab's standard xhs dict format.
+    """Convert XHS API note_card to feedgrab's standard xhs dict format.
+
+    Handles both Feed API responses (title/desc/time) and Search API
+    responses (display_title, no desc/time).
 
     This output is directly consumable by schema.from_xiaohongshu().
     """
@@ -873,6 +876,13 @@ def normalize_api_note(note_card: dict[str, Any], note_id: str = "") -> dict[str
         url_default = img.get("url_default", "")
         if url_default and url_default not in images:
             images.append(url_default)
+
+    # Cover image fallback (search API uses "cover" instead of image_list details)
+    if not images:
+        cover = note_card.get("cover") or {}
+        cover_url = cover.get("url_default", "") or cover.get("url", "")
+        if cover_url:
+            images.append(cover_url)
 
     # Extract tags
     tags = [
@@ -910,9 +920,14 @@ def normalize_api_note(note_card: dict[str, Any], note_id: str = "") -> dict[str
     user_id = user.get("user_id", "")
     nid = note_id or note_card.get("note_id", "")
 
+    # Title: Feed API uses "title", Search API uses "display_title"
+    title = note_card.get("title", "") or note_card.get("display_title", "")
+    # Content: Feed API uses "desc", Search API has no desc
+    content = note_card.get("desc", "")
+
     return {
-        "title": note_card.get("title", ""),
-        "content": note_card.get("desc", ""),
+        "title": title,
+        "content": content,
         "author": user.get("nickname", ""),
         "author_url": f"{_HOME_URL}/user/profile/{user_id}" if user_id else "",
         "url": f"{_HOME_URL}/explore/{nid}" if nid else "",
