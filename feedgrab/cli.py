@@ -604,6 +604,49 @@ def cmd_doctor(platform: str = "all"):
         except Exception as e:
             fail(f"mp.weixin.qq.com unreachable: {e}")
 
+    # ── Feishu / Lark ─────────────────────────────────────────────
+    def check_feishu():
+        check_browser()
+
+        section("Feishu Open API (lark-oapi)")
+        try:
+            import lark_oapi  # noqa: F401
+            ok("lark-oapi installed")
+            from feedgrab.config import feishu_app_id, feishu_app_secret
+            if feishu_app_id() and feishu_app_secret():
+                ok(f"FEISHU_APP_ID={feishu_app_id()[:6]}...  FEISHU_APP_SECRET=present")
+            else:
+                warn("FEISHU_APP_ID / FEISHU_APP_SECRET not set — Tier 0 API disabled")
+        except ImportError:
+            warn("lark-oapi not installed — Tier 0 API disabled (pip install lark-oapi)")
+
+        section("Feishu session")
+        session_path = Path(get_session_dir()) / "feishu.json"
+        if session_path.exists():
+            ok(f"Session found: {session_path}")
+            age_hours = (time.time() - session_path.stat().st_mtime) / 3600
+            ok(f"Session age: {age_hours:.0f}h")
+        else:
+            warn("No session — run: feedgrab login feishu (needed for Tier 1 Playwright)")
+
+        section("Feishu config")
+        from feedgrab.config import feishu_download_images, feishu_page_load_timeout
+        ok(f"FEISHU_DOWNLOAD_IMAGES={feishu_download_images()}")
+        ok(f"FEISHU_PAGE_LOAD_TIMEOUT={feishu_page_load_timeout()}ms")
+
+        section("Feishu network")
+        try:
+            from feedgrab.utils.http_client import get as http_get
+            t0 = time.time()
+            resp = http_get("https://my.feishu.cn", timeout=10)
+            elapsed = time.time() - t0
+            if resp.status_code < 400:
+                ok(f"my.feishu.cn reachable ({elapsed:.1f}s, status {resp.status_code})")
+            else:
+                warn(f"my.feishu.cn status {resp.status_code} ({elapsed:.1f}s)")
+        except Exception as e:
+            fail(f"my.feishu.cn unreachable: {e}")
+
     # ── Dispatch ─────────────────────────────────────────────────────
     platform = platform.lower()
     targets = {
@@ -612,6 +655,8 @@ def cmd_doctor(platform: str = "all"):
         "xhs": ("Xiaohongshu", check_xhs),
         "mpweixin": ("WeChat MP", check_mpweixin),
         "wechat": ("WeChat MP", check_mpweixin),
+        "feishu": ("Feishu/Lark", check_feishu),
+        "lark": ("Feishu/Lark", check_feishu),
     }
 
     if platform == "all":
@@ -620,13 +665,14 @@ def cmd_doctor(platform: str = "all"):
         check_x()
         check_xhs()
         check_mpweixin()
+        check_feishu()
     elif platform in targets:
         label, fn = targets[platform]
         print(f"feedgrab doctor {platform} — {label} diagnostic\n")
         fn()
     else:
         print(f"\u274c Unknown platform: {platform}")
-        print("Usage: feedgrab doctor [x | xhs | mpweixin]")
+        print("Usage: feedgrab doctor [x | xhs | mpweixin | feishu]")
         return
 
     # ── Summary ──────────────────────────────────────────────────────

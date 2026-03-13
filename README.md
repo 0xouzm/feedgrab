@@ -127,6 +127,7 @@ feedgrab doctor             # 全平台检查
 feedgrab doctor x           # Twitter/X 专项
 feedgrab doctor xhs         # 小红书专项
 feedgrab doctor mpweixin    # 微信公众号专项
+feedgrab doctor feishu      # 飞书专项
 
 # 查看内容统计
 feedgrab list
