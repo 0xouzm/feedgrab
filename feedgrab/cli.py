@@ -1226,7 +1226,7 @@ def cmd_twitter_search(args: list):
 
 def cmd_xhs_search(args: list):
     """Search XHS for notes by keyword and generate engagement-ranked summary."""
-    from feedgrab.config import xhs_search_sort, xhs_search_note_type, xhs_search_max_pages
+    from feedgrab.config import xhs_search_sort, xhs_search_note_type, xhs_search_max_pages, xhs_search_save_notes
 
     keyword = args[0]
 
@@ -1241,7 +1241,7 @@ def cmd_xhs_search(args: list):
     sort = _opt("--sort", xhs_search_sort())
     note_type = _opt("--type", xhs_search_note_type())
     max_results = int(_opt("--limit", str(xhs_search_max_pages() * 20)))
-    save_notes = "--save" in args
+    save_notes = xhs_search_save_notes() or "--save" in args
 
     from feedgrab.fetchers.xhs_search_notes import search_xhs_keyword
 

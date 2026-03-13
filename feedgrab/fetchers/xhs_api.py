@@ -586,9 +586,11 @@ class XhsApiClient:
             max_pages: 0 = unlimited
 
         Returns:
-            List of raw note dicts from API (with note_id and xsec_token).
+            List of raw note dicts from API (with note_id and xsec_token),
+            deduplicated by note_id.
         """
         all_notes: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
         cursor = ""
         pages = 0
         since_ts = 0
@@ -619,6 +621,12 @@ class XhsApiClient:
                 xsec_token = note.get("xsec_token", "")
                 if note_id and xsec_token:
                     cache_xsec_token(note_id, xsec_token)
+
+                # Dedup by note_id
+                if note_id and note_id in seen_ids:
+                    continue
+                if note_id:
+                    seen_ids.add(note_id)
 
                 # Date filter
                 if since_ts and note.get("time"):

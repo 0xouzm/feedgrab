@@ -491,6 +491,11 @@ def xhs_search_max_pages() -> int:
         return 10
 
 
+def xhs_search_save_notes() -> bool:
+    """Whether to save individual note .md files during xhs-so search (default false)."""
+    return os.getenv("XHS_SEARCH_SAVE_NOTES", "false").strip().lower() in ("true", "1", "yes")
+
+
 # ---------------------------------------------------------------------------
 # XHS user notes batch fetch
 # ---------------------------------------------------------------------------
