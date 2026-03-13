@@ -759,7 +759,7 @@ def _generate_xhs_summary_table(
         )
 
         for i, nd in enumerate(notes, 1):
-            author = nd.get("author", "")
+            author = nd.get("author", "").replace("|", "\\|")
             title = nd.get("title", "")
             content = nd.get("content", "")
             summary_text = _clean_summary(title or content, max_len=40)
@@ -795,7 +795,7 @@ def _generate_xhs_summary_table(
             "评论", "链接",
         ])
         for i, nd in enumerate(notes, 1):
-            author = nd.get("author", "")
+            author = nd.get("author", "").replace("|", "\\|")
             title = nd.get("title", "")
             content = nd.get("content", "")
             summary_text = _clean_summary(title or content, max_len=80)

@@ -177,6 +177,8 @@ def _generate_summary_table(
             author = author_name if author_name else (f"@{handle}" if handle else "")
             if td.get("is_blue_verified"):
                 author = f"\u2705{author}"
+            # Escape pipe and newlines — pipe breaks table columns
+            author = author.replace("|", "\\|").replace("\n", " ").replace("\r", "")
             summary = _clean_title(td.get("text", ""), max_len=40)
             summary = summary.replace("|", "\\|")
             # Escape brackets for markdown link
