@@ -695,9 +695,10 @@ class XhsApiClient:
         """Search notes with auto-pagination.
 
         Returns:
-            List of raw search result items.
+            List of raw search result items (deduplicated by note_id).
         """
         all_items: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
 
         for page in range(1, max_pages + 1):
             data = self.search_notes_page(
@@ -710,6 +711,7 @@ class XhsApiClient:
             if not items:
                 break
 
+            added = 0
             for item in items:
                 # Cache xsec_token from search results
                 note_card = item.get("note_card") or item.get("note", {})
@@ -722,12 +724,19 @@ class XhsApiClient:
                 if note_id and xsec_token:
                     cache_xsec_token(note_id, xsec_token)
 
-            all_items.extend(items)
+                # Dedup by note_id
+                if note_id and note_id in seen_ids:
+                    continue
+                if note_id:
+                    seen_ids.add(note_id)
+                all_items.append(item)
+                added += 1
+
             has_more = data.get("has_more", True)
 
             logger.info(
                 f"[XHS-API] Search page {page}: {len(items)} results "
-                f"(total {len(all_items)})"
+                f"(+{added} new, total {len(all_items)})"
             )
 
             if not has_more or len(items) < 20:

@@ -343,15 +343,17 @@ def search_twitter_keyword(
 
     logger.info(f"[X-SO] Total collected: {len(all_entries)} raw entries")
 
-    # Process entries
+    # Process entries (dedup by tweet id)
     tweets = []
+    seen_ids: set[str] = set()
     for entry in all_entries:
         td = extract_tweet_data(entry)
         if not td:
             continue
-        # Skip entries without an id
-        if not td.get("id"):
+        tid = td.get("id", "")
+        if not tid or tid in seen_ids:
             continue
+        seen_ids.add(tid)
         tweets.append(td)
 
     # Truncate to max_results
