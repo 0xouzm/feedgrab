@@ -19,7 +19,7 @@ Any URL → Platform Detection → Fetch Content → Unified Output
          auto-detect           text: Jina Reader    → output/X/Author_Date：Title.md
          8+ platforms          video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
                                audio: Whisper transcription
-                               API: Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API
+                               API: Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / Feishu Open API
                                X/Twitter: GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
 ```
 
@@ -183,6 +183,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) | — |
 | GitHub | **REST API** (repo metadata + Chinese README priority + summary extraction) | — |
 | Xiaohongshu (小红书) | **API (xhshow)** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
+| Feishu/Lark (飞书) | **Open API** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
@@ -562,7 +563,9 @@ feedgrab/
 │   │   ├── wechat.py          # Jina → Playwright WeChat JS extraction
 │   │   ├── xhs.py             # API (xhshow) → Jina → Playwright + session fallback
 │   │   ├── xhs_user_notes.py  # XHS author batch fetch (__INITIAL_STATE__ + XHR intercept + scroll)
-│   │   └── xhs_search_notes.py # XHS search batch fetch (xhs-so API search + search page scroll + per-note deep fetch)
+│   │   ├── xhs_search_notes.py # XHS search batch fetch (xhs-so API search + search page scroll + per-note deep fetch)
+│   │   ├── feishu.py          # Feishu single doc (Open API → Playwright PageMain → Jina + Block→MD + image download)
+│   │   └── feishu_wiki.py     # Feishu wiki batch (Open API recursive + Playwright fallback + resume)
 │   └── utils/
 │       ├── storage.py         # Per-platform Markdown + JSON dual output
 │       ├── dedup.py           # Global dedup index (cross-mode unified tracking)
