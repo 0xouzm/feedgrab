@@ -975,6 +975,35 @@ def _youtube_resolve_meta(url: str) -> dict:
     }
 
 
+def cmd_feishu_wiki(url: str):
+    """Batch-fetch all documents in a Feishu wiki space."""
+    import asyncio
+
+    async def run():
+        from feedgrab.fetchers.feishu_wiki import fetch_feishu_wiki
+        result = await fetch_feishu_wiki(url)
+        wiki_title = result.get("wiki_title", "unknown")
+        total = result.get("total", 0)
+        fetched = result.get("fetched", 0)
+        skipped = result.get("skipped", 0)
+        failed = result.get("failed", 0)
+        print(f"\n{'=' * 50}")
+        print(f"📂 Wiki: {wiki_title}")
+        print(f"   Total docs: {total}")
+        print(f"   Fetched:    {fetched}")
+        print(f"   Skipped:    {skipped}")
+        print(f"   Failed:     {failed}")
+        print(f"{'=' * 50}")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n⏹ Cancelled")
+    except Exception as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+
 def cmd_youtube_download(url: str, mode: str = "video"):
     """Download YouTube video/audio/subtitles to {OUTPUT_DIR}/YouTube/{author}/.
 
@@ -1588,6 +1617,18 @@ Examples:
             sys.exit(1)
         mode_map = {"ytb-dlv": "video", "ytb-dla": "audio", "ytb-dlz": "subtitle", "ytb-all": "all"}
         cmd_youtube_download(sys.argv[2], mode=mode_map[cmd])
+    elif cmd == "feishu-wiki":
+        if len(sys.argv) < 3:
+            print("❌ Usage: feedgrab feishu-wiki <wiki_url>")
+            print("   Example: feedgrab feishu-wiki https://xxx.feishu.cn/wiki/ABC123")
+            print("   Config:   FEISHU_WIKI_BATCH_ENABLED=true (required)")
+            print("             FEISHU_APP_ID + FEISHU_APP_SECRET (Tier 0: Open API)")
+            print("             feedgrab login feishu (Tier 1: browser)")
+            sys.exit(1)
+        # Force-enable batch for this command
+        import os
+        os.environ["FEISHU_WIKI_BATCH_ENABLED"] = "true"
+        cmd_feishu_wiki(sys.argv[2])
     elif cmd.startswith("http") or cmd.startswith("www.") or "." in cmd:
         urls = [arg for arg in sys.argv[1:] if arg.startswith(("http", "www.")) or "." in arg]
         cmd_fetch(urls)

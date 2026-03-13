@@ -29,7 +29,8 @@ stealth = ["patchright>=1.0", "browserforge>=1.1", "curl_cffi>=0.7"]
 twitter = ["XClientTransaction>=1.0", "beautifulsoup4>=4.12"]
 wechat = ["markdownify>=0.13", "beautifulsoup4>=4.12"]
 xhs = ["xhshow>=0.1.9"]
-all = ["telethon>=1.34", "mcp[cli]>=1.0", "playwright>=1.40", "patchright>=1.0", "browserforge>=1.1", "curl_cffi>=0.7", "markdownify>=0.13", "beautifulsoup4>=4.12", "XClientTransaction>=1.0", "xhshow>=0.1.9"]
+feishu = ["lark-oapi>=1.5"]
+all = ["telethon>=1.34", "mcp[cli]>=1.0", "playwright>=1.40", "patchright>=1.0", "browserforge>=1.1", "curl_cffi>=0.7", "markdownify>=0.13", "beautifulsoup4>=4.12", "XClientTransaction>=1.0", "xhshow>=0.1.9", "lark-oapi>=1.5"]
 
 [project.scripts]
 feedgrab = "feedgrab.cli:main"

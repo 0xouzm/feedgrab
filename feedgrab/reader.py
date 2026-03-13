@@ -15,7 +15,7 @@ from feedgrab.schema import (
     UnifiedContent, SourceType,
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
-    from_github,
+    from_github, from_feishu,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.utils.url_validator import validate_url
@@ -77,6 +77,10 @@ class UniversalReader:
             return "telegram"
         if "github.com" in domain:
             return "github"
+        # Feishu / Lark
+        from feedgrab.fetchers.feishu import is_feishu_url
+        if is_feishu_url(url):
+            return "feishu"
         if url.endswith(".xml") or "/rss" in url or "/feed" in url or "/atom" in url:
             return "rss"
         return "generic"
@@ -145,7 +149,20 @@ class UniversalReader:
             from feedgrab.utils.storage import save_to_markdown
             if content.source_type == SourceType.TWITTER and not content.category:
                 content.category = "status"
-            save_to_markdown(content)
+            saved_path = save_to_markdown(content)
+
+            # Feishu: download images to {md_dir}/attachments/ after saving
+            if (saved_path
+                    and content.source_type == SourceType.FEISHU
+                    and content.extra.get("images_info")):
+                from feedgrab.config import feishu_download_images
+                if feishu_download_images():
+                    from feedgrab.fetchers.feishu import download_feishu_images
+                    download_feishu_images(
+                        saved_path,
+                        content.extra["images_info"],
+                        content.url,
+                    )
 
             # Register in global dedup index (single fetch: always save, never skip)
             try:
@@ -156,6 +173,7 @@ class UniversalReader:
                     SourceType.YOUTUBE: "YouTube",
                     SourceType.WECHAT: "mpweixin",
                     SourceType.BILIBILI: "Bilibili",
+                    SourceType.FEISHU: "Feishu",
                 }
                 plat = _dedup_plat_map.get(content.source_type, "X")
                 index = load_index(platform=plat)
@@ -203,6 +221,11 @@ class UniversalReader:
             from feedgrab.fetchers.github import fetch_github
             data = await fetch_github(url)
             return from_github(data)
+
+        if platform == "feishu":
+            from feedgrab.fetchers.feishu import fetch_feishu
+            data = await fetch_feishu(url)
+            return from_feishu(data)
 
         if platform == "rss":
             from feedgrab.fetchers.rss import fetch_rss

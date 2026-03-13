@@ -647,3 +647,48 @@ def parse_twitter_date_local(created_at: str, fmt: str = "%Y-%m-%d") -> str:
 def github_token() -> str:
     """GitHub personal access token. Without: 60 req/h, with: 5000 req/h."""
     return os.getenv("GITHUB_TOKEN", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Feishu / Lark
+# ---------------------------------------------------------------------------
+
+def feishu_app_id() -> str:
+    """Feishu Open Platform App ID for API access."""
+    return os.getenv("FEISHU_APP_ID", "").strip()
+
+
+def feishu_app_secret() -> str:
+    """Feishu Open Platform App Secret for API access."""
+    return os.getenv("FEISHU_APP_SECRET", "").strip()
+
+
+def feishu_wiki_batch_enabled() -> bool:
+    """Enable wiki batch download via feishu-wiki command. Default false."""
+    return os.getenv("FEISHU_WIKI_BATCH_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def feishu_wiki_delay() -> float:
+    """Delay between requests in wiki batch mode (seconds). Default 1.0."""
+    try:
+        return float(os.getenv("FEISHU_WIKI_DELAY", "1.0"))
+    except ValueError:
+        return 1.0
+
+
+def feishu_wiki_since() -> str:
+    """Only fetch wiki docs modified after this date (YYYY-MM-DD). Empty = all."""
+    return os.getenv("FEISHU_WIKI_SINCE", "").strip()
+
+
+def feishu_download_images() -> bool:
+    """Download images locally instead of linking to Feishu CDN. Default false."""
+    return os.getenv("FEISHU_DOWNLOAD_IMAGES", "false").lower() in ("true", "1", "yes")
+
+
+def feishu_page_load_timeout() -> int:
+    """Playwright page element wait timeout in ms. Default 5000."""
+    try:
+        return int(os.getenv("FEISHU_PAGE_LOAD_TIMEOUT", "5000"))
+    except ValueError:
+        return 5000

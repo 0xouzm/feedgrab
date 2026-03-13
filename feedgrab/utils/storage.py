@@ -144,6 +144,7 @@ PLATFORM_FOLDER_MAP = {
     SourceType.WECHAT: "mpweixin",
     SourceType.YOUTUBE: "YouTube",
     SourceType.GITHUB: "GitHub",
+    SourceType.FEISHU: "Feishu",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",
     SourceType.MANUAL: "Manual",
@@ -252,6 +253,12 @@ def _generate_filename(item: UnifiedContent) -> str:
         if author_display and published:
             raw = f"{author_display}_{published}：{raw_title}"
         elif author_display:
+            raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
+    elif item.source_type == SourceType.FEISHU:
+        author_display = (item.source_name or "").strip()
+        if author_display:
             raw = f"{author_display}：{raw_title}"
         else:
             raw = raw_title
@@ -448,6 +455,14 @@ def _format_markdown(item: UnifiedContent) -> str:
         if extra.get("readme_file") and extra["readme_file"] != "README.md":
             fm_lines.append(f'readme_file: "{extra["readme_file"]}"')
 
+    # Feishu extras
+    is_feishu = item.source_type == SourceType.FEISHU
+    if is_feishu:
+        if extra.get("doc_type"):
+            fm_lines.append(f'doc_type: "{extra["doc_type"]}"')
+        if extra.get("doc_token"):
+            fm_lines.append(f'doc_token: "{extra["doc_token"]}"')
+
     # Tags (from tweet hashtags or other sources)
     if item.tags:
         # XHS: only top 3 tags in front matter (full list goes in body)
@@ -548,9 +563,10 @@ def _format_markdown(item: UnifiedContent) -> str:
                 fm_lines.append("")
     else:
         # Non-Twitter/XHS: add title heading + full content
-        # WeChat / YouTube / GitHub: skip title heading
+        # WeChat / YouTube / GitHub / Feishu: skip title heading
+        # (Feishu content already includes the document title from block tree)
         is_youtube = item.source_type == SourceType.YOUTUBE
-        if not is_wechat and not is_youtube and not is_github and item.title and item.title.strip():
+        if not is_wechat and not is_youtube and not is_github and not is_feishu and item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
 
@@ -635,3 +651,4 @@ def save_to_markdown(item: UnifiedContent, filepath: str = None):
         f.write(_format_markdown(item))
 
     logger.info(f"Saved to Markdown: {path}")
+    return str(path)

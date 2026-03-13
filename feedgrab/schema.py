@@ -32,6 +32,7 @@ class SourceType(str, Enum):
     WECHAT = "wechat"
     YOUTUBE = "youtube"
     GITHUB = "github"
+    FEISHU = "feishu"
     MANUAL = "manual"
 
 
@@ -434,6 +435,27 @@ def from_github(data: dict) -> UnifiedContent:
             "pushed_at": data.get("pushed_at", ""),
             "owner_avatar": data.get("owner_avatar", ""),
             "readme_file": data.get("readme_file", "README.md"),
+        },
+    )
+
+
+def from_feishu(data: dict) -> UnifiedContent:
+    return UnifiedContent(
+        source_type=SourceType.FEISHU,
+        source_name=data.get("author", ""),
+        title=data.get("title", ""),
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "doc_type": data.get("doc_type", ""),
+            "doc_token": data.get("doc_token", ""),
+            "word_count": data.get("word_count", 0),
+            "create_time": data.get("create_time", ""),
+            "edit_time": data.get("edit_time", ""),
+            "cover_image": data.get("cover_image", ""),
+            "images": data.get("images", []),
+            "images_info": data.get("images_info", []),
         },
     )
 

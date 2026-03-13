@@ -639,3 +639,346 @@ async def evaluate_wechat_article(page, md_converter=None) -> dict:
 def get_session_path(platform: str) -> str:
     """Get the session file path for a platform."""
     return str(SESSION_DIR / f"{platform}.json")
+
+
+# ---------------------------------------------------------------------------
+# Feishu document JS evaluation
+# ---------------------------------------------------------------------------
+
+FEISHU_DOC_JS_EVALUATE = r"""
+(() => {
+  // Clean zero-width chars from title (Feishu injects them for tracking)
+  function cleanTitle(raw) {
+    return raw
+      .replace(/[\u200B-\u200F\u2028-\u202F\u2060-\u206F\uFEFF]/g, '')
+      .replace(/ - 飞书云文档$/, '')
+      .replace(/ - Feishu Docs$/, '')
+      .replace(/ - Lark Docs$/, '')
+      .trim();
+  }
+
+  // Title selectors (multiple sources, best effort)
+  function getDocTitle() {
+    const selectors = [
+      '.doc-title', '[data-testid="doc-title"]', '.suite-title-input',
+      'div[data-doc-title]', 'h1.title', 'div[contenteditable="true"] h1'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && el.innerText.trim()) return el.innerText.trim();
+    }
+    return '';
+  }
+
+  // Get document author from DOM (not logged-in user)
+  function getDocAuthor() {
+    const selectors = [
+      '.docs-info-avatar-name-text',       // main author name text
+      '.docs-info-avatar-name',            // author name container
+      '.doc-creator', '.creator-name',     // alternative selectors
+      '.wiki-creator-name'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && el.innerText.trim()) return el.innerText.trim();
+    }
+    return '';
+  }
+
+  // Try new docx editor (window.PageMain)
+  const pm = window.PageMain;
+  if (pm && pm.blockManager) {
+    const root = pm.blockManager.rootBlockModel;
+    if (!root) return { error: 'rootBlockModel not found' };
+
+    function serializeBlock(block, depth) {
+      if (depth > 20) return null;  // safety limit
+      const result = {
+        type: block.type || 'unknown',
+        children: []
+      };
+
+      // Extract zoneState text content
+      if (block.zoneState) {
+        result.zoneState = {
+          allText: block.zoneState.allText || '',
+          content: null
+        };
+        // Extract Delta ops for rich text
+        if (block.zoneState.content && block.zoneState.content.ops) {
+          result.zoneState.content = {
+            ops: block.zoneState.content.ops.map(op => ({
+              insert: op.insert || '',
+              attributes: op.attributes || {}
+            }))
+          };
+        }
+      }
+
+      // Extract snapshot data (images, code, tables, etc.)
+      if (block.snapshot) {
+        try {
+          result.snapshot = JSON.parse(JSON.stringify(block.snapshot));
+        } catch (e) {
+          result.snapshot = {};
+        }
+      }
+
+      // Recurse children
+      if (block.children && block.children.length) {
+        result.children = block.children
+          .map(c => serializeBlock(c, depth + 1))
+          .filter(Boolean);
+      }
+
+      return result;
+    }
+
+    // Title: DOM > rootBlock snapshot > cleaned document.title
+    const domTitle = getDocTitle();
+    const rootTitle = root.snapshot && root.snapshot.title ? root.snapshot.title : '';
+    const pageTitle = cleanTitle(document.title);
+    const title = domTitle || rootTitle || pageTitle || 'Untitled';
+
+    return {
+      title: title,
+      url: location.href,
+      author: getDocAuthor() || (window.User && window.User.displayName) || '',
+      blockTree: serializeBlock(root, 0)
+    };
+  }
+
+  // Fallback: DOM extraction for read-only/public pages
+  const titleEl = getDocTitle();
+  const contentEl = document.querySelector('div[role="document"]')
+    || document.querySelector('div[data-editor-root]')
+    || document.querySelector('div[data-testid="doc-content"]')
+    || document.querySelector('main');
+
+  if (contentEl) {
+    return {
+      title: titleEl || cleanTitle(document.title),
+      url: location.href,
+      author: getDocAuthor(),
+      content: contentEl.innerText || '',
+      blockTree: null
+    };
+  }
+
+  return { error: 'No Feishu editor or document content found' };
+})()
+"""
+
+
+async def evaluate_feishu_doc(url: str, session_path: str) -> dict:
+    """Launch browser, navigate to Feishu doc, extract content via JS.
+
+    Uses headed mode with vanilla playwright (not patchright) because Feishu
+    refuses connections from patchright's CDP-patched Chromium.
+
+    Also intercepts sheet ``client_vars`` API responses for embedded
+    spreadsheet data extraction (Protobuf cell blocks).
+    """
+    from urllib.parse import urlparse
+
+    # Use vanilla playwright for Feishu — patchright causes ERR_CONNECTION_CLOSED
+    try:
+        from playwright.async_api import async_playwright as _pw_factory
+    except ImportError:
+        # Fall back to whatever is available
+        _pw_factory = get_async_playwright()
+
+    pw = await _pw_factory().start()
+    browser = None
+    try:
+        browser = await pw.chromium.launch(
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        ctx_opts = get_stealth_context_options(storage_state=session_path)
+        context = await browser.new_context(**ctx_opts)
+        # NOTE: skip resource blocking for Feishu — its internal APIs and
+        # scripts are essential for window.PageMain to initialise.
+        page = await context.new_page()
+
+        # Intercept sheet client_vars responses for embedded spreadsheet data
+        sheet_cv_data: dict = {}
+
+        async def _capture_sheet_response(response):
+            try:
+                if "client_vars" in response.url and response.status == 200:
+                    body = await response.json()
+                    if (
+                        body.get("code") == 0
+                        and body.get("data", {}).get("snapshot")
+                    ):
+                        token = body["data"].get("token", "")
+                        sheet_id = body["data"].get("sheetId", "")
+                        key = f"{token}_{sheet_id}" if sheet_id else token
+                        sheet_cv_data[key] = body["data"]
+                        logger.info(
+                            f"[Feishu] Intercepted sheet data: {key}"
+                        )
+            except Exception:
+                pass  # non-JSON or parsing error, skip
+
+        page.on("response", _capture_sheet_response)
+
+        # Disable copy restrictions (reference: 游侠飞书剪存)
+        await page.add_init_script("""
+            if (window.copyControl && window.copyControl.enable) {
+                window.copyControl.enable();
+            }
+        """)
+
+        # Warm up session: navigate to main domain first to set cookies,
+        # then redirect to the actual document.
+        parsed = urlparse(url)
+        main_url = f"{parsed.scheme}://{parsed.netloc}"
+        try:
+            await page.goto(main_url, wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(2000)
+        except Exception as e:
+            logger.warning(f"[Feishu] Main page warmup failed: {e}")
+
+        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+        # Wait for editor to initialize (PageMain) or content to render
+        try:
+            await page.wait_for_function(
+                "() => window.PageMain?.blockManager?.rootBlockModel != null"
+                " || document.querySelector('div[role=\"document\"]') != null",
+                timeout=15000,
+            )
+        except Exception:
+            logger.warning("[Feishu] Timed out waiting for editor, trying anyway")
+
+        # Small delay for editor state to stabilize
+        await page.wait_for_timeout(1000)
+
+        # Wait for author info to render (lazy-loaded component)
+        try:
+            from feedgrab.config import feishu_page_load_timeout
+            await page.wait_for_selector(
+                ".docs-info-avatar-name-text, .docs-info-avatar-name",
+                timeout=feishu_page_load_timeout(),
+            )
+        except Exception:
+            pass  # author element may not exist on all pages
+
+        data = await page.evaluate(FEISHU_DOC_JS_EVALUATE)
+        result = data or {}
+
+        # If we intercepted sheet data during page load, attach it
+        if sheet_cv_data:
+            result["sheet_client_vars"] = sheet_cv_data
+
+        # If block tree has sheet embeds but no data was intercepted,
+        # try fetching via internal API from the page context
+        if not sheet_cv_data:
+            sheet_tokens = _find_sheet_tokens(result.get("blockTree"))
+            if sheet_tokens:
+                logger.info(
+                    f"[Feishu] Fetching {len(sheet_tokens)} sheet(s) "
+                    "via internal API"
+                )
+                fetched = await page.evaluate(
+                    FEISHU_SHEET_FETCH_JS, list(sheet_tokens)
+                )
+                if fetched:
+                    result["sheet_client_vars"] = fetched
+                else:
+                    # API call failed — try scrolling to trigger lazy load,
+                    # then wait for intercepted response
+                    logger.info(
+                        "[Feishu] Direct API failed, scrolling to "
+                        "trigger sheet loading"
+                    )
+                    await page.evaluate(
+                        "window.scrollTo(0, document.body.scrollHeight)"
+                    )
+                    await page.wait_for_timeout(5000)
+                    if sheet_cv_data:
+                        result["sheet_client_vars"] = sheet_cv_data
+
+        return result
+    finally:
+        if browser:
+            await browser.close()
+        await pw.stop()
+
+
+def _find_sheet_tokens(block_tree: dict | None) -> set:
+    """Recursively find sheet embed tokens in the extracted block tree."""
+    tokens: set = set()
+    if not block_tree or not isinstance(block_tree, dict):
+        return tokens
+
+    def _walk(node):
+        if not isinstance(node, dict):
+            return
+        snap = node.get("snapshot")
+        if isinstance(snap, dict):
+            if snap.get("type") == "sheet" and snap.get("token"):
+                tokens.add(snap["token"])
+        for child in node.get("children", []):
+            _walk(child)
+
+    _walk(block_tree)
+    return tokens
+
+
+# JS to fetch sheet client_vars via internal API from the page context.
+# The request body format was reverse-engineered from Feishu sheet editor
+# network traffic. Key: sheetId must be inside sheetRange, and memberId
+# is extracted from the page's global User object.
+FEISHU_SHEET_FETCH_JS = """
+async (tokens) => {
+    const results = {};
+    const csrfToken = (document.cookie.match(/_csrf_token=([^;]+)/) || [])[1] || '';
+    // Try to get memberId from the page context (Feishu stores it globally)
+    let memberId = 0;
+    try {
+        memberId = window.User?.id || window.__INITIAL_STATE__?.user?.id || 0;
+    } catch(e) {}
+    const headers = {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+        'Referer': location.href
+    };
+
+    for (const fullToken of tokens) {
+        try {
+            // Token format: "{spreadsheet_token}_{sheetId}"
+            const idx = fullToken.lastIndexOf('_');
+            if (idx < 0) continue;
+            const ssToken = fullToken.substring(0, idx);
+            const sheetId = fullToken.substring(idx + 1);
+
+            const body = {
+                schemaVersion: 9,
+                openType: 1,
+                token: ssToken,
+                sheetRange: { sheetId: sheetId },
+                clientVersion: 'v0.0.1'
+            };
+            if (memberId) body.memberId = memberId;
+
+            const resp = await fetch('/space/api/v3/sheet/client_vars', {
+                method: 'POST',
+                credentials: 'include',
+                headers: headers,
+                body: JSON.stringify(body)
+            });
+            const data = await resp.json();
+            if (data.code === 0 && data.data && data.data.snapshot) {
+                results[fullToken] = data.data;
+            }
+        } catch (e) {
+            // silently fail for individual sheets
+        }
+    }
+    return Object.keys(results).length > 0 ? results : null;
+}
+"""

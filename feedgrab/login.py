@@ -24,6 +24,8 @@ PLATFORM_URLS = {
     "wechat": "https://mp.weixin.qq.com",
     "twitter": "https://x.com/login",
     "x": "https://x.com/login",
+    "feishu": "https://my.feishu.cn",
+    "lark": "https://my.feishu.cn",
 }
 
 
@@ -40,6 +42,8 @@ def _resolve_canonical(platform: str) -> str:
         return "xhs"
     if platform in ("twitter", "x"):
         return "twitter"
+    if platform in ("feishu", "lark"):
+        return "feishu"
     return platform
 
 

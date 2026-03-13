@@ -2,6 +2,48 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-14 · v0.11.0 · 飞书文档抓取（单篇 + 知识库批量 + 嵌入表格 + 图片下载）
+
+### 背景
+feedgrab 新增第 9 个平台 — 飞书/Lark。支持单篇文档抓取和知识库批量抓取，输出 Obsidian 兼容 Markdown。
+
+### 方案决策
+- **多级兜底架构**：Tier 0 Open API（`lark-oapi`）→ Tier 1 Playwright `window.PageMain` Block 树提取 → Tier 1.5 内部导出 API → Tier 2 Jina Reader
+- **patchright 不兼容飞书**：飞书 ERR_CONNECTION_CLOSED，必须用 vanilla `playwright.async_api`（headed Chrome）
+- **Block→Markdown 转换器**：支持 20+ 种 block 类型（heading/list/code/quote/table/image/equation/todo/callout/divider/grid/iframe/embed）
+- **嵌入电子表格二级提取**：Canvas 渲染的 Sheet 无 DOM 可抓，通过 `client_vars` 内部 API + Protobuf 5 层解码提取单元格数据，渲染为 GFM 表格
+- **图片文件名清理**：`_sanitize_filename()` 替换 `()@#%[]{}|<>!` 和空格，避免 Markdown 图片语法断裂
+- **标题清理**：`_clean_feishu_title()` 过滤零宽字符（U+200B-U+206F, U+FEFF）+ 折叠换行 + 去后缀
+- **知识库批量**：Open API 递归节点树 → 逐篇 blocks API → Playwright 兜底。断点续传 + 去重索引
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/feishu.py` | 新建 | 单篇抓取（三级兜底）+ Block→Markdown 转换器 + Protobuf Sheet 解码 + 图片下载 |
+| `feedgrab/fetchers/feishu_wiki.py` | 新建 | 知识库批量抓取（Open API 递归 + Playwright 兜底 + 断点续传） |
+| `feedgrab/fetchers/browser.py` | 修改 | `FEISHU_DOC_JS_EVALUATE` + `evaluate_feishu_doc()` + Sheet 内部 API 拦截/调用 |
+| `feedgrab/reader.py` | 修改 | 飞书域名检测 + `from_feishu` 路由 + 图片下载集成 + 去重索引 |
+| `feedgrab/schema.py` | 修改 | `SourceType.FEISHU` + `from_feishu()` 工厂函数 |
+| `feedgrab/config.py` | 修改 | 7 个飞书配置函数（APP_ID/SECRET/WIKI_*/DOWNLOAD_IMAGES/CUSTOM_DOMAINS/PAGE_LOAD_TIMEOUT） |
+| `feedgrab/cli.py` | 修改 | `feishu-wiki` 命令 + `cmd_feishu_wiki()` |
+| `feedgrab/login.py` | 修改 | `feishu`/`lark` 登录入口 |
+| `feedgrab/utils/storage.py` | 修改 | Feishu 平台目录映射 + 文件名格式 + front matter + 跳过标题 heading + `save_to_markdown()` 返回路径 |
+| `pyproject.toml` | 修改 | `feishu` 可选依赖组（`lark-oapi>=1.5`） |
+| `.env.example` | 修改 | 飞书配置项说明 |
+
+### 验证结果
+- 单篇 Playwright 抓取 ✅ — `feedgrab https://my.feishu.cn/wiki/Eaf3wWF51igr9gkKYShcHyfAnMd`
+- 嵌入电子表格提取 ✅ — 12×4 MacBook 对比表正确渲染为 GFM 表格
+- 图片下载 ✅ — `FEISHU_DOWNLOAD_IMAGES=true` 保存到 `attachments/` 子目录
+- 图片文件名清理 ✅ — `Apple (中国大陆).jpg` → `Apple-中国大陆.jpg`
+- YAML front matter 格式 ✅ — 标题单行、无重复 heading
+- 知识库批量 ✅ — `feishu-wiki` 命令递归抓取
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-13 · v0.10.1 · 多关键词批量搜索 + 搜索结果质量修复
 
 ### 背景

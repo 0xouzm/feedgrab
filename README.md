@@ -19,7 +19,7 @@
          自动识别          文本：Jina Reader    → output/X/作者_日期：标题.md
          8+ 平台           视频：yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
                            音频：Whisper 转录
-                           API：Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API
+                           API：Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / 飞书 Open API
                            X/Twitter：GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
 ```
 
@@ -104,6 +104,14 @@ MPWEIXIN_ID_SINCE=2025-01-01 feedgrab mpweixin-id "饼干哥哥AGI"  # 指定日
 feedgrab https://github.com/nicepkg/aide                          # 仓库首页
 feedgrab https://github.com/nicepkg/aide/blob/main/README.md      # README 文件页
 feedgrab https://github.com/nicepkg/aide/tree/main/src             # 内页（自动回退到仓库级别）
+
+# 抓取飞书文档（需要 feedgrab login feishu 或配置 Open API 凭据）
+feedgrab https://xxx.feishu.cn/wiki/ABC123                         # wiki 文档
+feedgrab https://xxx.feishu.cn/docx/ABC123                         # docx 文档
+FEISHU_DOWNLOAD_IMAGES=true feedgrab https://xxx.feishu.cn/wiki/ABC123  # 同时下载图片
+
+# 批量抓取飞书知识库
+feedgrab feishu-wiki https://xxx.feishu.cn/wiki/ABC123             # 递归抓取知识库所有文档
 
 # 批量抓取多个 URL
 feedgrab https://url1.com https://url2.com
@@ -196,6 +204,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`） | — |
 | GitHub | **REST API**（仓库元数据 + 中文 README 优先 + 摘要提取） | — |
 | 小红书 | **API (xhshow)** → Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量** + **关键词搜索 `xhs-so`**) | — |
+| 飞书/Lark | **Open API** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载） | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙播客 | — | 通过 Claude Code 技能 |
@@ -584,6 +593,13 @@ cp .env.example .env
 | `MPWEIXIN_ID_SINCE` | 否 | 按账号批量：仅抓取该日期之后的文章（`YYYY-MM-DD`，留空=全部） |
 | `MPWEIXIN_ID_DELAY` | 否 | 按账号批量：文章处理间隔秒数（默认：`3.0`） |
 | `GITHUB_TOKEN` | 否 | GitHub personal access token（无 token 60 次/小时，有 token 5000 次/小时） |
+| `FEISHU_APP_ID` | 仅飞书 API | 飞书开放平台 App ID（[申请地址](https://open.feishu.cn/app)） |
+| `FEISHU_APP_SECRET` | 仅飞书 API | 飞书开放平台 App Secret |
+| `FEISHU_DOWNLOAD_IMAGES` | 否 | 下载图片到本地 attachments/ 目录（默认：`false`） |
+| `FEISHU_WIKI_DELAY` | 否 | 知识库批量抓取间隔秒数（默认：`1.0`） |
+| `FEISHU_WIKI_SINCE` | 否 | 仅抓取此日期后修改的文档（`YYYY-MM-DD`，留空=全部） |
+| `FEISHU_CUSTOM_DOMAINS` | 否 | 私有化部署域名（逗号分隔，如 `feishu.mycompany.cn`） |
+| `FEISHU_PAGE_LOAD_TIMEOUT` | 否 | Playwright 页面元素等待超时毫秒（默认：`5000`） |
 | `BROWSER_USER_AGENT` | 否 | 全局浏览器 UA（推荐 `feedgrab detect-ua` 自动检测） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |
@@ -628,7 +644,9 @@ feedgrab/
 │   │   ├── wechat_search.py   # 搜狗微信搜索（markdownify 富文本转换）
 │   │   ├── xhs.py             # API (xhshow) → Jina → Playwright + Session 兜底
 │   │   ├── xhs_user_notes.py  # 小红书作者批量抓取（API 分页 + __INITIAL_STATE__ + XHR 拦截 + 滚动加载）
-│   │   └── xhs_search_notes.py# 小红书搜索批量抓取（xhs-so API 搜索 + 搜索结果页滚动 + 逐篇深度抓取）
+│   │   ├── xhs_search_notes.py# 小红书搜索批量抓取（xhs-so API 搜索 + 搜索结果页滚动 + 逐篇深度抓取）
+│   │   ├── feishu.py          # 飞书单篇（Open API → Playwright PageMain → Jina + Block→MD + 图片下载）
+│   │   └── feishu_wiki.py     # 飞书知识库批量（Open API 递归 + Playwright 兜底 + 断点续传）
 │   └── utils/
 │       ├── storage.py         # 按平台分目录 Markdown + JSON 双重输出
 │       ├── dedup.py           # 全局去重索引（跨模式统一 item_id 追踪）
