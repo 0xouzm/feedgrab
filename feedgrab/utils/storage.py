@@ -528,6 +528,24 @@ def _format_markdown(item: UnifiedContent) -> str:
             for i, img in enumerate(images, 1):
                 fm_lines.append(f"![{i}]({img})")
                 fm_lines.append("")
+        # XHS comments section (when fetched via API)
+        comment_list = extra.get("comment_list", [])
+        if comment_list:
+            fm_lines.append("## 评论")
+            fm_lines.append("")
+            for c in comment_list:
+                user = c.get("user_nickname", "匿名")
+                text = c.get("content", "").strip()
+                likes = c.get("like_count", 0)
+                sub_comments = c.get("sub_comments", [])
+                fm_lines.append(f"> **{user}**（{likes} 赞）：{text}")
+                fm_lines.append(">")
+                for sc in sub_comments:
+                    sc_user = sc.get("user_nickname", "匿名")
+                    sc_text = sc.get("content", "").strip()
+                    fm_lines.append(f">> **{sc_user}**：{sc_text}")
+                    fm_lines.append(">>")
+                fm_lines.append("")
     else:
         # Non-Twitter/XHS: add title heading + full content
         # WeChat / YouTube / GitHub: skip title heading

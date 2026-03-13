@@ -5,13 +5,16 @@ Xiaohongshu (RED) Search Notes batch fetcher — fetch notes from search results
 Supports:
     feedgrab "https://www.xiaohongshu.com/search_result?keyword=开学第一课&source=..."
 
-Strategy (tiered, same as user notes):
-    Tier 0 — Extract notes from __INITIAL_STATE__.search.feeds (~40 notes, zero API calls)
-    Tier 1 — Inject XHR interceptor + auto-scroll to capture search/notes API responses
-    Tier 2 — Navigate to each note detail page (with xsec_token) for full content extraction
+Strategy (tiered, with fallback):
+    Tier API — Pure HTTP via xhshow signing (fastest, sort/type filters)
+    Tier 0  — Extract notes from __INITIAL_STATE__.search.feeds (~40 notes)
+    Tier 1  — Inject XHR interceptor + auto-scroll to capture search/notes API
+    Tier 2  — Navigate to each note detail page for full content extraction
 """
 
+import csv
 import json
+import os
 import re
 import time
 from datetime import datetime
@@ -284,36 +287,211 @@ async def fetch_search_notes(search_url: str) -> dict:
     Returns:
         dict with keys: total, fetched, skipped, failed, list_path, keyword
     """
+    from feedgrab.schema import from_xiaohongshu
+    from feedgrab.utils.storage import save_to_markdown, _parse_xhs_date
+
+    # 1. Parse keyword from URL
+    keyword = _parse_search_url(search_url)
+    logger.info(f"[XHS-Search] 搜索关键词: {keyword}")
+
+    # 2. Config
+    delay = xhs_search_delay()
+
+    # 3. Load dedup index
+    saved_ids = load_index(platform="XHS")
+    initial_count = len(saved_ids)
+    logger.info(f"[XHS-Search] 已有 {initial_count} 条笔记索引")
+
+    # === Tier API: Pure HTTP via xhshow signing ===
+    try:
+        from feedgrab.config import xhs_api_enabled
+
+        if xhs_api_enabled():
+            result = await _fetch_search_notes_via_api(
+                keyword, saved_ids, initial_count, delay,
+                from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+            )
+            if result is not None:
+                return result
+    except Exception as e:
+        logger.warning(f"[XHS-Search] API 模式失败 ({e})，降级到浏览器模式")
+
+    # === Browser fallback (original Tier 0/1/2) ===
+    return await _fetch_search_notes_via_browser(
+        search_url, keyword, saved_ids, initial_count, delay,
+        from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+    )
+
+
+async def _fetch_search_notes_via_api(
+    keyword, saved_ids, initial_count, delay,
+    from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+) -> dict | None:
+    """Try fetching search results via pure API (no browser).
+
+    Returns result dict on success, None to signal browser fallback.
+    """
+    from feedgrab.fetchers.xhs_api import (
+        is_api_available, get_client, normalize_api_note, normalize_search_item,
+    )
+    from feedgrab.config import xhs_search_sort, xhs_search_note_type, xhs_search_max_pages
+
+    if not is_api_available():
+        logger.debug("[XHS-Search] API 不可用，跳过")
+        return None
+
+    # Map note_type string to API integer
+    type_map = {"all": 0, "video": 1, "image": 2}
+    note_type_int = type_map.get(xhs_search_note_type(), 0)
+    sort = xhs_search_sort()
+    max_pages = xhs_search_max_pages()
+
+    logger.info(
+        f"[XHS-Search] Tier API — 纯 HTTP 模式 "
+        f"(sort={sort}, type={xhs_search_note_type()}, max_pages={max_pages})"
+    )
+
+    with get_client() as client:
+        # Step 1: Get search results via API pagination
+        all_items = client.get_all_search_notes(
+            keyword, sort=sort, note_type=note_type_int, max_pages=max_pages,
+        )
+
+        if not all_items:
+            logger.warning("[XHS-Search] API 搜索返回空结果，降级到浏览器")
+            return None
+
+        total = len(all_items)
+        logger.info(f"[XHS-Search] API 收集 {total} 篇搜索结果")
+
+        # Subfolder
+        safe_keyword = re.sub(r'[\\/:*?"<>|]', '_', keyword)
+        subfolder = f"search_{safe_keyword}"
+
+        # Step 2: Fetch each note via Feed API for full content
+        fetched = 0
+        skipped = 0
+        failed = 0
+        note_list = []
+
+        for idx, item in enumerate(all_items):
+            search_data = normalize_search_item(item)
+            note_id = (
+                item.get("id")
+                or (item.get("note_card") or {}).get("note_id", "")
+                or item.get("note_id", "")
+            )
+            xsec_token = item.get("xsec_token", "")
+            note_url = _build_note_url(note_id, xsec_token)
+            item_id = item_id_from_url(note_url.split("?")[0])
+
+            # Dedup check
+            if has_item(item_id, saved_ids):
+                skipped += 1
+                note_list.append({
+                    "url": note_url, "item_id": item_id,
+                    "title": search_data.get("title", ""),
+                    "status": "skipped", "error": "已存在",
+                })
+                continue
+
+            try:
+                # Fetch full note via Feed API
+                data = client.feed_note(
+                    note_id, xsec_token=xsec_token, xsec_source="pc_search"
+                )
+
+                if not data or not data.get("content"):
+                    # Use search-level data as fallback
+                    data = search_data
+
+                data["platform"] = "xhs"
+                data["url"] = note_url
+
+                # Date fallback
+                if not data.get("date"):
+                    data["date"] = datetime.now().strftime("%Y-%m-%d")
+
+                note_date = _parse_xhs_date(data.get("date", ""))
+
+                # Convert and save
+                content = from_xiaohongshu(data)
+                content.category = subfolder
+                save_to_markdown(content)
+                add_item(item_id, note_url.split("?")[0], saved_ids)
+                fetched += 1
+
+                note_title = data.get("title") or data.get("content", "")[:30]
+                note_list.append({
+                    "url": note_url.split("?")[0], "item_id": item_id,
+                    "author": data.get("author", ""),
+                    "date": note_date,
+                    "title": note_title[:80],
+                    "status": "fetched", "error": "",
+                })
+
+                if (idx + 1) % 10 == 0 or idx + 1 == total:
+                    logger.info(
+                        f"[XHS-Search] API 进度 [{idx+1}/{total}] "
+                        f"成功:{fetched} 跳过:{skipped} 失败:{failed}"
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    f"[XHS-Search] [{idx+1}/{total}] API 失败: "
+                    f"{search_data.get('title', '')[:30]} - {str(e)[:80]}"
+                )
+                failed += 1
+                note_list.append({
+                    "url": note_url, "item_id": item_id,
+                    "title": search_data.get("title", ""),
+                    "status": "failed", "error": str(e)[:200],
+                })
+
+    # Persist index
+    save_index(saved_ids, platform="XHS")
+    logger.info(f"[XHS-Search] 索引更新: {initial_count} -> {len(saved_ids)} 条")
+
+    list_path = _save_batch_record(note_list, keyword)
+
+    logger.info(
+        f"[XHS-Search] API 搜索批量完成: "
+        f"总计 {total}, 成功 {fetched}, 跳过 {skipped}, 失败 {failed}"
+    )
+
+    return {
+        "total": total,
+        "fetched": fetched,
+        "skipped": skipped,
+        "failed": failed,
+        "list_path": str(list_path),
+        "keyword": keyword,
+    }
+
+
+async def _fetch_search_notes_via_browser(
+    search_url, keyword, saved_ids, initial_count, delay,
+    from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+) -> dict:
+    """Original browser-based Tier 0/1/2 path."""
     from feedgrab.fetchers.browser import (
         evaluate_xhs_note, get_session_path,
         get_async_playwright, stealth_launch, get_stealth_context_options,
         get_stealth_engine_name, setup_resource_blocking, generate_referer,
     )
     from feedgrab.fetchers.xhs_user_notes import _handle_captcha_or_login
-    from feedgrab.schema import from_xiaohongshu
-    from feedgrab.utils.storage import save_to_markdown, _parse_xhs_date
 
-    # 1. Verify session exists
+    max_scrolls = xhs_search_max_scrolls()
+
+    # Verify session exists
     session_path = get_session_path("xhs")
     if not Path(session_path).exists():
         raise RuntimeError(
             "XHS 搜索批量抓取需要登录 session。请先运行: feedgrab login xhs"
         )
 
-    # 2. Parse keyword from URL
-    keyword = _parse_search_url(search_url)
-    logger.info(f"[XHS-Search] 搜索关键词: {keyword}")
-
-    # 3. Config
-    max_scrolls = xhs_search_max_scrolls()
-    delay = xhs_search_delay()
-
-    # 4. Load dedup index (XHS platform)
-    saved_ids = load_index(platform="XHS")
-    initial_count = len(saved_ids)
-    logger.info(f"[XHS-Search] 已有 {initial_count} 条笔记索引")
-
-    # 5. Launch browser (ONE context for entire batch)
+    # Launch browser
+    logger.info("[XHS-Search] 浏览器模式 (Tier 0/1/2)")
     async_pw = get_async_playwright()
     logger.info(f"[XHS-Search] Stealth engine: {get_stealth_engine_name()}")
     async with async_pw() as p:
@@ -325,7 +503,7 @@ async def fetch_search_notes(search_url: str) -> dict:
         await setup_resource_blocking(context)
 
         try:
-            # 5a. Navigate to search results page
+            # Navigate to search results page
             await page.goto(
                 search_url, wait_until="domcontentloaded", timeout=30_000,
                 referer=generate_referer(search_url),
@@ -339,7 +517,7 @@ async def fetch_search_notes(search_url: str) -> dict:
                     page, search_url, session_path, context
                 )
 
-            # 5b. Tier 0: Extract from __INITIAL_STATE__
+            # Tier 0: Extract from __INITIAL_STATE__
             logger.info(
                 "[XHS-Search] Tier 0: 从 __INITIAL_STATE__ 提取搜索结果..."
             )
@@ -356,7 +534,7 @@ async def fetch_search_notes(search_url: str) -> dict:
                 f"首页 {len(initial_notes)} 篇笔记"
             )
 
-            # 5c. Tier 1: Scroll for more
+            # Tier 1: Scroll for more
             if max_scrolls > 0 and initial_notes:
                 logger.info("[XHS-Search] Tier 1: 滚动加载更多搜索结果...")
                 all_note_items = await _scroll_and_collect_search(
@@ -382,11 +560,11 @@ async def fetch_search_notes(search_url: str) -> dict:
                     "keyword": keyword,
                 }
 
-            # 5d. Determine subfolder
+            # Determine subfolder
             safe_keyword = re.sub(r'[\\/:*?"<>|]', '_', keyword)
             subfolder = f"search_{safe_keyword}"
 
-            # 5e. Tier 2: Process each note
+            # Tier 2: Process each note
             fetched = 0
             skipped = 0
             failed = 0
@@ -491,11 +669,11 @@ async def fetch_search_notes(search_url: str) -> dict:
             await context.close()
             await browser.close()
 
-    # 6. Persist dedup index
+    # Persist dedup index
     save_index(saved_ids, platform="XHS")
     logger.info(f"[XHS-Search] 索引更新: {initial_count} -> {len(saved_ids)} 条")
 
-    # 7. Save batch record
+    # Save batch record
     list_path = _save_batch_record(note_list, keyword)
 
     logger.info(
@@ -510,4 +688,260 @@ async def fetch_search_notes(search_url: str) -> dict:
         "failed": failed,
         "list_path": str(list_path),
         "keyword": keyword,
+    }
+
+
+# ---------------------------------------------------------------------------
+# xhs-so: Keyword search with engagement summary table
+# ---------------------------------------------------------------------------
+
+_SORT_MAP = {"general": "general", "popular": "popularity_descending", "latest": "time_descending"}
+_SORT_ZH = {"general": "综合", "popular": "热门", "latest": "最新"}
+_TYPE_MAP = {"all": 0, "video": 1, "image": 2}
+
+
+def _resolve_output_base() -> Path:
+    """Resolve the base output directory (OBSIDIAN_VAULT > OUTPUT_DIR > output)."""
+    vault = os.getenv("OBSIDIAN_VAULT", "").strip()
+    output_dir = os.getenv("OUTPUT_DIR", "").strip()
+    return Path(vault or output_dir or "output")
+
+
+def _clean_summary(text: str, max_len: int = 40) -> str:
+    """Clean text for summary table display."""
+    text = re.sub(r'[\r\n\t]+', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text) <= max_len:
+        return text
+    # Prefer cutting at CJK sentence-ending punctuation
+    for p in ("。", "！", "？", ".", "!", "?"):
+        idx = text.rfind(p, 0, max_len)
+        if idx > max_len // 3:
+            return text[: idx + 1]
+    return text[:max_len] + "…"
+
+
+def _generate_xhs_summary_table(
+    keyword: str,
+    sort: str,
+    note_type: str,
+    notes: List[dict],
+    output_path: Path,
+) -> None:
+    """Generate XHS summary Markdown table + CSV, sorted by likes descending."""
+    sort_label = _SORT_ZH.get(sort, sort)
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Sort by likes descending
+    notes.sort(key=lambda n: int(n.get("likes", 0) or 0), reverse=True)
+
+    # --- Markdown ---
+    lines = [
+        "---",
+        f'title: "小红书搜索：{keyword}"',
+        f'search_sort: "{sort_label}"',
+        f'note_type: "{note_type}"',
+        f"total: {len(notes)}",
+        f"created: {date_str}",
+        "cssclasses: wide",
+        "---",
+        "",
+    ]
+
+    if not notes:
+        lines.append("*No results found.*")
+    else:
+        lines.append(
+            "| # | 作者 | 内容摘要 | 类型 | 日期 | 点赞 | 收藏 | 评论 |"
+        )
+        lines.append(
+            "|:---:|------|----------|:---:|:---:|:---:|:---:|:---:|"
+        )
+
+        for i, nd in enumerate(notes, 1):
+            author = nd.get("author", "")
+            title = nd.get("title", "")
+            content = nd.get("content", "")
+            summary_text = _clean_summary(title or content, max_len=40)
+            summary_text = summary_text.replace("|", "\\|")
+            summary_text = summary_text.replace("[", "\\[").replace("]", "\\]")
+
+            note_url = nd.get("url", "")
+            summary_link = f"[{summary_text}]({note_url})" if note_url else summary_text
+
+            ntype = "视频" if nd.get("note_type") == "video" else "图文"
+            likes = int(nd.get("likes", 0) or 0)
+            collects = int(nd.get("collects", 0) or 0)
+            comments = int(nd.get("comments", 0) or 0)
+            date_raw = nd.get("date", "")
+            # Extract just the date part (strip location like "福建")
+            date_short = date_raw[:10] if len(date_raw) >= 10 else date_raw
+
+            lines.append(
+                f"| {i} | {author} | {summary_link} "
+                f"| {ntype} | {date_short} | {likes} | {collects} | {comments} |"
+            )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    logger.info(f"[XHS-SO] Summary table saved: {output_path}")
+
+    # --- CSV ---
+    csv_path = output_path.with_suffix(".csv")
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "#", "作者", "内容摘要", "类型", "日期", "点赞", "收藏",
+            "评论", "链接",
+        ])
+        for i, nd in enumerate(notes, 1):
+            author = nd.get("author", "")
+            title = nd.get("title", "")
+            content = nd.get("content", "")
+            summary_text = _clean_summary(title or content, max_len=80)
+            ntype = "视频" if nd.get("note_type") == "video" else "图文"
+            likes = int(nd.get("likes", 0) or 0)
+            collects = int(nd.get("collects", 0) or 0)
+            comments = int(nd.get("comments", 0) or 0)
+            date_raw = nd.get("date", "")
+            date_short = date_raw[:10] if len(date_raw) >= 10 else date_raw
+            note_url = nd.get("url", "")
+            writer.writerow([
+                i, author, summary_text, ntype, date_short,
+                likes, collects, comments, note_url,
+            ])
+    logger.info(f"[XHS-SO] CSV table saved: {csv_path}")
+
+
+def search_xhs_keyword(
+    keyword: str,
+    sort: str = "general",
+    note_type: str = "all",
+    max_results: int = 200,
+    save_notes: bool = False,
+) -> dict:
+    """Search XHS for notes matching a keyword and generate engagement-ranked output.
+
+    Uses XHS API directly (no browser needed, requires xhshow + session cookies).
+
+    Args:
+        keyword: Search keyword.
+        sort: Sort mode — general / popular / latest.
+        note_type: Note type filter — all / video / image.
+        max_results: Maximum number of results.
+        save_notes: Whether to save individual note .md files.
+
+    Returns:
+        dict with: total, saved, query, output_path, csv_path
+    """
+    from feedgrab.fetchers.xhs_api import is_api_available, get_client, normalize_search_item
+
+    if not is_api_available():
+        raise RuntimeError(
+            "XHS API 不可用。请确保:\n"
+            "  1. pip install xhshow\n"
+            "  2. feedgrab login xhs (获取 session cookies)"
+        )
+
+    # Map sort/type to API parameters
+    api_sort = _SORT_MAP.get(sort, "general")
+    api_note_type = _TYPE_MAP.get(note_type, 0)
+    max_pages = max_results // 20 + 2  # ~20 items per page
+
+    logger.info(f"[XHS-SO] 关键词: {keyword}")
+    logger.info(f"[XHS-SO] 排序: {_SORT_ZH.get(sort, sort)}, 类型: {note_type}, 最大: {max_results}")
+
+    # API pagination loop
+    all_notes = []
+    with get_client() as client:
+        raw_items = client.get_all_search_notes(
+            keyword, sort=api_sort, note_type=api_note_type, max_pages=max_pages,
+        )
+
+        if not raw_items:
+            logger.warning("[XHS-SO] 搜索返回空结果")
+            return {"total": 0, "saved": 0, "query": keyword, "output_path": "", "csv_path": ""}
+
+        # Normalize all items
+        for item in raw_items[:max_results]:
+            nd = normalize_search_item(item)
+            # Ensure URL has xsec_token for accessibility
+            note_id = (
+                item.get("id")
+                or (item.get("note_card") or {}).get("note_id", "")
+                or item.get("note_id", "")
+            )
+            xsec_token = item.get("xsec_token", "")
+            nd["url"] = _build_note_url(note_id, xsec_token)
+            all_notes.append(nd)
+
+        # Optionally fetch full content and save individual .md files
+        saved_count = 0
+        if save_notes:
+            from feedgrab.schema import from_xiaohongshu
+            from feedgrab.utils.storage import save_to_markdown
+            from feedgrab.utils.dedup import has_item, add_item, item_id_from_url
+
+            saved_ids = load_index(platform="XHS")
+            safe_keyword = re.sub(r'[\\/:*?"<>|]', '_', keyword)
+            subfolder = f"search_{safe_keyword}"
+
+            for idx, nd in enumerate(all_notes):
+                note_id_raw = nd.get("url", "").split("/explore/")[-1].split("?")[0]
+                base_url = nd["url"].split("?")[0]
+                item_id = item_id_from_url(base_url)
+
+                if has_item(item_id, saved_ids):
+                    continue
+
+                try:
+                    xsec_token = parse_qs(urlparse(nd["url"]).query).get("xsec_token", [""])[0]
+                    data = client.feed_note(note_id_raw, xsec_token=xsec_token, xsec_source="pc_search")
+                    if not data or not data.get("content"):
+                        data = nd.copy()
+                    data["platform"] = "xhs"
+                    data["url"] = nd["url"]
+                    if not data.get("date"):
+                        data["date"] = datetime.now().strftime("%Y-%m-%d")
+
+                    content = from_xiaohongshu(data)
+                    content.category = subfolder
+                    save_to_markdown(content)
+                    add_item(item_id, base_url, saved_ids)
+                    saved_count += 1
+
+                    # Update summary data with full content data
+                    all_notes[idx] = data
+
+                except Exception as e:
+                    logger.warning(f"[XHS-SO] 保存失败 [{idx+1}]: {str(e)[:80]}")
+
+            save_index(saved_ids, platform="XHS")
+
+    # Generate summary table
+    base_dir = _resolve_output_base()
+    sort_label = _SORT_ZH.get(sort, sort)
+    safe_keyword = re.sub(r'[\\/:*?"<>|]', '_', keyword)
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    summary_dir = base_dir / "XHS" / "search" / f"{sort_label}"
+    summary_path = summary_dir / f"{safe_keyword}_{date_str}.md"
+
+    _generate_xhs_summary_table(
+        keyword=keyword,
+        sort=sort,
+        note_type=note_type,
+        notes=all_notes,
+        output_path=summary_path,
+    )
+
+    csv_path = summary_path.with_suffix(".csv")
+
+    logger.info(f"[XHS-SO] 搜索完成: {len(all_notes)} 篇笔记")
+
+    return {
+        "total": len(all_notes),
+        "saved": saved_count,
+        "query": keyword,
+        "output_path": str(summary_path),
+        "csv_path": str(csv_path),
     }

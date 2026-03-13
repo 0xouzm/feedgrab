@@ -437,6 +437,61 @@ def force_refetch() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# XHS API mode (needs: pip install xhshow)
+# ---------------------------------------------------------------------------
+
+def xhs_api_enabled() -> bool:
+    """Whether to prefer XHS API mode (faster, no browser needed).
+
+    When true: API → Jina → Playwright fallback chain.
+    When false: skip API, use Jina → Playwright directly.
+    Requires xhshow library + valid session cookies.
+    """
+    return os.getenv("XHS_API_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def xhs_api_delay() -> float:
+    """API request interval in seconds (default 1.0, with Gaussian jitter)."""
+    try:
+        return float(os.getenv("XHS_API_DELAY", "1.0"))
+    except ValueError:
+        return 1.0
+
+
+def xhs_fetch_comments() -> bool:
+    """Whether to fetch full comment text when fetching a single note."""
+    return os.getenv("XHS_FETCH_COMMENTS", "false").lower() in ("true", "1", "yes")
+
+
+def xhs_max_comments() -> int:
+    """Maximum comment pages to fetch (default 5, ~20 comments per page)."""
+    try:
+        return int(os.getenv("XHS_MAX_COMMENTS", "5"))
+    except ValueError:
+        return 5
+
+
+def xhs_search_sort() -> str:
+    """Default search sort: general / popular / latest."""
+    val = os.getenv("XHS_SEARCH_SORT", "general").strip().lower()
+    return val if val in ("general", "popular", "latest") else "general"
+
+
+def xhs_search_note_type() -> str:
+    """Default search note type: all / video / image."""
+    val = os.getenv("XHS_SEARCH_NOTE_TYPE", "all").strip().lower()
+    return val if val in ("all", "video", "image") else "all"
+
+
+def xhs_search_max_pages() -> int:
+    """Maximum search pagination pages (default 10, 20 per page = 200 max)."""
+    try:
+        return int(os.getenv("XHS_SEARCH_MAX_PAGES", "10"))
+    except ValueError:
+        return 10
+
+
+# ---------------------------------------------------------------------------
 # XHS user notes batch fetch
 # ---------------------------------------------------------------------------
 

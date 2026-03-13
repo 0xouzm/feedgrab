@@ -521,13 +521,44 @@ def cmd_doctor(platform: str = "all"):
     def check_xhs():
         check_browser()
 
+        section("XHS API (xhshow)")
+        try:
+            from xhshow import CryptoConfig
+            ok("xhshow installed")
+        except ImportError:
+            warn("xhshow not installed — API mode disabled (pip install xhshow)")
+
         section("XHS session")
         from feedgrab.fetchers.browser import SESSION_DIR
         session_path = Path(SESSION_DIR) / "xhs"
         if session_path.exists():
             ok(f"Session found: {session_path}")
+            # Check for key cookies
+            try:
+                session_json = Path(SESSION_DIR) / "xhs.json"
+                if session_json.exists():
+                    import json
+                    data = json.loads(session_json.read_text(encoding="utf-8"))
+                    cookies = {c["name"]: c["value"] for c in data.get("cookies", [])
+                               if "xiaohongshu.com" in c.get("domain", "")}
+                    if cookies.get("a1"):
+                        ok(f"Cookie a1 present (key cookies: {len(cookies)})")
+                    else:
+                        warn("Cookie a1 missing — session may be invalid. Run: feedgrab login xhs")
+            except Exception:
+                pass
         else:
             warn(f"No session — run: feedgrab login xhs")
+
+        section("XHS API connectivity")
+        try:
+            from feedgrab.utils.http_client import get as http_get
+            t0 = time.time()
+            resp = http_get("https://edith.xiaohongshu.com", timeout=10)
+            elapsed = time.time() - t0
+            ok(f"edith.xiaohongshu.com reachable ({elapsed:.1f}s, status {resp.status_code})")
+        except Exception as e:
+            warn(f"edith.xiaohongshu.com unreachable: {e}")
 
         section("XHS network")
         try:
@@ -1193,6 +1224,52 @@ def cmd_twitter_search(args: list):
         sys.exit(1)
 
 
+def cmd_xhs_search(args: list):
+    """Search XHS for notes by keyword and generate engagement-ranked summary."""
+    from feedgrab.config import xhs_search_sort, xhs_search_note_type, xhs_search_max_pages
+
+    keyword = args[0]
+
+    # Parse CLI options
+    def _opt(name: str, default: str = "") -> str:
+        if name in args:
+            idx = args.index(name)
+            if idx + 1 < len(args):
+                return args[idx + 1]
+        return default
+
+    sort = _opt("--sort", xhs_search_sort())
+    note_type = _opt("--type", xhs_search_note_type())
+    max_results = int(_opt("--limit", str(xhs_search_max_pages() * 20)))
+    save_notes = "--save" in args
+
+    from feedgrab.fetchers.xhs_search_notes import search_xhs_keyword
+
+    try:
+        result = search_xhs_keyword(
+            keyword=keyword,
+            sort=sort,
+            note_type=note_type,
+            max_results=max_results,
+            save_notes=save_notes,
+        )
+        print(f"\n\u2705 XHS search complete: '{keyword}'")
+        print(f"   Total notes: {result['total']}")
+        if result.get("output_path"):
+            print(f"   Summary: {result['output_path']}")
+        if result.get("csv_path"):
+            print(f"   CSV: {result['csv_path']}")
+        if result.get("saved"):
+            print(f"   Individual notes saved: {result['saved']}")
+    except KeyboardInterrupt:
+        print("\n\u23f9 Cancelled")
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"\u274c {e}")
+        sys.exit(1)
+
+
 def cmd_wechat_search(keyword: str, max_results: int = 0):
     """Search WeChat articles by keyword via Sogou."""
     from feedgrab.config import mpweixin_sogou_enabled, mpweixin_sogou_max_results, mpweixin_sogou_delay
@@ -1245,6 +1322,7 @@ Usage:
     feedgrab <url>              Fetch content from any URL
     feedgrab <url1> <url2>      Fetch multiple URLs
     feedgrab x-so <keyword>     Search Twitter by keyword (engagement table)
+    feedgrab xhs-so <keyword>   Search XHS by keyword (engagement table)
     feedgrab mpweixin-id <name> Fetch all articles from a WeChat public account
     feedgrab mpweixin-so <keyword>  Search WeChat articles by keyword
     feedgrab ytb-so <keyword>   Search YouTube videos by keyword
@@ -1275,6 +1353,8 @@ Examples:
     feedgrab "https://www.xiaohongshu.com/search_result?keyword=..."
     feedgrab x-so openclaw
     feedgrab x-so "AI Agent" --days 7 --min-faves 50 --sort top
+    feedgrab xhs-so "AI Agent"
+    feedgrab xhs-so "AI Agent" --sort popular --type video
     feedgrab mpweixin-id "饼干哥哥AGI"
     feedgrab mpweixin-so "AI Agent"
     feedgrab ytb-so "AI Agent"
@@ -1356,6 +1436,20 @@ Examples:
             print("     --save             Save individual tweet .md files")
             sys.exit(1)
         cmd_twitter_search(sys.argv[2:])
+    elif cmd == "xhs-so":
+        if len(sys.argv) < 3:
+            print("\u274c Usage: feedgrab xhs-so <keyword> [options]")
+            print('   Example: feedgrab xhs-so "AI Agent"')
+            print('            feedgrab xhs-so "AI Agent" --sort popular')
+            print('            feedgrab xhs-so "AI Agent" --type video')
+            print('            feedgrab xhs-so "AI Agent" --sort latest --limit 50')
+            print("   Options:")
+            print("     --sort MODE        general=综合, popular=热门, latest=最新 (default: general)")
+            print("     --type TYPE        all=全部, video=视频, image=图片 (default: all)")
+            print("     --limit N          Max results (default: 200)")
+            print("     --save             Save individual note .md files")
+            sys.exit(1)
+        cmd_xhs_search(sys.argv[2:])
     elif cmd == "ytb-so":
         if len(sys.argv) < 3:
             print("\u274c Usage: feedgrab ytb-so <keyword> [options]")

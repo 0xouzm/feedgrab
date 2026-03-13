@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Xiaohongshu (RED) note fetcher — three-tier fallback:
+Xiaohongshu (RED) note fetcher — multi-tier fallback:
 
+0. XHS API (xhshow signing — fastest, ~0.5s, needs pip install xhshow)
 1. Jina Reader (fast, no deps)
 2. Playwright + saved session (handles 451/403)
 3. Error with login instructions
 
+Install API tier:     pip install xhshow
 Install browser tier: pip install "feedgrab[browser]" && playwright install chromium
 """
 
@@ -18,14 +20,73 @@ from feedgrab.fetchers.jina import fetch_via_jina
 
 async def fetch_xhs(url: str) -> Dict[str, Any]:
     """
-    Fetch a Xiaohongshu note with three-tier fallback.
+    Fetch a Xiaohongshu note with multi-tier fallback.
 
     Args:
         url: xiaohongshu.com or xhslink.com URL
 
     Returns:
-        Dict with: title, content, author, url, platform
+        Dict with: title, content, author, url, platform, tags, images, etc.
     """
+    # Tier 0: XHS API (needs xhshow + session cookies)
+    try:
+        from feedgrab.config import xhs_api_enabled
+
+        if xhs_api_enabled():
+            from feedgrab.fetchers.xhs_api import is_api_available, parse_note_url
+
+            if is_api_available():
+                note_id, xsec_token = parse_note_url(url)
+                if note_id:
+                    logger.info(f"[XHS] Tier 0 — API Feed: {url}")
+                    from feedgrab.fetchers.xhs_api import get_client
+
+                    with get_client() as client:
+                        # Try resolving token if not in URL
+                        if not xsec_token:
+                            xsec_token = client.resolve_xsec_token(note_id)
+                        data = client.feed_note(note_id, xsec_token=xsec_token)
+
+                        # Fetch comments if enabled
+                        if data and data.get("content"):
+                            from feedgrab.config import xhs_fetch_comments, xhs_max_comments
+
+                            if xhs_fetch_comments():
+                                try:
+                                    raw_comments = client.get_all_comments(
+                                        note_id,
+                                        xsec_token=xsec_token,
+                                        max_pages=xhs_max_comments(),
+                                    )
+                                    if raw_comments:
+                                        comment_list = []
+                                        for c in raw_comments:
+                                            user_info = c.get("user_info") or {}
+                                            subs = []
+                                            for sc in c.get("sub_comments", []):
+                                                sc_user = sc.get("user_info") or {}
+                                                subs.append({
+                                                    "user_nickname": sc_user.get("nickname", ""),
+                                                    "content": sc.get("content", ""),
+                                                })
+                                            comment_list.append({
+                                                "user_nickname": user_info.get("nickname", ""),
+                                                "content": c.get("content", ""),
+                                                "like_count": c.get("like_count", 0),
+                                                "sub_comments": subs,
+                                            })
+                                        data["comment_list"] = comment_list
+                                        logger.info(f"[XHS] Fetched {len(comment_list)} comments")
+                                except Exception as ce:
+                                    logger.warning(f"[XHS] Comment fetch failed: {ce}")
+
+                    if data and data.get("content"):
+                        logger.info(f"[XHS] API Feed success: {data.get('title', '')[:40]}")
+                        return data
+                    logger.warning("[XHS] API Feed returned empty, falling back to Jina")
+    except Exception as e:
+        logger.warning(f"[XHS] API Feed failed ({e}), falling back to Jina")
+
     # Tier 1: Jina Reader
     try:
         logger.info(f"[XHS] Tier 1 — Jina: {url}")

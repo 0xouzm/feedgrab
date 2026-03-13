@@ -64,6 +64,13 @@ XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profil
 # Batch fetch XHS search results (requires XHS_SEARCH_ENABLED=true + feedgrab login xhs)
 feedgrab "https://www.xiaohongshu.com/search_result?keyword=开学第一课&source=web_explore_feed"
 
+# Search XHS notes via API (xhshow, no login required)
+feedgrab xhs-so "AI Agent"                           # Search (general)
+feedgrab xhs-so "AI Agent" --sort popular             # Sort by popularity
+feedgrab xhs-so "AI Agent" --type video               # Video only
+feedgrab xhs-so "AI Agent" --sort latest --limit 50   # Latest 50
+feedgrab xhs-so "AI Agent" --save                     # Save individual .md files
+
 # Search YouTube videos
 feedgrab ytb-so "AI Agent"
 feedgrab ytb-so "tutorial" --channel @AndrewNg --order viewCount
@@ -171,14 +178,14 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) | — |
 | GitHub | **REST API** (repo metadata + Chinese README priority + summary extraction) | — |
-| Xiaohongshu (小红书) | Jina → **Playwright deep fetch** (single + **author batch** + **search batch**) | — |
+| Xiaohongshu (小红书) | **API (xhshow)** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
 | Apple Podcasts | — | via Claude Code skill |
 | Any web page | Jina fallback | — |
 
-> \*XHS requires a one-time login: `feedgrab login xhs`. Supports single note fetch (images, engagement metrics, tags, dates, full metadata), **author profile batch fetch**, and **search result batch fetch** (all using Tier 0 initial page extraction + Tier 1 scroll loading + Tier 2 per-note deep fetch)
+> \*XHS supports **API fetching** (xhshow, no login required) and **browser fetching** (requires one-time login: `feedgrab login xhs`). Single note fetch prefers API (full metadata + comments), falls back to Jina → Playwright when unavailable. **Keyword search** (`feedgrab xhs-so`) uses API directly, no login needed. **Author profile batch** and **search result batch** use API pagination + Tier 0 initial page extraction + Tier 1 scroll loading + Tier 2 per-note deep fetch.
 >
 > YouTube Whisper transcription requires `GROQ_API_KEY` — get a free key from [Groq](https://console.groq.com/keys)
 
@@ -321,7 +328,8 @@ output/
 ├── XHS/                  # Xiaohongshu
 │   ├── index/            #   Dedup index + batch fetch records
 │   ├── notes_xxx/        #   Author notes (subdirectory per author)
-│   └── search_xxx/       #   Search notes (subdirectory per keyword)
+│   ├── search_xxx/       #   Search notes (subdirectory per keyword)
+│   └── search/           #   Keyword search results (xhs-so command, .md + .csv)
 ├── WeChat/               # WeChat articles
 ├── YouTube/
 ├── GitHub/               # GitHub repos
@@ -397,6 +405,9 @@ playwright install chromium
 
 # Twitter search enhancement (x-client-transaction-id signing, required for x-so command)
 pip install "feedgrab[twitter] @ git+https://github.com/iBigQiang/feedgrab.git"
+
+# XHS API enhancement (xhshow API fetching, required for xhs-so command)
+pip install "feedgrab[xhs] @ git+https://github.com/iBigQiang/feedgrab.git"
 
 # With all optional dependencies
 pip install "feedgrab[all] @ git+https://github.com/iBigQiang/feedgrab.git"
@@ -494,6 +505,11 @@ cp .env.example .env
 | `XHS_SEARCH_ENABLED` | No | Enable XHS search batch fetch (default: `false`) |
 | `XHS_SEARCH_MAX_SCROLLS` | No | Max scroll iterations on search page (default: `30`) |
 | `XHS_SEARCH_DELAY` | No | Delay between search note fetches in seconds (default: `3.0`) |
+| `XHS_API_ENABLED` | No | Enable xhshow API fetching (default: `true`, auto-activates when xhshow installed) |
+| `XHS_API_DELAY` | No | API request interval in seconds (default: `1.0`, with random jitter) |
+| `XHS_SEARCH_SORT` | No | xhs-so search sort: `general` / `popular` / `latest` (default: `general`) |
+| `XHS_SEARCH_NOTE_TYPE` | No | xhs-so search type: `all` / `video` / `image` (default: `all`) |
+| `XHS_SEARCH_MAX_PAGES` | No | xhs-so max search pages, 20 results per page (default: `5`) |
 | `MPWEIXIN_SOGOU_ENABLED` | No | Enable Sogou WeChat article search (default: `false`) |
 | `MPWEIXIN_SOGOU_MAX_RESULTS` | No | Max articles per search (default: `10`, max `100`) |
 | `MPWEIXIN_SOGOU_DELAY` | No | Delay between article fetches in seconds (default: `3.0`) |
@@ -538,9 +554,9 @@ feedgrab/
 │   │   ├── twitter_api_user_tweets.py # Paid API supplement/full fetch
 │   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)
 │   │   ├── wechat.py          # Jina → Playwright WeChat JS extraction
-│   │   ├── xhs.py             # Jina → Playwright + session fallback
+│   │   ├── xhs.py             # API (xhshow) → Jina → Playwright + session fallback
 │   │   ├── xhs_user_notes.py  # XHS author batch fetch (__INITIAL_STATE__ + XHR intercept + scroll)
-│   │   └── xhs_search_notes.py # XHS search batch fetch
+│   │   └── xhs_search_notes.py # XHS search batch fetch (xhs-so API search + search page scroll + per-note deep fetch)
 │   └── utils/
 │       ├── storage.py         # Per-platform Markdown + JSON dual output
 │       ├── dedup.py           # Global dedup index (cross-mode unified tracking)

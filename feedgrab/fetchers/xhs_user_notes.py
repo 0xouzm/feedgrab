@@ -7,10 +7,10 @@ Supports:
     feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...?xsec_token=...
 
 Strategy (tiered, with fallback):
-    Tier 0 — Extract notes from __INITIAL_STATE__ (Vue SSR data, ~30 notes, zero API calls)
-    Tier 1 — Inject XHR interceptor + auto-scroll to capture user_posted API responses
-             (falls back to Tier 0 only if API returns 461 / blocked)
-    Tier 2 — Navigate to each note detail page (with xsec_token) for full content extraction
+    Tier API — Pure HTTP via xhshow signing (fastest, no browser, ~1s/page)
+    Tier 0  — Extract notes from __INITIAL_STATE__ (Vue SSR data, ~30 notes)
+    Tier 1  — Inject XHR interceptor + auto-scroll to capture user_posted API
+    Tier 2  — Navigate to each note detail page for full content extraction
 """
 
 import json
@@ -359,39 +359,220 @@ async def fetch_user_notes(profile_url: str) -> dict:
     Returns:
         dict with keys: total, fetched, skipped, failed, list_path
     """
+    from feedgrab.schema import from_xiaohongshu
+    from feedgrab.utils.storage import save_to_markdown, _parse_xhs_date
+
+    # 1. Parse user_id from URL
+    xhs_user_id = _parse_profile_url(profile_url)
+    logger.info(f"[XHS-User] 用户 ID: {xhs_user_id}")
+
+    # 2. Config
+    delay = xhs_user_note_delay()
+    since_date = xhs_user_notes_since()
+    if since_date:
+        logger.info(f"[XHS-User] 日期过滤: 仅抓取 {since_date} 之后的笔记")
+
+    # 3. Load dedup index (XHS platform)
+    saved_ids = load_index(platform="XHS")
+    initial_count = len(saved_ids)
+    logger.info(f"[XHS-User] 已有 {initial_count} 条笔记索引")
+
+    # === Tier API: Pure HTTP via xhshow signing ===
+    try:
+        from feedgrab.config import xhs_api_enabled
+
+        if xhs_api_enabled():
+            result = await _fetch_user_notes_via_api(
+                xhs_user_id, profile_url, saved_ids, initial_count,
+                since_date, delay, from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+            )
+            if result is not None:
+                return result
+    except Exception as e:
+        logger.warning(f"[XHS-User] API 模式失败 ({e})，降级到浏览器模式")
+
+    # === Browser fallback (original Tier 0/1/2) ===
+    return await _fetch_user_notes_via_browser(
+        profile_url, xhs_user_id, saved_ids, initial_count,
+        since_date, delay, from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+    )
+
+
+async def _fetch_user_notes_via_api(
+    xhs_user_id, profile_url, saved_ids, initial_count,
+    since_date, delay, from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+) -> dict | None:
+    """Try fetching user notes via pure API (no browser).
+
+    Returns result dict on success, None to signal browser fallback.
+    """
+    from feedgrab.fetchers.xhs_api import is_api_available, get_client, normalize_api_note
+
+    if not is_api_available():
+        logger.debug("[XHS-User] API 不可用，跳过")
+        return None
+
+    logger.info("[XHS-User] Tier API — 纯 HTTP 模式")
+
+    with get_client() as client:
+        # Step 1: Get note list via cursor pagination
+        all_note_items = client.get_all_user_notes(
+            xhs_user_id,
+            since_date=since_date,
+        )
+
+        if not all_note_items:
+            logger.warning("[XHS-User] API 返回空列表，降级到浏览器")
+            return None
+
+        # Get author name from first note
+        first_user = (all_note_items[0].get("user") or {})
+        author_name = first_user.get("nickname", f"user_{xhs_user_id[:8]}")
+
+        total = len(all_note_items)
+        logger.info(f"[XHS-User] API 收集 {total} 篇笔记，作者: {author_name}")
+
+        # Subfolder
+        safe_author = re.sub(r'[\\/:*?"<>|]', '_', author_name)
+        subfolder = f"notes_{safe_author}"
+
+        # Step 2: Fetch each note via Feed API for full content
+        fetched = 0
+        skipped = 0
+        failed = 0
+        note_list = []
+        consecutive_old = 0
+        OLD_THRESHOLD = 3
+
+        for idx, note_item in enumerate(all_note_items):
+            note_id = note_item.get("note_id", "")
+            xsec_token = note_item.get("xsec_token", "")
+            note_url = _build_note_url(note_id, xsec_token)
+            item_id = item_id_from_url(note_url.split("?")[0])
+
+            # Dedup check
+            if has_item(item_id, saved_ids):
+                skipped += 1
+                note_list.append({
+                    "url": note_url, "item_id": item_id,
+                    "title": note_item.get("display_title", ""),
+                    "status": "skipped", "error": "已存在",
+                })
+                continue
+
+            try:
+                # Fetch full note via Feed API
+                data = client.feed_note(
+                    note_id, xsec_token=xsec_token, xsec_source="pc_user"
+                )
+
+                if not data or not data.get("content"):
+                    # Fallback: use list-level data
+                    data = normalize_api_note(note_item, note_id)
+
+                data["platform"] = "xhs"
+                data["url"] = note_url
+
+                # Date filtering
+                note_date = _parse_xhs_date(data.get("date", ""))
+                if since_date and note_date:
+                    if note_date < since_date:
+                        consecutive_old += 1
+                        skipped += 1
+                        note_list.append({
+                            "url": note_url, "item_id": item_id,
+                            "date": note_date,
+                            "title": data.get("title", ""),
+                            "status": "skipped",
+                            "error": f"日期过滤 ({note_date})",
+                        })
+                        if consecutive_old >= OLD_THRESHOLD:
+                            logger.info(
+                                f"[XHS-User] 连续 {OLD_THRESHOLD} 篇旧笔记，停止处理"
+                            )
+                            break
+                        continue
+                    else:
+                        consecutive_old = 0
+
+                # Convert and save
+                content = from_xiaohongshu(data)
+                content.category = subfolder
+                save_to_markdown(content)
+                add_item(item_id, note_url.split("?")[0], saved_ids)
+                fetched += 1
+
+                note_title = data.get("title") or data.get("content", "")[:30]
+                note_list.append({
+                    "url": note_url.split("?")[0], "item_id": item_id,
+                    "author": data.get("author", ""),
+                    "date": note_date,
+                    "title": note_title[:80],
+                    "status": "fetched", "error": "",
+                })
+
+                if (idx + 1) % 10 == 0 or idx + 1 == total:
+                    logger.info(
+                        f"[XHS-User] API 进度 [{idx+1}/{total}] "
+                        f"成功:{fetched} 跳过:{skipped} 失败:{failed}"
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    f"[XHS-User] [{idx+1}/{total}] API 失败: "
+                    f"{note_item.get('display_title', '')[:30]} - {str(e)[:80]}"
+                )
+                failed += 1
+                note_list.append({
+                    "url": note_url, "item_id": item_id,
+                    "title": note_item.get("display_title", ""),
+                    "status": "failed", "error": str(e)[:200],
+                })
+
+    # Persist index
+    save_index(saved_ids, platform="XHS")
+    logger.info(f"[XHS-User] 索引更新: {initial_count} -> {len(saved_ids)} 条")
+
+    # Save batch record
+    list_path = _save_batch_record(note_list, author_name, since_date)
+
+    logger.info(
+        f"[XHS-User] API 批量抓取完成: "
+        f"总计 {total}, 成功 {fetched}, 跳过 {skipped}, 失败 {failed}"
+    )
+
+    return {
+        "total": total,
+        "fetched": fetched,
+        "skipped": skipped,
+        "failed": failed,
+        "list_path": str(list_path),
+    }
+
+
+async def _fetch_user_notes_via_browser(
+    profile_url, xhs_user_id, saved_ids, initial_count,
+    since_date, delay, from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+) -> dict:
+    """Original browser-based Tier 0/1/2 path."""
     from feedgrab.fetchers.browser import (
         evaluate_xhs_note, get_session_path,
         get_async_playwright, stealth_launch, get_stealth_context_options,
         get_stealth_engine_name, setup_resource_blocking, generate_referer,
     )
-    from feedgrab.schema import from_xiaohongshu
-    from feedgrab.utils.storage import save_to_markdown, _parse_xhs_date
 
-    # 1. Verify session exists
+    max_scrolls = xhs_user_note_max_scrolls()
+
+    # Verify session exists
     session_path = get_session_path("xhs")
     if not Path(session_path).exists():
         raise RuntimeError(
             "XHS 批量抓取需要登录 session。请先运行: feedgrab login xhs"
         )
 
-    # 2. Parse user_id from URL
-    xhs_user_id = _parse_profile_url(profile_url)
-    logger.info(f"[XHS-User] 用户 ID: {xhs_user_id}")
-
-    # 3. Config
-    max_scrolls = xhs_user_note_max_scrolls()
-    delay = xhs_user_note_delay()
-    since_date = xhs_user_notes_since()
-    if since_date:
-        logger.info(f"[XHS-User] 日期过滤: 仅抓取 {since_date} 之后的笔记")
-
-    # 4. Load dedup index (XHS platform)
-    saved_ids = load_index(platform="XHS")
-    initial_count = len(saved_ids)
-    logger.info(f"[XHS-User] 已有 {initial_count} 条笔记索引")
-
-    # 5. Launch browser (ONE context for entire batch)
+    # Launch browser (ONE context for entire batch)
     # Use headed mode so user can solve captcha if needed
+    logger.info("[XHS-User] 浏览器模式 (Tier 0/1/2)")
     async_pw = get_async_playwright()
     logger.info(f"[XHS-User] Stealth engine: {get_stealth_engine_name()}")
     async with async_pw() as p:
@@ -403,7 +584,7 @@ async def fetch_user_notes(profile_url: str) -> dict:
         await setup_resource_blocking(context)
 
         try:
-            # 5a. Navigate to profile page
+            # Navigate to profile page
             await page.goto(
                 profile_url, wait_until="domcontentloaded", timeout=30_000,
                 referer=generate_referer(profile_url),
@@ -417,7 +598,7 @@ async def fetch_user_notes(profile_url: str) -> dict:
                     page, profile_url, session_path, context
                 )
 
-            # 5b. Tier 0: Extract from __INITIAL_STATE__
+            # Tier 0: Extract from __INITIAL_STATE__
             logger.info("[XHS-User] Tier 0: 从 __INITIAL_STATE__ 提取笔记列表...")
             author_name, initial_notes = await _extract_initial_state(page)
 
@@ -429,7 +610,7 @@ async def fetch_user_notes(profile_url: str) -> dict:
                 f"首页 {len(initial_notes)} 篇笔记"
             )
 
-            # 5c. Tier 1: Scroll for more (if max_scrolls > 0)
+            # Tier 1: Scroll for more
             if max_scrolls > 0 and initial_notes:
                 logger.info("[XHS-User] Tier 1: 滚动加载更多笔记...")
                 all_note_items = await _scroll_and_collect(
@@ -454,11 +635,11 @@ async def fetch_user_notes(profile_url: str) -> dict:
                     "list_path": "",
                 }
 
-            # 5d. Determine subfolder
+            # Determine subfolder
             safe_author = re.sub(r'[\\/:*?"<>|]', '_', author_name)
             subfolder = f"notes_{safe_author}"
 
-            # 5e. Tier 2: Process each note — navigate to detail page for full content
+            # Tier 2: Process each note
             fetched = 0
             skipped = 0
             failed = 0
@@ -592,11 +773,11 @@ async def fetch_user_notes(profile_url: str) -> dict:
             await context.close()
             await browser.close()
 
-    # 6. Persist dedup index
+    # Persist dedup index
     save_index(saved_ids, platform="XHS")
     logger.info(f"[XHS-User] 索引更新: {initial_count} -> {len(saved_ids)} 条")
 
-    # 7. Save batch record
+    # Save batch record
     list_path = _save_batch_record(note_list, author_name, since_date)
 
     logger.info(

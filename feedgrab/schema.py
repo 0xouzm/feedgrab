@@ -340,13 +340,15 @@ def from_wechat(article: dict) -> UnifiedContent:
 
 def from_xiaohongshu(note: dict) -> UnifiedContent:
     images = note.get('images', [])
+    note_type = note.get('note_type', '')
+    media = MediaType.VIDEO if note_type == 'video' else (MediaType.IMAGE if images else MediaType.TEXT)
     return UnifiedContent(
         source_type=SourceType.XIAOHONGSHU,
         source_name=note.get('author', ''),
         title=note.get('title', ''),
         content=note.get('content', ''),
         url=note.get('url', ''),
-        media_type=MediaType.IMAGE if images else MediaType.TEXT,
+        media_type=media,
         tags=note.get('tags', []),
         extra={
             "author_url": note.get('author_url', ''),
@@ -354,8 +356,11 @@ def from_xiaohongshu(note: dict) -> UnifiedContent:
             "likes": note.get('likes', 0),
             "collects": note.get('collects', 0),
             "comments": note.get('comments', 0),
+            "share_count": note.get('share_count', 0),
+            "note_type": note_type,
             "images": images,
             "date": note.get('date', ''),
+            "comment_list": note.get('comment_list', []),
         },
     )
 

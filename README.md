@@ -64,6 +64,13 @@ XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profil
 # 批量抓取小红书搜索结果（需要 XHS_SEARCH_ENABLED=true + feedgrab login xhs）
 feedgrab "https://www.xiaohongshu.com/search_result?keyword=开学第一课&source=web_explore_feed"
 
+# 搜索小红书笔记（通过 xhshow API，无需登录）
+feedgrab xhs-so "AI Agent"                           # 综合搜索
+feedgrab xhs-so "AI Agent" --sort popular             # 按热门排序
+feedgrab xhs-so "AI Agent" --type video               # 只搜视频
+feedgrab xhs-so "AI Agent" --sort latest --limit 50   # 最新 50 条
+feedgrab xhs-so "AI Agent" --save                     # 同时保存单篇 .md
+
 # 搜索微信公众号文章（通过搜狗微信搜索）
 feedgrab mpweixin-so "AI Agent"
 feedgrab mpweixin-so "AI Agent" --limit 5  # 限制结果数量
@@ -184,14 +191,14 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`） | — |
 | GitHub | **REST API**（仓库元数据 + 中文 README 优先 + 摘要提取） | — |
-| 小红书 | Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量**) | — |
+| 小红书 | **API (xhshow)** → Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量** + **关键词搜索 `xhs-so`**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙播客 | — | 通过 Claude Code 技能 |
 | Apple Podcasts | — | 通过 Claude Code 技能 |
 | 任意网页 | Jina 兜底 | — |
 
-> \*小红书需要一次性登录：`feedgrab login xhs`。支持单篇抓取（图片、互动数据、标签、日期等完整元数据）、**作者主页批量抓取**和**搜索结果批量抓取**（均采用 Tier 0 首页提取 + Tier 1 滚动加载 + Tier 2 逐篇深度抓取策略）
+> \*小红书支持 **API 抓取**（xhshow，无需登录）和 **浏览器抓取**（需一次性登录：`feedgrab login xhs`）。单篇抓取优先走 API（完整元数据 + 评论），API 不可用时回退 Jina → Playwright。**关键词搜索**（`feedgrab xhs-so`）通过 API 直接搜索，无需登录。**作者主页批量**和**搜索结果批量**采用 API 分页 + Tier 0 首页提取 + Tier 1 滚动加载 + Tier 2 逐篇深度抓取策略。
 >
 > YouTube Whisper 转录需要 `GROQ_API_KEY` — 从 [Groq](https://console.groq.com/keys) 免费获取
 
@@ -334,7 +341,8 @@ output/
 ├── XHS/                  # 小红书
 │   ├── index/            #   去重索引 + 批量抓取记录
 │   ├── notes_xxx/        #   作者笔记（按作者名分目录）
-│   └── search_xxx/       #   搜索笔记（按关键词分目录）
+│   ├── search_xxx/       #   搜索笔记（按关键词分目录）
+│   └── search/           #   关键词搜索结果（xhs-so 命令，.md + .csv）
 ├── WeChat/               # 微信公众号
 ├── YouTube/              # YouTube
 │   └── search_xxx/       #   搜索结果（按关键词分目录）
@@ -443,6 +451,9 @@ patchright install chromium
 
 # Twitter 搜索增强（x-client-transaction-id 反检测签名，x-so 命令必需）
 pip install "feedgrab[twitter] @ git+https://github.com/iBigQiang/feedgrab.git"
+
+# 小红书 API 增强（xhshow API 抓取，xhs-so 命令必需）
+pip install "feedgrab[xhs] @ git+https://github.com/iBigQiang/feedgrab.git"
 
 # 或使用 Playwright 兜底
 pip install "feedgrab[browser] @ git+https://github.com/iBigQiang/feedgrab.git"
@@ -554,6 +565,13 @@ cp .env.example .env
 | `XHS_SEARCH_ENABLED` | 否 | 启用小红书搜索批量抓取（默认：`false`） |
 | `XHS_SEARCH_MAX_SCROLLS` | 否 | 搜索页最大滚动次数（默认：`30`） |
 | `XHS_SEARCH_DELAY` | 否 | 搜索笔记处理间隔秒数（默认：`3.0`） |
+| `XHS_API_ENABLED` | 否 | 启用 xhshow API 抓取（默认：`true`，已安装 xhshow 时自动生效） |
+| `XHS_API_DELAY` | 否 | API 请求间隔秒数（默认：`1.5`） |
+| `XHS_FETCH_COMMENTS` | 否 | 抓取笔记评论（默认：`false`） |
+| `XHS_MAX_COMMENTS` | 否 | 最大评论采集数（默认：`50`） |
+| `XHS_SEARCH_SORT` | 否 | xhs-so 搜索排序：`general`=综合 / `popular`=最热 / `latest`=最新（默认：`general`） |
+| `XHS_SEARCH_NOTE_TYPE` | 否 | xhs-so 搜索类型：`0`=全部 / `1`=视频 / `2`=图文（默认：`0`） |
+| `XHS_SEARCH_MAX_PAGES` | 否 | xhs-so 搜索最大分页数（默认：`5`） |
 | `MPWEIXIN_SOGOU_ENABLED` | 否 | 启用搜狗微信文章搜索（默认：`false`） |
 | `MPWEIXIN_SOGOU_MAX_RESULTS` | 否 | 每次搜索最大文章数（默认：`10`，最多 `100`） |
 | `MPWEIXIN_SOGOU_DELAY` | 否 | 文章处理间隔秒数（默认：`3.0`） |
@@ -602,9 +620,9 @@ feedgrab/
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
 │   │   ├── wechat.py          # Jina → Playwright WeChat JS 提取
 │   │   ├── wechat_search.py   # 搜狗微信搜索（markdownify 富文本转换）
-│   │   ├── xhs.py             # Jina → Playwright + Session 兜底
-│   │   ├── xhs_user_notes.py  # 小红书作者批量抓取（__INITIAL_STATE__ + XHR 拦截 + 滚动加载）
-│   │   └── xhs_search_notes.py# 小红书搜索批量抓取（搜索结果页滚动 + 逐篇深度抓取）
+│   │   ├── xhs.py             # API (xhshow) → Jina → Playwright + Session 兜底
+│   │   ├── xhs_user_notes.py  # 小红书作者批量抓取（API 分页 + __INITIAL_STATE__ + XHR 拦截 + 滚动加载）
+│   │   └── xhs_search_notes.py# 小红书搜索批量抓取（xhs-so API 搜索 + 搜索结果页滚动 + 逐篇深度抓取）
 │   └── utils/
 │       ├── storage.py         # 按平台分目录 Markdown + JSON 双重输出
 │       ├── dedup.py           # 全局去重索引（跨模式统一 item_id 追踪）

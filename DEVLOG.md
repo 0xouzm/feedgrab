@@ -2,6 +2,80 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-13 · v0.10.0 · 小红书 API 层集成 + xhs-so 搜索命令
+
+### 背景
+feedgrab 的小红书功能完全依赖 Jina Reader 和 Playwright 浏览器自动化，速度慢（每篇 ~5s）、需要 headed 模式、依赖 DOM 结构稳定。参考 [jackwener/xiaohongshu-cli](https://github.com/jackwener/xiaohongshu-cli) 的逆向 API 方案，通过 `xhshow` 签名库实现纯 HTTP 调用，单篇 <1s、无需浏览器、数据更完整。
+
+### 方案决策
+- 将 xiaohongshu-cli 的 API 能力作为新 Tier 0 集成到 feedgrab 三层兜底架构
+- 签名配置使用真实系统平台和 UA（通过 `platform.system()` + `get_user_agent()` 自动检测），避免 Windows 环境用 macOS UA 被反爬识别
+- Cookie 来源复用 `sessions/xhs.json` Playwright storage_state（零成本，无需新登录流程）
+- `xhshow` 为可选依赖，未安装时自动降级到浏览器模式
+
+### 新增功能
+
+| 功能 | 说明 |
+|------|------|
+| 单篇 API 抓取 | API → Jina → Playwright 三级兜底（~0.5s vs 原 ~5s） |
+| 作者批量 API | cursor 自动分页（30条/页），失败降级到浏览器三层策略 |
+| 搜索批量 API | page 分页 + 排序/类型筛选，失败降级到浏览器 |
+| `xhs-so` 命令 | 关键词搜索汇总表（MD + CSV），仿 `x-so` 模式 |
+| 评论抓取 | `XHS_FETCH_COMMENTS=true` 时提取评论全文 + 子评论 |
+| xsec_token 缓存 | LRU 磁盘缓存 500 条（`sessions/cache/xhs_token_cache.json`） |
+| doctor xhs 增强 | xhshow 安装检测 + API 连通性 + Cookie 有效性 |
+
+### 配置项
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `XHS_API_ENABLED` | true | API 优先模式开关 |
+| `XHS_API_DELAY` | 1.0 | API 请求间隔秒数 |
+| `XHS_FETCH_COMMENTS` | false | 单篇时获取评论全文 |
+| `XHS_MAX_COMMENTS` | 5 | 评论最大页数（~20条/页） |
+| `XHS_SEARCH_SORT` | general | 搜索排序: general/popular/latest |
+| `XHS_SEARCH_NOTE_TYPE` | all | 搜索类型: all/video/image |
+| `XHS_SEARCH_MAX_PAGES` | 10 | 搜索最大页数（每页 20 条） |
+
+### 改动范围
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `feedgrab/fetchers/xhs_api.py` | **新建** | XHS API 客户端核心（~550 行） |
+| `feedgrab/fetchers/xhs.py` | 修改 | 加入 API Tier 0 + 评论抓取 |
+| `feedgrab/fetchers/xhs_user_notes.py` | 修改 | API cursor 分页优先 |
+| `feedgrab/fetchers/xhs_search_notes.py` | 修改 | API page 分页 + xhs-so 搜索函数 |
+| `feedgrab/cli.py` | 修改 | xhs-so 命令 + doctor xhs 增强 |
+| `feedgrab/config.py` | 修改 | 7 个 XHS API 配置函数 |
+| `feedgrab/schema.py` | 修改 | from_xiaohongshu 扩展 extra 字段 |
+| `feedgrab/utils/storage.py` | 修改 | 评论渲染到 Markdown 末尾 |
+| `pyproject.toml` | 修改 | xhs 可选依赖组 |
+| `.env.example` | 修改 | XHS API 配置项说明 |
+
+### xhs-so 用法
+```
+feedgrab xhs-so "AI Agent"                           # 综合搜索
+feedgrab xhs-so "AI Agent" --sort popular             # 按热门排序
+feedgrab xhs-so "AI Agent" --type video               # 只搜视频
+feedgrab xhs-so "AI Agent" --sort latest --limit 50   # 最新 50 条
+feedgrab xhs-so "AI Agent" --save                     # 同时保存单篇 .md
+```
+
+输出：`{OUTPUT_DIR}/XHS/search/{排序}/{关键词}_{日期}.{md,csv}`
+
+### 移植来源
+从 [jackwener/xiaohongshu-cli](https://github.com/jackwener/xiaohongshu-cli) v0.6.0 移植核心能力：
+- 请求/重试/限速逻辑（Gaussian 抖动 + 验证码冷却 + 指数退避）
+- API 端点定义（Feed/UserPosted/SearchNotes/Comments）
+- xsec_token LRU 缓存
+- 签名配置（适配 feedgrab 真实 UA/平台）
+
+**不集成**的部分：写操作、QR 登录、通知系统、创作者平台。
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-12 · v0.9.14 · 批量抓取数据完整性 + 线程退化保护
 
 ### 背景
