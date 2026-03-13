@@ -721,6 +721,10 @@ class XhsApiClient:
 
             added = 0
             for item in items:
+                # Filter: only keep note items (skip ads, rec_query, etc.)
+                if item.get("model_type") and item.get("model_type") != "note":
+                    continue
+
                 # Cache xsec_token from search results
                 note_card = item.get("note_card") or item.get("note", {})
                 note_id = (
@@ -728,15 +732,18 @@ class XhsApiClient:
                     or note_card.get("note_id")
                     or item.get("note_id", "")
                 )
+                # Skip items without note_id (broken/ad items)
+                if not note_id:
+                    continue
+
                 xsec_token = item.get("xsec_token", "")
                 if note_id and xsec_token:
                     cache_xsec_token(note_id, xsec_token)
 
                 # Dedup by note_id
-                if note_id and note_id in seen_ids:
+                if note_id in seen_ids:
                     continue
-                if note_id:
-                    seen_ids.add(note_id)
+                seen_ids.add(note_id)
                 all_items.append(item)
                 added += 1
 

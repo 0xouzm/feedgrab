@@ -70,6 +70,8 @@ feedgrab xhs-so "AI Agent" --sort popular             # Sort by popularity
 feedgrab xhs-so "AI Agent" --type video               # Video only
 feedgrab xhs-so "AI Agent" --sort latest --limit 50   # Latest 50
 feedgrab xhs-so "AI Agent" --save                     # Save individual .md files
+feedgrab xhs-so "claude code,openclaw" --merge         # Multi-keyword merged into one table
+feedgrab xhs-so "claude code,openclaw"                 # Multi-keyword separate tables
 
 # Search YouTube videos
 feedgrab ytb-so "AI Agent"
@@ -81,6 +83,8 @@ feedgrab x-so openclaw                                        # Default: last 1 
 feedgrab x-so "AI Agent" --days 7 --min-faves 50 --sort top   # Custom params
 feedgrab x-so '"openclaw" lang:zh since:2026-03-01' --raw     # Raw query mode
 feedgrab x-so openclaw --save                                  # Also save individual tweet .md files
+feedgrab x-so "VPN,proxy,v2ray" --merge                        # Multi-keyword merged into one table
+feedgrab x-so "claude code,openclaw"                           # Multi-keyword separate tables
 
 # Download YouTube video/audio/subtitles (output to OUTPUT_DIR/YouTube/)
 feedgrab ytb-dlv https://www.youtube.com/watch?v=xxx   # Download video (MP4)
@@ -498,6 +502,7 @@ cp .env.example .env
 | `X_SEARCH_SORT` | No | Search sort: `live`=Latest / `top`=Top (default: `live`) |
 | `X_SEARCH_MAX_RESULTS` | No | Max tweets per search (default: `100`) |
 | `X_SEARCH_SAVE_TWEETS` | No | Save individual tweet .md files (default: `false`, summary table only) |
+| `X_SEARCH_MERGE_KEYWORDS` | No | Merge multi-keyword search results into one file (default: `false`, also via `--merge` flag) |
 | `XHS_USER_NOTES_ENABLED` | No | Enable XHS author batch fetch (default: `false`) |
 | `XHS_USER_NOTE_MAX_SCROLLS` | No | Max scroll iterations on author profile (default: `50`) |
 | `XHS_USER_NOTE_DELAY` | No | Delay between note fetches in seconds (default: `3.0`) |
@@ -510,6 +515,7 @@ cp .env.example .env
 | `XHS_SEARCH_SORT` | No | xhs-so search sort: `general` / `popular` / `latest` (default: `general`) |
 | `XHS_SEARCH_NOTE_TYPE` | No | xhs-so search type: `all` / `video` / `image` (default: `all`) |
 | `XHS_SEARCH_MAX_PAGES` | No | xhs-so max search pages, 20 results per page (default: `5`) |
+| `XHS_SEARCH_MERGE_KEYWORDS` | No | Merge multi-keyword search results into one file (default: `false`, also via `--merge` flag) |
 | `MPWEIXIN_SOGOU_ENABLED` | No | Enable Sogou WeChat article search (default: `false`) |
 | `MPWEIXIN_SOGOU_MAX_RESULTS` | No | Max articles per search (default: `10`, max `100`) |
 | `MPWEIXIN_SOGOU_DELAY` | No | Delay between article fetches in seconds (default: `3.0`) |

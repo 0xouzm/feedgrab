@@ -70,6 +70,8 @@ feedgrab xhs-so "AI Agent" --sort popular             # 按热门排序
 feedgrab xhs-so "AI Agent" --type video               # 只搜视频
 feedgrab xhs-so "AI Agent" --sort latest --limit 50   # 最新 50 条
 feedgrab xhs-so "AI Agent" --save                     # 同时保存单篇 .md
+feedgrab xhs-so "claude code,openclaw,养龙虾" --merge  # 多关键词合并到一个表格
+feedgrab xhs-so "claude code,openclaw"                 # 多关键词分别生成表格
 
 # 搜索微信公众号文章（通过搜狗微信搜索）
 feedgrab mpweixin-so "AI Agent"
@@ -85,6 +87,8 @@ feedgrab x-so openclaw                                        # 默认：最近1
 feedgrab x-so "AI Agent" --days 7 --min-faves 50 --sort top   # 自定义参数
 feedgrab x-so '"openclaw" lang:zh since:2026-03-01' --raw     # 原始查询模式
 feedgrab x-so openclaw --save                                  # 同时保存单篇推文 .md
+feedgrab x-so "梯子,VPN,v2ray,小火箭" --merge                  # 多关键词合并到一个表格
+feedgrab x-so "claude code,openclaw"                           # 多关键词分别生成表格
 
 # 下载 YouTube 视频/音频/字幕（输出到 OUTPUT_DIR/YouTube/ 目录）
 feedgrab ytb-dlv https://www.youtube.com/watch?v=xxx   # 下载视频 (MP4)
@@ -558,6 +562,7 @@ cp .env.example .env
 | `X_SEARCH_SORT` | 否 | 搜索排序模式：`live`=最新 / `top`=热门（默认：`live`） |
 | `X_SEARCH_MAX_RESULTS` | 否 | 每次搜索最大推文数（默认：`100`） |
 | `X_SEARCH_SAVE_TWEETS` | 否 | 是否同时保存单篇推文 .md（默认：`false`，仅汇总表格） |
+| `X_SEARCH_MERGE_KEYWORDS` | 否 | 多关键词搜索时合并结果到一个文件（默认：`false`，也可用 `--merge` 开启） |
 | `XHS_USER_NOTES_ENABLED` | 否 | 启用小红书作者批量抓取（默认：`false`） |
 | `XHS_USER_NOTE_MAX_SCROLLS` | 否 | 作者主页最大滚动次数（默认：`50`） |
 | `XHS_USER_NOTE_DELAY` | 否 | 笔记处理间隔秒数（默认：`3.0`） |
@@ -572,6 +577,7 @@ cp .env.example .env
 | `XHS_SEARCH_SORT` | 否 | xhs-so 搜索排序：`general`=综合 / `popular`=最热 / `latest`=最新（默认：`general`） |
 | `XHS_SEARCH_NOTE_TYPE` | 否 | xhs-so 搜索类型：`0`=全部 / `1`=视频 / `2`=图文（默认：`0`） |
 | `XHS_SEARCH_MAX_PAGES` | 否 | xhs-so 搜索最大分页数（默认：`5`） |
+| `XHS_SEARCH_MERGE_KEYWORDS` | 否 | 多关键词搜索时合并结果到一个文件（默认：`false`，也可用 `--merge` 开启） |
 | `MPWEIXIN_SOGOU_ENABLED` | 否 | 启用搜狗微信文章搜索（默认：`false`） |
 | `MPWEIXIN_SOGOU_MAX_RESULTS` | 否 | 每次搜索最大文章数（默认：`10`，最多 `100`） |
 | `MPWEIXIN_SOGOU_DELAY` | 否 | 文章处理间隔秒数（默认：`3.0`） |

@@ -138,14 +138,21 @@ def _generate_summary_table(
     days: int,
     tweets: List[dict],
     output_path: Path,
+    show_keyword: bool = False,
 ) -> None:
     """Generate summary Markdown table + CSV, sorted by views.
 
     MD: 内容摘要 is a hyperlink (no separate link column).
     CSV: has explicit link column with plain URL.
+
+    Args:
+        show_keyword: If True, add a "关键词" column (used in merged multi-keyword mode).
     """
     sort_label_zh = "最新" if sort == "live" else "热门"
     date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Sort by views descending (ensures correct order in merge mode)
+    tweets.sort(key=lambda td: int(td.get("views", 0) or 0), reverse=True)
 
     # --- Markdown ---
     lines = [
@@ -163,12 +170,20 @@ def _generate_summary_table(
     if not tweets:
         lines.append("*No results found.*")
     else:
-        lines.append(
-            "| # | 作者👨🏻‍💻 | 内容摘要💻 | 日期🗓 | 点赞👍 | 转帖🔄 | 回复💬 | 查看👁 | 收藏📌 |"
-        )
-        lines.append(
-            "|:---:|------|----------|:---:|:---:|:---:|:---:|:---:|:------:|"
-        )
+        if show_keyword:
+            lines.append(
+                "| # | 关键词 | 作者 | 内容摘要 | 日期 | 点赞 | 转帖 | 回复 | 查看 | 收藏 |"
+            )
+            lines.append(
+                "|:---:|------|------|----------|:---:|:---:|:---:|:---:|:---:|:------:|"
+            )
+        else:
+            lines.append(
+                "| # | 作者👨🏻‍💻 | 内容摘要💻 | 日期🗓 | 点赞👍 | 转帖🔄 | 回复💬 | 查看👁 | 收藏📌 |"
+            )
+            lines.append(
+                "|:---:|------|----------|:---:|:---:|:---:|:---:|:---:|:------:|"
+            )
 
         for i, td in enumerate(tweets, 1):
             # Prefer display name; fall back to @handle
@@ -198,11 +213,19 @@ def _generate_summary_table(
             # Summary as hyperlink (no separate link column)
             summary_link = f"[{summary}]({tweet_url})"
 
-            lines.append(
-                f"| {i} | {author} | {summary_link} "
-                f"| {date_short} | {likes} | {retweets} | {replies_count} "
-                f"| {views} | {bookmarks} |"
-            )
+            if show_keyword:
+                kw = td.get("_keyword", "").replace("|", "\\|")
+                lines.append(
+                    f"| {i} | {kw} | {author} | {summary_link} "
+                    f"| {date_short} | {likes} | {retweets} | {replies_count} "
+                    f"| {views} | {bookmarks} |"
+                )
+            else:
+                lines.append(
+                    f"| {i} | {author} | {summary_link} "
+                    f"| {date_short} | {likes} | {retweets} | {replies_count} "
+                    f"| {views} | {bookmarks} |"
+                )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -212,10 +235,16 @@ def _generate_summary_table(
     csv_path = output_path.with_suffix(".csv")
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "#", "作者", "内容摘要", "日期", "点赞", "转帖",
-            "回复", "查看", "收藏", "链接",
-        ])
+        if show_keyword:
+            writer.writerow([
+                "#", "关键词", "作者", "内容摘要", "日期", "点赞", "转帖",
+                "回复", "查看", "收藏", "链接",
+            ])
+        else:
+            writer.writerow([
+                "#", "作者", "内容摘要", "日期", "点赞", "转帖",
+                "回复", "查看", "收藏", "链接",
+            ])
         for i, td in enumerate(tweets, 1):
             author_name = td.get("author_name", "")
             handle = td.get("author", "")
@@ -233,10 +262,11 @@ def _generate_summary_table(
             tweet_id = td.get("id", "")
             tweet_author = td.get("author", "")
             tweet_url = f"https://x.com/{tweet_author}/status/{tweet_id}"
-            writer.writerow([
-                i, author, summary, date_short, likes, retweets,
-                replies_count, views, bookmarks, tweet_url,
-            ])
+            row = [i, author, summary, date_short, likes, retweets,
+                   replies_count, views, bookmarks, tweet_url]
+            if show_keyword:
+                row.insert(1, td.get("_keyword", ""))
+            writer.writerow(row)
     logger.info(f"[X-SO] CSV table saved: {csv_path}")
 
 
@@ -256,6 +286,7 @@ def search_twitter_keyword(
     scroll_delay: float = 2.0,
     save_tweets: bool = False,
     raw: bool = False,
+    skip_summary: bool = False,
 ) -> dict:
     """Search Twitter for tweets matching a keyword and generate engagement-ranked output.
 
@@ -363,8 +394,9 @@ def search_twitter_keyword(
     # Sort by views (descending)
     tweets.sort(key=lambda td: int(td.get("views", 0) or 0), reverse=True)
 
-    # Generate summary table
-    _generate_summary_table(keyword, query, sort, effective_days, tweets, summary_path)
+    # Generate summary table (skip in merge mode)
+    if not skip_summary:
+        _generate_summary_table(keyword, query, sort, effective_days, tweets, summary_path)
 
     # Optional: save individual tweets
     saved = 0
@@ -410,4 +442,5 @@ def search_twitter_keyword(
         "query": query,
         "output_path": str(summary_path),
         "csv_path": str(summary_path.with_suffix(".csv")),
+        "tweets": tweets,
     }

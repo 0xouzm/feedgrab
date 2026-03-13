@@ -727,13 +727,24 @@ def _generate_xhs_summary_table(
     note_type: str,
     notes: List[dict],
     output_path: Path,
+    show_keyword: bool = False,
 ) -> None:
-    """Generate XHS summary Markdown table + CSV, sorted by likes descending."""
+    """Generate XHS summary Markdown table + CSV, sorted by likes descending.
+
+    Args:
+        show_keyword: If True, add a "关键词" column (used in merged multi-keyword mode).
+    """
     sort_label = _SORT_ZH.get(sort, sort)
     date_str = datetime.now().strftime("%Y-%m-%d")
 
     # Sort by likes descending
     notes.sort(key=lambda n: int(n.get("likes", 0) or 0), reverse=True)
+
+    # Filter out empty rows (no title and no author = non-note junk)
+    valid_notes = [
+        nd for nd in notes
+        if nd.get("title") or nd.get("content") or nd.get("author")
+    ]
 
     # --- Markdown ---
     lines = [
@@ -741,24 +752,32 @@ def _generate_xhs_summary_table(
         f'title: "小红书搜索：{keyword}"',
         f'search_sort: "{sort_label}"',
         f'note_type: "{note_type}"',
-        f"total: {len(notes)}",
+        f"total: {len(valid_notes)}",
         f"created: {date_str}",
         "cssclasses: wide",
         "---",
         "",
     ]
 
-    if not notes:
+    if not valid_notes:
         lines.append("*No results found.*")
     else:
-        lines.append(
-            "| # | 作者 | 内容摘要 | 类型 | 日期 | 点赞 | 收藏 | 评论 |"
-        )
-        lines.append(
-            "|:---:|------|----------|:---:|:---:|:---:|:---:|:---:|"
-        )
+        if show_keyword:
+            lines.append(
+                "| # | 关键词 | 作者 | 内容摘要 | 类型 | 日期 | 点赞 | 收藏 | 评论 |"
+            )
+            lines.append(
+                "|:---:|------|------|----------|:---:|:---:|:---:|:---:|:---:|"
+            )
+        else:
+            lines.append(
+                "| # | 作者 | 内容摘要 | 类型 | 日期 | 点赞 | 收藏 | 评论 |"
+            )
+            lines.append(
+                "|:---:|------|----------|:---:|:---:|:---:|:---:|:---:|"
+            )
 
-        for i, nd in enumerate(notes, 1):
+        for i, nd in enumerate(valid_notes, 1):
             author = nd.get("author", "").replace("|", "\\|")
             title = nd.get("title", "")
             content = nd.get("content", "")
@@ -777,10 +796,17 @@ def _generate_xhs_summary_table(
             # Extract just the date part (strip location like "福建")
             date_short = date_raw[:10] if len(date_raw) >= 10 else (date_raw or "—")
 
-            lines.append(
-                f"| {i} | {author} | {summary_link} "
-                f"| {ntype} | {date_short} | {likes} | {collects} | {comments} |"
-            )
+            if show_keyword:
+                kw = nd.get("_keyword", "").replace("|", "\\|")
+                lines.append(
+                    f"| {i} | {kw} | {author} | {summary_link} "
+                    f"| {ntype} | {date_short} | {likes} | {collects} | {comments} |"
+                )
+            else:
+                lines.append(
+                    f"| {i} | {author} | {summary_link} "
+                    f"| {ntype} | {date_short} | {likes} | {collects} | {comments} |"
+                )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -790,12 +816,18 @@ def _generate_xhs_summary_table(
     csv_path = output_path.with_suffix(".csv")
     with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "#", "作者", "内容摘要", "类型", "日期", "点赞", "收藏",
-            "评论", "链接",
-        ])
-        for i, nd in enumerate(notes, 1):
-            author = nd.get("author", "").replace("|", "\\|")
+        if show_keyword:
+            writer.writerow([
+                "#", "关键词", "作者", "内容摘要", "类型", "日期", "点赞", "收藏",
+                "评论", "链接",
+            ])
+        else:
+            writer.writerow([
+                "#", "作者", "内容摘要", "类型", "日期", "点赞", "收藏",
+                "评论", "链接",
+            ])
+        for i, nd in enumerate(valid_notes, 1):
+            author = nd.get("author", "")
             title = nd.get("title", "")
             content = nd.get("content", "")
             summary_text = _clean_summary(title or content, max_len=80)
@@ -806,10 +838,11 @@ def _generate_xhs_summary_table(
             date_raw = nd.get("date", "")
             date_short = date_raw[:10] if len(date_raw) >= 10 else date_raw
             note_url = nd.get("url", "")
-            writer.writerow([
-                i, author, summary_text, ntype, date_short,
-                likes, collects, comments, note_url,
-            ])
+            row = [i, author, summary_text, ntype, date_short,
+                   likes, collects, comments, note_url]
+            if show_keyword:
+                row.insert(1, nd.get("_keyword", ""))
+            writer.writerow(row)
     logger.info(f"[XHS-SO] CSV table saved: {csv_path}")
 
 
@@ -819,6 +852,7 @@ def search_xhs_keyword(
     note_type: str = "all",
     max_results: int = 200,
     save_notes: bool = False,
+    skip_summary: bool = False,
 ) -> dict:
     """Search XHS for notes matching a keyword and generate engagement-ranked output.
 
@@ -830,6 +864,7 @@ def search_xhs_keyword(
         note_type: Note type filter — all / video / image.
         max_results: Maximum number of results.
         save_notes: Whether to save individual note .md files.
+        skip_summary: If True, skip generating summary table (used in merge mode).
 
     Returns:
         dict with: total, saved, query, output_path, csv_path
@@ -918,23 +953,25 @@ def search_xhs_keyword(
 
             save_index(saved_ids, platform="XHS")
 
-    # Generate summary table
-    base_dir = _resolve_output_base()
-    sort_label = _SORT_ZH.get(sort, sort)
-    safe_keyword = re.sub(r'[\\/:*?"<>|]', '_', keyword)
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    summary_dir = base_dir / "XHS" / "search" / f"{sort_label}"
-    summary_path = summary_dir / f"{safe_keyword}_{date_str}.md"
+    # Generate summary table (skip in merge mode)
+    summary_path = Path("")
+    csv_path = Path("")
+    if not skip_summary:
+        base_dir = _resolve_output_base()
+        sort_label = _SORT_ZH.get(sort, sort)
+        safe_keyword = re.sub(r'[\\/:*?"<>|]', '_', keyword)
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        summary_dir = base_dir / "XHS" / "search" / f"{sort_label}"
+        summary_path = summary_dir / f"{safe_keyword}_{date_str}.md"
 
-    _generate_xhs_summary_table(
-        keyword=keyword,
-        sort=sort,
-        note_type=note_type,
-        notes=all_notes,
-        output_path=summary_path,
-    )
-
-    csv_path = summary_path.with_suffix(".csv")
+        _generate_xhs_summary_table(
+            keyword=keyword,
+            sort=sort,
+            note_type=note_type,
+            notes=all_notes,
+            output_path=summary_path,
+        )
+        csv_path = summary_path.with_suffix(".csv")
 
     logger.info(f"[XHS-SO] 搜索完成: {len(all_notes)} 篇笔记")
 
@@ -944,4 +981,5 @@ def search_xhs_keyword(
         "query": keyword,
         "output_path": str(summary_path),
         "csv_path": str(csv_path),
+        "notes": all_notes,
     }

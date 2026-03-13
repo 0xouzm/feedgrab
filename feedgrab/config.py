@@ -366,6 +366,11 @@ def x_search_save_tweets() -> bool:
     return os.getenv("X_SEARCH_SAVE_TWEETS", "false").lower() in ("true", "1", "yes")
 
 
+def x_search_merge_keywords() -> bool:
+    """Whether to merge multi-keyword search results into one summary table (default false)."""
+    return os.getenv("X_SEARCH_MERGE_KEYWORDS", "false").lower() in ("true", "1", "yes")
+
+
 # ---------------------------------------------------------------------------
 # TwitterAPI.io paid API (supplementary / standalone)
 # ---------------------------------------------------------------------------
@@ -494,6 +499,11 @@ def xhs_search_max_pages() -> int:
 def xhs_search_save_notes() -> bool:
     """Whether to save individual note .md files during xhs-so search (default false)."""
     return os.getenv("XHS_SEARCH_SAVE_NOTES", "false").strip().lower() in ("true", "1", "yes")
+
+
+def xhs_search_merge_keywords() -> bool:
+    """Whether to merge multi-keyword search results into one summary table (default false)."""
+    return os.getenv("XHS_SEARCH_MERGE_KEYWORDS", "false").lower() in ("true", "1", "yes")
 
 
 # ---------------------------------------------------------------------------

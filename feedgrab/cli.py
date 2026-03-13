@@ -1157,6 +1157,17 @@ def cmd_mpweixin_account(account_name: str):
         sys.exit(1)
 
 
+def _split_keywords(raw: str) -> list[str]:
+    """Split comma-separated keywords (supports both , and ，).
+
+    Examples:
+        "claude code,openclaw,养龙虾" → ["claude code", "openclaw", "养龙虾"]
+        "AI agent" → ["AI agent"]
+    """
+    parts = re.split(r"[,，]", raw)
+    return [k.strip() for k in parts if k.strip()]
+
+
 def cmd_twitter_search(args: list):
     """Search Twitter for tweets by keyword and generate engagement-ranked summary."""
     from feedgrab.config import (
@@ -1164,6 +1175,7 @@ def cmd_twitter_search(args: list):
         x_search_min_faves, x_search_min_retweets,
         x_search_sort, x_search_exclude_retweets,
         x_search_delay, x_search_max_results, x_search_save_tweets,
+        x_search_merge_keywords,
     )
 
     if not x_search_enabled():
@@ -1171,7 +1183,7 @@ def cmd_twitter_search(args: list):
         print("   Set X_SEARCH_ENABLED=true in .env to enable.")
         return
 
-    keyword = args[0]
+    keywords = _split_keywords(args[0])
 
     # Parse CLI options
     def _opt(name: str, default: str = "") -> str:
@@ -1189,46 +1201,94 @@ def cmd_twitter_search(args: list):
     max_results = int(_opt("--limit", str(x_search_max_results())))
     raw = "--raw" in args
     save_tweets = x_search_save_tweets() or "--save" in args
+    merge = (x_search_merge_keywords() or "--merge" in args) and len(keywords) > 1
 
     from feedgrab.fetchers.twitter_keyword_search import search_twitter_keyword
 
-    try:
-        result = search_twitter_keyword(
-            keyword=keyword,
-            lang=lang,
-            days=days,
-            min_faves=min_faves,
-            min_retweets=min_retweets,
+    if len(keywords) > 1:
+        mode = "merge" if merge else "separate"
+        print(f"\n\U0001f50d X batch search: {len(keywords)} keywords ({mode})")
+
+    all_tweets_merged: list[dict] = []
+
+    for ki, keyword in enumerate(keywords):
+        if len(keywords) > 1:
+            print(f"\n{'='*50}")
+            print(f"[{ki+1}/{len(keywords)}] {keyword}")
+            print(f"{'='*50}")
+
+        try:
+            result = search_twitter_keyword(
+                keyword=keyword,
+                lang=lang,
+                days=days,
+                min_faves=min_faves,
+                min_retweets=min_retweets,
+                sort=sort,
+                exclude_retweets=x_search_exclude_retweets(),
+                max_results=max_results,
+                scroll_delay=x_search_delay(),
+                save_tweets=save_tweets,
+                raw=raw,
+                skip_summary=merge,
+            )
+            print(f"\n\u2705 X search complete: '{keyword}'")
+            print(f"   Query: {result['query']}")
+            print(f"   Total tweets: {result['total']}")
+            if not merge:
+                if result.get("output_path"):
+                    print(f"   Summary: {result['output_path']}")
+                if result.get("csv_path"):
+                    print(f"   CSV: {result['csv_path']}")
+            if result.get("saved"):
+                print(f"   Individual tweets saved: {result['saved']}")
+
+            if merge:
+                for td in result.get("tweets", []):
+                    td["_keyword"] = keyword
+                all_tweets_merged.extend(result.get("tweets", []))
+        except KeyboardInterrupt:
+            print("\n\u23f9 Cancelled")
+            return
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"\u274c [{keyword}] {e}")
+            if len(keywords) == 1:
+                sys.exit(1)
+
+    # Generate merged summary table
+    if merge and all_tweets_merged:
+        from feedgrab.fetchers.twitter_keyword_search import _generate_summary_table, _resolve_output_base
+        from pathlib import Path
+        from datetime import datetime as _dt
+
+        base_dir = _resolve_output_base()
+        sort_label = "new" if sort == "live" else "hot"
+        date_str = _dt.now().strftime("%Y-%m-%d")
+        merged_dir = base_dir / "X" / "search" / f"{days}day_{sort_label}"
+        merged_name = "+".join(re.sub(r'[\\/:*?"<>|]', '_', k) for k in keywords)
+        merged_path = merged_dir / f"{merged_name}_{date_str}.md"
+
+        _generate_summary_table(
+            keyword=" + ".join(keywords),
+            query=" | ".join(keywords),
             sort=sort,
-            exclude_retweets=x_search_exclude_retweets(),
-            max_results=max_results,
-            scroll_delay=x_search_delay(),
-            save_tweets=save_tweets,
-            raw=raw,
+            days=days,
+            tweets=all_tweets_merged,
+            output_path=merged_path,
+            show_keyword=True,
         )
-        print(f"\n\u2705 X search complete: '{keyword}'")
-        print(f"   Query: {result['query']}")
-        print(f"   Total tweets: {result['total']}")
-        if result.get("output_path"):
-            print(f"   Summary: {result['output_path']}")
-        if result.get("csv_path"):
-            print(f"   CSV: {result['csv_path']}")
-        if result.get("saved"):
-            print(f"   Individual tweets saved: {result['saved']}")
-    except KeyboardInterrupt:
-        print("\n\u23f9 Cancelled")
-    except SystemExit:
-        raise
-    except Exception as e:
-        print(f"\u274c {e}")
-        sys.exit(1)
+        print(f"\n\U0001f4ca Merged summary: {merged_path}")
+        print(f"   CSV: {merged_path.with_suffix('.csv')}")
+        print(f"   Total: {len(all_tweets_merged)} tweets from {len(keywords)} keywords")
 
 
 def cmd_xhs_search(args: list):
     """Search XHS for notes by keyword and generate engagement-ranked summary."""
-    from feedgrab.config import xhs_search_sort, xhs_search_note_type, xhs_search_max_pages, xhs_search_save_notes
+    from feedgrab.config import xhs_search_sort, xhs_search_note_type, xhs_search_max_pages, xhs_search_save_notes, xhs_search_merge_keywords
 
-    keyword = args[0]
+    keywords = _split_keywords(args[0])
 
     # Parse CLI options
     def _opt(name: str, default: str = "") -> str:
@@ -1242,32 +1302,80 @@ def cmd_xhs_search(args: list):
     note_type = _opt("--type", xhs_search_note_type())
     max_results = int(_opt("--limit", str(xhs_search_max_pages() * 20)))
     save_notes = xhs_search_save_notes() or "--save" in args
+    merge = (xhs_search_merge_keywords() or "--merge" in args) and len(keywords) > 1
 
     from feedgrab.fetchers.xhs_search_notes import search_xhs_keyword
 
-    try:
-        result = search_xhs_keyword(
-            keyword=keyword,
+    if len(keywords) > 1:
+        mode = "merge" if merge else "separate"
+        print(f"\n\U0001f50d XHS batch search: {len(keywords)} keywords ({mode})")
+
+    all_notes_merged: list[dict] = []
+
+    for ki, keyword in enumerate(keywords):
+        if len(keywords) > 1:
+            print(f"\n{'='*50}")
+            print(f"[{ki+1}/{len(keywords)}] {keyword}")
+            print(f"{'='*50}")
+
+        try:
+            result = search_xhs_keyword(
+                keyword=keyword,
+                sort=sort,
+                note_type=note_type,
+                max_results=max_results,
+                save_notes=save_notes,
+                skip_summary=merge,
+            )
+            print(f"\n\u2705 XHS search complete: '{keyword}'")
+            print(f"   Total notes: {result['total']}")
+            if not merge:
+                if result.get("output_path"):
+                    print(f"   Summary: {result['output_path']}")
+                if result.get("csv_path"):
+                    print(f"   CSV: {result['csv_path']}")
+            if result.get("saved"):
+                print(f"   Individual notes saved: {result['saved']}")
+
+            if merge:
+                for nd in result.get("notes", []):
+                    nd["_keyword"] = keyword
+                all_notes_merged.extend(result.get("notes", []))
+        except KeyboardInterrupt:
+            print("\n\u23f9 Cancelled")
+            return
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"\u274c [{keyword}] {e}")
+            if len(keywords) == 1:
+                sys.exit(1)
+
+    # Generate merged summary table
+    if merge and all_notes_merged:
+        from feedgrab.fetchers.xhs_search_notes import _generate_xhs_summary_table, _resolve_output_base
+        from pathlib import Path
+        from datetime import datetime as _dt
+
+        _SORT_ZH = {"general": "综合", "popular": "热门", "latest": "最新"}
+        base_dir = _resolve_output_base()
+        sort_label = _SORT_ZH.get(sort, sort)
+        date_str = _dt.now().strftime("%Y-%m-%d")
+        merged_dir = base_dir / "XHS" / "search" / sort_label
+        merged_name = "+".join(re.sub(r'[\\/:*?"<>|]', '_', k) for k in keywords)
+        merged_path = merged_dir / f"{merged_name}_{date_str}.md"
+
+        _generate_xhs_summary_table(
+            keyword=" + ".join(keywords),
             sort=sort,
             note_type=note_type,
-            max_results=max_results,
-            save_notes=save_notes,
+            notes=all_notes_merged,
+            output_path=merged_path,
+            show_keyword=True,
         )
-        print(f"\n\u2705 XHS search complete: '{keyword}'")
-        print(f"   Total notes: {result['total']}")
-        if result.get("output_path"):
-            print(f"   Summary: {result['output_path']}")
-        if result.get("csv_path"):
-            print(f"   CSV: {result['csv_path']}")
-        if result.get("saved"):
-            print(f"   Individual notes saved: {result['saved']}")
-    except KeyboardInterrupt:
-        print("\n\u23f9 Cancelled")
-    except SystemExit:
-        raise
-    except Exception as e:
-        print(f"\u274c {e}")
-        sys.exit(1)
+        print(f"\n\U0001f4ca Merged summary: {merged_path}")
+        print(f"   CSV: {merged_path.with_suffix('.csv')}")
+        print(f"   Total: {len(all_notes_merged)} notes from {len(keywords)} keywords")
 
 
 def cmd_wechat_search(keyword: str, max_results: int = 0):
@@ -1425,6 +1533,7 @@ Examples:
             print('            feedgrab x-so openclaw --days 3 --lang en')
             print('            feedgrab x-so "AI Agent" --min-faves 100 --sort top')
             print("            feedgrab x-so 'openclaw lang:zh since:2026-03-06' --raw")
+            print('            feedgrab x-so "openclaw,ChatGPT,DeepSeek"  # multi-keyword')
             print("   Options:")
             print("     --days N           Time range in days (default: 1)")
             print("     --lang LANG        Language filter (default: zh)")
@@ -1434,6 +1543,7 @@ Examples:
             print("     --limit N          Max results (default: 100)")
             print("     --raw              Use keyword as raw query (skip defaults)")
             print("     --save             Save individual tweet .md files")
+            print("     --merge            Merge multi-keyword results into one table")
             sys.exit(1)
         cmd_twitter_search(sys.argv[2:])
     elif cmd == "xhs-so":
@@ -1443,11 +1553,13 @@ Examples:
             print('            feedgrab xhs-so "AI Agent" --sort popular')
             print('            feedgrab xhs-so "AI Agent" --type video')
             print('            feedgrab xhs-so "AI Agent" --sort latest --limit 50')
+            print('            feedgrab xhs-so "claude code,openclaw,养龙虾"  # multi-keyword')
             print("   Options:")
             print("     --sort MODE        general=综合, popular=热门, latest=最新 (default: general)")
             print("     --type TYPE        all=全部, video=视频, image=图片 (default: all)")
             print("     --limit N          Max results (default: 200)")
             print("     --save             Save individual note .md files")
+            print("     --merge            Merge multi-keyword results into one table")
             sys.exit(1)
         cmd_xhs_search(sys.argv[2:])
     elif cmd == "ytb-so":

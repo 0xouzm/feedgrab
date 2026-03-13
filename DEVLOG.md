@@ -2,6 +2,38 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-13 · v0.10.1 · 多关键词批量搜索 + 搜索结果质量修复
+
+### 背景
+用户使用 `xhs-so` 和 `x-so` 搜索时，每次只能搜一个关键词。日常场景常需一次性搜多个关键词（如 "claude code,openclaw,DeepSeek"），依次手动跑效率低。同时搜索结果存在非笔记 item 混入（广告/推荐词）和合并排序缺失等质量问题。
+
+### 方案决策
+- **逗号分隔格式**：`feedgrab xhs-so "k1,k2,k3"` — 双引号包裹，逗号分隔（支持中英文逗号），关键词内可含空格
+- **双模式**：默认独立模式（各关键词各自一个文件），`--merge` 或环境变量开启合并模式（所有结果到一个文件，加"关键词"列）
+- **合并模式全局排序**：Twitter 按查看数、XHS 按点赞数全局排序（非分段排序）
+- **搜索质量修复**：API 层 `model_type` 过滤 + 表格层空行过滤
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/cli.py` | 修改 | `_split_keywords()` 辅助函数 + 两个 cmd 函数支持多关键词循环/合并 + `--merge` CLI flag + help 文本 |
+| `feedgrab/config.py` | 修改 | 新增 `x_search_merge_keywords()` + `xhs_search_merge_keywords()` |
+| `feedgrab/fetchers/xhs_api.py` | 修改 | `get_all_search_notes()` 新增 `model_type` 过滤（与浏览器模式一致）+ 跳过无 note_id 的残缺 item |
+| `feedgrab/fetchers/xhs_search_notes.py` | 修改 | `_generate_xhs_summary_table()` 加 `show_keyword` 参数 + 空行过滤 + `search_xhs_keyword()` 返回 notes + `skip_summary` |
+| `feedgrab/fetchers/twitter_keyword_search.py` | 修改 | `_generate_summary_table()` 加 `show_keyword` 参数 + 内置全局排序 + 返回 tweets + `skip_summary` |
+| `.env.example` | 修改 | 新增 `X_SEARCH_MERGE_KEYWORDS` + `XHS_SEARCH_MERGE_KEYWORDS` + 多关键词用法示例 |
+
+### 验证结果
+- `feedgrab xhs-so "claude code,openclaw" --limit 20` — 独立模式生成 2 个文件 ✅
+- `feedgrab xhs-so "claude code,openclaw" --limit 20 --merge` — 合并模式生成 1 个文件，"关键词"列正确，按点赞全局排序 ✅
+- `feedgrab xhs-so "claude code"` — 单关键词兼容，169→161 条（过滤 8 条非 note 垃圾）✅
+- `feedgrab x-so "梯子,VPN,v2ray,小火箭,openclash"` — Twitter 5 关键词合并模式 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-13 · v0.10.0 · 小红书 API 层集成 + xhs-so 搜索命令
 
 ### 背景
