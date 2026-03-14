@@ -2,6 +2,29 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-15 · v0.11.3 · 飞书嵌入电子表格 Tier 0 API 修复（block_type 映射 + SDK token 提取）
+
+### 背景
+飞书文档中嵌入的电子表格（`block_type=30`）在 Tier 0 Open API 路径下无法被识别和渲染。`_BLOCK_TYPE_MAP` 缺少 `30: "sheet"` 映射，导致 API 返回的 sheet block 被当作 `unknown_30` 丢弃；同时 `_render_embedded_block()` 只能从 Playwright 的 `snapshot.type/token` 提取信息，无法处理 SDK Block 对象的 `block.sheet.token` 属性。
+
+### 方案决策
+- **补充 block_type 映射**：通过 lark_oapi SDK 源码和飞书 Open API 文档（[chyroc/lark](https://github.com/chyroc/lark) Go SDK 交叉验证），确认 `block_type=30` 对应 Sheet（电子表格），在 `_BLOCK_TYPE_MAP` 中新增 `30: "sheet"`
+- **SDK Block 属性提取**：在 `_render_embedded_block()` 中增加 SDK Block 对象的属性检测逻辑——当 `snapshot` 为空时，依次检查 `block.sheet.token`（电子表格）和 `block.bitable.token`（多维表格），构造等效 snap 字典，使后续 `_fetch_embedded_sheet()` 能正确获取 token 并通过 Sheets Open API 读取数据渲染 GFM 表格
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/feishu.py` | 修改 | `_BLOCK_TYPE_MAP` 新增 `30: "sheet"`；`_render_embedded_block()` 增加 SDK Block 属性提取（sheet/bitable token） |
+
+### 验证结果
+- 6 个单元测试全部通过：block_type 映射、SDK Sheet/Bitable token 提取、Playwright 回归、缓存命中、blocks_to_markdown 端到端 ✅
+- 单篇文档实测：2 个嵌入表格正确拦截 + 解码，输出 6 个 GFM 表格（15 行数据）✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-14 · v0.11.2 · 飞书图片 CDN 下载修复 + 浏览器预下载 + 按文档独立图片目录
 
 ### 背景

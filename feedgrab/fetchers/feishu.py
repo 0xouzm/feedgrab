@@ -291,6 +291,7 @@ _BLOCK_TYPE_MAP = {
     25: "grid_column",
     26: "iframe",
     27: "image",
+    30: "sheet",
     31: "table",
     32: "table_cell",
     35: "quote_container",
@@ -762,14 +763,27 @@ def _render_embedded_block(block) -> Optional[str]:
     The Feishu editor stores embedded objects as "fallback" blocks with the
     real type in ``snapshot.type``. For sheets, we attempt to fetch cell data
     via Open API and render as GFM table.
+
+    SDK Block objects (from Open API) store the token in dedicated attributes
+    like ``block.sheet.token`` or ``block.bitable.token``.
     """
     snap = {}
     if isinstance(block, dict):
         snap = block.get("snapshot", {}) or {}
     else:
+        # Playwright editor block: snapshot dict
         s = getattr(block, "snapshot", None)
         if s:
             snap = s if isinstance(s, dict) else {}
+        # SDK Block: extract from typed attributes (sheet/bitable/etc.)
+        if not snap:
+            sheet_obj = getattr(block, "sheet", None)
+            if sheet_obj and getattr(sheet_obj, "token", None):
+                snap = {"type": "sheet", "token": sheet_obj.token}
+            else:
+                bt_obj = getattr(block, "bitable", None)
+                if bt_obj and getattr(bt_obj, "token", None):
+                    snap = {"type": "bitable", "token": bt_obj.token}
 
     embed_type = snap.get("type", "") or ""
     token = snap.get("token", "") or ""
