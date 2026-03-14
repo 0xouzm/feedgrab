@@ -577,7 +577,7 @@ def _build_wechat_result(data: dict, page_url: str, md_converter=None) -> dict:
     elif data.get("publishTime"):
         publish_date = data["publishTime"]
 
-    return {
+    result = {
         "title": (data.get("title") or "").strip()[:200],
         "content": content,
         "author": (data.get("author") or "").strip(),

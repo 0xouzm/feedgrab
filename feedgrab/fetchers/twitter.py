@@ -478,16 +478,11 @@ async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
     Fetch tweet via Playwright with X-specific DOM selectors.
     Uses saved login session if available (~/.feedgrab/sessions/twitter.json).
     """
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        raise RuntimeError(
-            "Playwright not installed. Run:\n"
-            '  pip install "feedgrab[browser]"\n'
-            "  playwright install chromium"
-        )
-
-    from feedgrab.fetchers.browser import get_session_path
+    from feedgrab.fetchers.browser import (
+        get_async_playwright, get_session_path,
+        stealth_launch, get_stealth_context_options,
+        setup_resource_blocking,
+    )
     from pathlib import Path
 
     session_path = get_session_path("twitter")
@@ -495,21 +490,16 @@ async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
     if has_session:
         logger.info(f"Using saved X session: {session_path}")
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            channel="chrome",
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+    pw_cls = get_async_playwright()
+    async with pw_cls() as p:
+        browser = await stealth_launch(p, headless=True)
 
-        context_kwargs = {}
+        ctx_opts = get_stealth_context_options()
         if has_session:
-            context_kwargs["storage_state"] = session_path
+            ctx_opts["storage_state"] = session_path
 
-        context = await browser.new_context(
-            user_agent=get_user_agent(),
-            **context_kwargs,
-        )
+        context = await browser.new_context(**ctx_opts)
+        await setup_resource_blocking(context)
         page = await context.new_page()
 
         try:

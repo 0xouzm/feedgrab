@@ -39,7 +39,6 @@ from feedgrab.config import (
     x_search_max_pages_per_chunk,
     x_user_tweet_delay,
     get_session_dir,
-    get_user_agent,
 )
 from feedgrab.fetchers.twitter_graphql import extract_tweet_data
 from feedgrab.fetchers.twitter_bookmarks import (
@@ -281,14 +280,10 @@ async def fetch_search_supplementary(
     from feedgrab.schema import from_twitter
     from feedgrab.utils.storage import save_to_markdown
 
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        logger.error(
-            "[Search] Playwright 未安装。运行: "
-            'pip install "feedgrab[browser]" && playwright install chromium'
-        )
-        return {"total": 0, "fetched": 0, "skipped": 0, "failed": 0}
+    from feedgrab.fetchers.browser import (
+        get_async_playwright, stealth_launch,
+        get_stealth_context_options, setup_resource_blocking,
+    )
 
     logger.info(
         f"[Search] 开始浏览器搜索补充抓取: @{screen_name}, "
@@ -319,18 +314,13 @@ async def fetch_search_supplementary(
     # Create response collector
     collector = SearchResponseCollector()
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=False,
-            channel="chrome",
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+    pw_cls = get_async_playwright()
+    async with pw_cls() as p:
+        browser = await stealth_launch(p, headless=False)
 
-        context = await browser.new_context(
-            user_agent=get_user_agent(),
-            storage_state=session_path,
-            viewport={"width": 1280, "height": 900},
-        )
+        ctx_opts = get_stealth_context_options(storage_state=session_path)
+        context = await browser.new_context(**ctx_opts)
+        await setup_resource_blocking(context)
         page = await context.new_page()
 
         # Register response interceptor (Python-level, survives navigations)

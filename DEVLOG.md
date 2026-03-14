@@ -2,6 +2,28 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-14 · v0.11.1 · 浏览器层 3 处 bug 修复（微信指标丢失 + Twitter 隐身引擎统一）
+
+### 背景
+分析 Lightpanda 浏览器融合方案时（结论：不适合 feedgrab），顺带审查了 `browser.py` 和 Twitter 浏览器路径，发现 3 处遗留问题。
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/browser.py` | 修改 | `_build_wechat_result` 死代码修复 — `return` 前移至 cgiMetrics 处理之后，恢复微信阅读量/点赞/在看/分享/评论数输出 |
+| `feedgrab/fetchers/twitter.py` | 修改 | Tier 3 Playwright 改用 `stealth_launch` + `get_stealth_context_options` + `setup_resource_blocking`（原仅 1 条启动参数） |
+| `feedgrab/fetchers/twitter_search_tweets.py` | 修改 | 搜索补充抓取改用隐身引擎 + context 级资源拦截（原 vanilla playwright + 无拦截） |
+
+### 验证结果
+- 三个文件 `py_compile` 编译通过 ✅
+- `_build_wechat_result` 不再提前 return，cgiMetrics 数据正常追加 ✅
+- Twitter Tier 3 + 搜索补充统一走 52 条隐身参数 + 7 类资源拦截 + 11 个 tracking 域名拦截 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-14 · v0.11.0 · 飞书文档抓取（单篇 + 知识库批量 + 嵌入表格 + 图片下载）
 
 ### 背景
