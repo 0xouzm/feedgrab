@@ -187,8 +187,12 @@ def _generate_list_summary(
             saved = saved_paths.get(tweet_id, "")
             if saved:
                 stem = Path(saved).stem
-                # Strip [ ] that would break [[...]] wikilink syntax
-                safe_stem = stem.replace("[", "").replace("]", "")
+                # Strip chars that break [[...]] wikilink or table:
+                # [ ] — break wikilink brackets
+                # # — Obsidian heading anchor separator
+                # ^ — Obsidian block reference separator
+                # | — table column separator (already filtered by _sanitize_filename)
+                safe_stem = stem.replace("[", "").replace("]", "").replace("#", "").replace("^", "").replace("|", "")
                 summary_col = f"[[{safe_stem}]]"
             else:
                 summary_col = summary
