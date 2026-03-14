@@ -7,6 +7,7 @@ Tier 1: Playwright + window.PageMain (needs feedgrab login feishu)
 Tier 2: Jina Reader (zero-config fallback)
 """
 
+import hashlib
 import json as _json_mod
 import logging
 import re
@@ -246,7 +247,10 @@ def _fetch_via_api(url: str, parsed: Dict[str, str]) -> Dict[str, Any]:
     doc_title, blocks = _fetch_document_blocks(document_id)
     title = wiki_title or doc_title
     images_list: List[dict] = []
-    content = blocks_to_markdown(blocks, images=images_list)
+    # Per-document image subdirectory: first 7 chars of item_id
+    _img_subdir = hashlib.md5(url.encode()).hexdigest()[:12]
+    content = blocks_to_markdown(blocks, images=images_list,
+                                 img_subdir=_img_subdir)
 
     return {
         "title": title,
@@ -257,6 +261,7 @@ def _fetch_via_api(url: str, parsed: Dict[str, str]) -> Dict[str, Any]:
         "doc_token": document_id,
         "images": [img.get("token", "") for img in images_list],
         "images_info": images_list,
+        "img_subdir": _img_subdir,
         "tags": [],
     }
 
@@ -294,6 +299,7 @@ _BLOCK_TYPE_MAP = {
 
 def blocks_to_markdown(
     blocks, depth: int = 0, images: Optional[List[dict]] = None,
+    img_subdir: str = "",
 ) -> str:
     """Convert a list of API block objects to Markdown.
 
@@ -302,6 +308,9 @@ def blocks_to_markdown(
 
     If *images* list is provided, image metadata dicts are appended to it
     (side-effect collector for the download pipeline).
+
+    *img_subdir* — when set, image paths become
+    ``attachments/{img_subdir}/{fname}`` instead of ``attachments/{fname}``.
     """
     parts: List[str] = []
     ordered_counter = 0
@@ -313,7 +322,8 @@ def blocks_to_markdown(
         if btype != "ordered":
             ordered_counter = 0
 
-        md = _block_to_md(block, btype, depth, ordered_counter, images)
+        md = _block_to_md(block, btype, depth, ordered_counter, images,
+                          img_subdir)
 
         if btype == "ordered":
             ordered_counter += 1
@@ -344,6 +354,7 @@ def _resolve_block_type(block) -> str:
 def _block_to_md(
     block, btype: str, depth: int, ordered_idx: int,
     images: Optional[List[dict]] = None,
+    img_subdir: str = "",
 ) -> Optional[str]:
     """Render a single block to Markdown text, or None to skip."""
     indent = "  " * depth
@@ -362,13 +373,13 @@ def _block_to_md(
 
     if btype == "bullet":
         text = _elements_text(block)
-        child_md = _render_children(block, depth + 1, images)
+        child_md = _render_children(block, depth + 1, images, img_subdir)
         line = f"{indent}- {text}"
         return f"{line}\n{child_md}" if child_md else line
 
     if btype == "ordered":
         text = _elements_text(block)
-        child_md = _render_children(block, depth + 1, images)
+        child_md = _render_children(block, depth + 1, images, img_subdir)
         seq_label = _calc_ordered_label(block, ordered_idx)
         line = f"{indent}{seq_label}. {text}"
         return f"{line}\n{child_md}" if child_md else line
@@ -386,14 +397,14 @@ def _block_to_md(
 
     if btype in ("quote", "quote_container"):
         text = _elements_text(block)
-        child_md = _render_children(block, depth, images)
+        child_md = _render_children(block, depth, images, img_subdir)
         combined = text or child_md or ""
         lines = combined.split("\n")
         return "\n".join(f"> {l}" for l in lines)
 
     if btype == "callout":
         text = _elements_text(block)
-        child_md = _render_children(block, depth, images)
+        child_md = _render_children(block, depth, images, img_subdir)
         combined = text or child_md or ""
         lines = combined.split("\n")
         return "\n".join(f"> {l}" for l in lines)
@@ -418,7 +429,10 @@ def _block_to_md(
             info["_filename"] = fname
             images.append(info)
         # Use relative path for Obsidian compatibility.
-        path = f"attachments/{fname}"
+        if img_subdir:
+            path = f"attachments/{img_subdir}/{fname}"
+        else:
+            path = f"attachments/{fname}"
         return f"![{alt}]({path})"
 
     if btype == "file":
@@ -430,7 +444,7 @@ def _block_to_md(
         return _render_table(block)
 
     if btype in ("grid", "grid_column"):
-        return _render_children(block, depth, images)
+        return _render_children(block, depth, images, img_subdir)
 
     if btype == "iframe":
         src = _get_iframe_src(block)
@@ -1175,12 +1189,15 @@ def _to_roman(n: int) -> str:
 # Children / nested blocks
 # ---------------------------------------------------------------------------
 
-def _render_children(block, depth: int, images: Optional[List[dict]] = None) -> str:
+def _render_children(
+    block, depth: int, images: Optional[List[dict]] = None,
+    img_subdir: str = "",
+) -> str:
     """Render child blocks (for nested structures like lists, grids, etc.)."""
     children = _get_children(block)
     if not children:
         return ""
-    return blocks_to_markdown(children, depth, images)
+    return blocks_to_markdown(children, depth, images, img_subdir)
 
 
 def _get_children(block) -> list:
@@ -1299,15 +1316,27 @@ async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
 
     # Convert editor block tree to Markdown
     images_list: List[dict] = []
+    _img_subdir = hashlib.md5(url.encode()).hexdigest()[:12]
     block_tree = data.get("blockTree")
     if block_tree:
         children = block_tree.get("children", [])
-        content = blocks_to_markdown(children, images=images_list)
+        content = blocks_to_markdown(children, images=images_list,
+                                     img_subdir=_img_subdir)
     else:
         content = data.get("content", "")
 
     # Clear cache after conversion
     _PLAYWRIGHT_SHEET_CACHE.clear()
+
+    # Populate pre-downloaded image bytes from browser session
+    pre_bytes = data.get("_image_bytes", {})
+    if pre_bytes:
+        for img_info in images_list:
+            tk = img_info.get("token", "")
+            if tk and tk in pre_bytes:
+                img_info["_bytes"] = pre_bytes[tk]
+        # Free the large dict from data to reduce memory
+        del data["_image_bytes"]
 
     # Title: clean zero-width chars + fallback to first heading in content
     title = _clean_feishu_title(data.get("title", ""))
@@ -1327,6 +1356,7 @@ async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
         "doc_token": parsed.get("token", ""),
         "images": [img.get("token", "") for img in images_list],
         "images_info": images_list,
+        "img_subdir": _img_subdir,
         "tags": [],
     }
 
@@ -1563,17 +1593,20 @@ def _basic_html_to_md(html: str) -> str:
 
 def download_feishu_images(
     md_path: str, images_info: List[dict], doc_url: str,
+    img_subdir: str = "",
 ) -> None:
-    """Download images to ``{md_dir}/attachments/`` after Markdown is saved.
+    """Download images to ``{md_dir}/attachments/{img_subdir}/`` after Markdown is saved.
 
     Tries Open API download first, then CDN fallback.
-    Content already contains ``![alt](attachments/xxx.png)`` relative paths.
+    Content already contains ``![alt](attachments/{img_subdir}/xxx.png)`` relative paths.
     """
     if not images_info:
         return
 
     md_dir = Path(md_path).parent
     att_dir = md_dir / "attachments"
+    if img_subdir:
+        att_dir = att_dir / img_subdir
     att_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Strategy 1: Open API download ---
@@ -1675,6 +1708,16 @@ def _download_images_via_cdn(
         logger.warning("[Feishu] No session cookies for image download")
         return
 
+    # Build authenticated headers — Feishu CDN requires CSRF + browser-like context
+    csrf_token = cookies.get("_csrf_token", "")
+    headers = {
+        "Referer": doc_url,
+        "Origin": origin,
+        "X-CSRFToken": csrf_token,
+        "X-Request-Id": f"feedgrab_img_{int(__import__('time').time())}",
+        "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+    }
+
     from feedgrab.utils.http_client import get as http_get
 
     for idx, info in enumerate(images, 1):
@@ -1688,6 +1731,16 @@ def _download_images_via_cdn(
             logger.info(f"[Feishu] Image {idx} already exists: {fname}")
             continue
 
+        # Priority 1: pre-downloaded bytes from browser session
+        pre_bytes = info.pop("_bytes", None)
+        if pre_bytes:
+            fpath.write_bytes(pre_bytes)
+            logger.info(
+                f"[Feishu] Wrote pre-downloaded image {idx}: {fname}"
+            )
+            continue
+
+        # Priority 2: CDN download with authenticated headers
         cdn_url = (
             f"{origin}/space/api/box/stream/download/all/{token}/"
         )
@@ -1696,7 +1749,7 @@ def _download_images_via_cdn(
                 cdn_url,
                 cookies=cookies,
                 timeout=30,
-                headers={"Referer": doc_url},
+                headers=headers,
             )
             if resp.status_code == 200 and len(resp.content) > 100:
                 fpath.write_bytes(resp.content)

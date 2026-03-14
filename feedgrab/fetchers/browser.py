@@ -804,6 +804,8 @@ async def evaluate_feishu_doc(url: str, session_path: str) -> dict:
 
         # Intercept sheet client_vars responses for embedded spreadsheet data
         sheet_cv_data: dict = {}
+        # Intercept image responses during page load (most reliable auth)
+        image_response_data: dict = {}  # token -> bytes
 
         async def _capture_sheet_response(response):
             try:
@@ -823,7 +825,33 @@ async def evaluate_feishu_doc(url: str, session_path: str) -> dict:
             except Exception:
                 pass  # non-JSON or parsing error, skip
 
+        async def _capture_image_response(response):
+            try:
+                url_str = response.url
+                if "/stream/download/" not in url_str:
+                    return
+                if response.status != 200:
+                    return
+                content_type = response.headers.get("content-type", "")
+                if not content_type.startswith("image/"):
+                    return
+                body = await response.body()
+                if len(body) < 100:
+                    return
+                # Extract token: .../download/preview/{token}/?... or
+                #                 .../download/all/{token}/
+                parts = url_str.split("/")
+                for i, part in enumerate(parts):
+                    if part in ("preview", "all") and i + 1 < len(parts):
+                        tk = parts[i + 1].split("?")[0]
+                        if tk and len(tk) > 5:
+                            image_response_data[tk] = body
+                            break
+            except Exception:
+                pass
+
         page.on("response", _capture_sheet_response)
+        page.on("response", _capture_image_response)
 
         # Disable copy restrictions (reference: 游侠飞书剪存)
         await page.add_init_script("""
@@ -902,6 +930,104 @@ async def evaluate_feishu_doc(url: str, session_path: str) -> dict:
                     if sheet_cv_data:
                         result["sheet_client_vars"] = sheet_cv_data
 
+        # Collect pre-downloaded images from interceptor + JS fetch fallback
+        try:
+            from feedgrab.config import feishu_download_images
+            if feishu_download_images():
+                img_tokens = _find_image_tokens_from_tree(
+                    result.get("blockTree")
+                )
+                if img_tokens:
+                    img_bytes: dict[str, bytes] = {}
+
+                    # Phase 1: use images captured by response interceptor
+                    for tk in img_tokens:
+                        if tk in image_response_data:
+                            img_bytes[tk] = image_response_data[tk]
+
+                    intercepted = len(img_bytes)
+                    missing = [
+                        tk for tk in img_tokens if tk not in img_bytes
+                    ]
+
+                    # Phase 2: scroll to trigger lazy-loaded images
+                    if missing:
+                        await page.evaluate(
+                            "window.scrollTo(0, "
+                            "document.body.scrollHeight)"
+                        )
+                        await page.wait_for_timeout(3000)
+                        for tk in list(missing):
+                            if tk in image_response_data:
+                                img_bytes[tk] = image_response_data[tk]
+                                missing.remove(tk)
+
+                    # Phase 3: discover real CDN domain from DOM, then
+                    # JS fetch with correct URL pattern
+                    if missing:
+                        cdn_info = await page.evaluate(
+                            _FEISHU_IMAGE_CDN_DISCOVER_JS
+                        )
+                        if cdn_info:
+                            logger.info(
+                                f"[Feishu] CDN: {cdn_info['cdn']}, "
+                                f"mount: "
+                                f"{cdn_info['mount_token'][:12]}..., "
+                                f"fetching {len(missing)} images"
+                            )
+                            batch_size = 10
+                            for s in range(0, len(missing), batch_size):
+                                batch = missing[s:s + batch_size]
+                                fetched = await page.evaluate(
+                                    _FEISHU_IMAGE_FETCH_JS,
+                                    {
+                                        "tokens": batch,
+                                        "cdn": cdn_info["cdn"],
+                                        "mount_token": cdn_info[
+                                            "mount_token"
+                                        ],
+                                    },
+                                )
+                                if not fetched:
+                                    continue
+                                # Log first batch
+                                if s == 0:
+                                    for tk, v in list(
+                                        fetched.items()
+                                    )[:3]:
+                                        p = (v[:40]
+                                             if isinstance(v, str)
+                                             else "bytes")
+                                        logger.info(
+                                            f"[Feishu] fetch "
+                                            f"{tk[:12]}... → {p}"
+                                        )
+                                import base64
+                                for tk, b64 in fetched.items():
+                                    if (b64 and not b64.startswith(
+                                            "error:")):
+                                        try:
+                                            raw = base64.b64decode(b64)
+                                            if len(raw) > 100:
+                                                img_bytes[tk] = raw
+                                        except Exception:
+                                            pass
+                        else:
+                            logger.info(
+                                "[Feishu] No CDN info from DOM"
+                            )
+
+                    if img_bytes:
+                        result["_image_bytes"] = img_bytes
+                        logger.info(
+                            f"[Feishu] Pre-downloaded "
+                            f"{len(img_bytes)}/{len(img_tokens)} "
+                            f"images ({intercepted} intercepted, "
+                            f"{len(img_bytes) - intercepted} fetched)"
+                        )
+        except Exception as e:
+            logger.debug(f"[Feishu] Image pre-download skipped: {e}")
+
         return result
     finally:
         if browser:
@@ -928,6 +1054,94 @@ def _find_sheet_tokens(block_tree: dict | None) -> set:
     _walk(block_tree)
     return tokens
 
+
+def _find_image_tokens_from_tree(block_tree: dict | None) -> list:
+    """Recursively find image tokens in the extracted block tree.
+
+    Checks both ``block["image"]["token"]`` (API response format) and
+    ``block["snapshot"]["image"]["token"]`` (Playwright format), mirroring
+    the logic in ``feishu._get_image_token()``.
+    """
+    tokens: list = []
+    if not block_tree or not isinstance(block_tree, dict):
+        return tokens
+
+    def _walk(node):
+        if not isinstance(node, dict):
+            return
+        # Path 1: block["image"]["token"] (API response)
+        img = node.get("image", {})
+        if isinstance(img, dict) and img.get("token"):
+            tokens.append(img["token"])
+        else:
+            # Path 2: block["snapshot"]["image"]["token"] (Playwright)
+            snap = node.get("snapshot", {})
+            if isinstance(snap, dict):
+                simg = snap.get("image", {})
+                if isinstance(simg, dict) and simg.get("token"):
+                    tokens.append(simg["token"])
+        for child in node.get("children", []):
+            _walk(child)
+
+    _walk(block_tree)
+    return tokens
+
+
+# JS to discover the actual CDN domain and mount_node_token for Feishu images.
+# Images in Feishu docs are loaded from a central CDN (e.g.
+# internal-api-drive-stream.feishu.cn), not from the page's enterprise domain.
+_FEISHU_IMAGE_CDN_DISCOVER_JS = """
+(() => {
+    // Find the first loaded <img> that uses the drive-stream CDN
+    const imgs = document.querySelectorAll('img');
+    for (const img of imgs) {
+        const src = img.src || '';
+        const match = src.match(
+            /(https:\\/\\/[^/]*(?:drive-stream|internal-api)[^/]*)\\/space\\/api\\/box\\/stream\\/download\\/v2\\/cover\\/([^/]+)\\/\\?.*mount_node_token=([^&]+)/
+        );
+        if (match) {
+            return { cdn: match[1], sample_token: match[2], mount_token: match[3] };
+        }
+    }
+    return null;
+})()
+"""
+
+# JS to download images via the discovered CDN URL.  Runs in the page's
+# security context.  Accepts {tokens, cdn, mount_token} as argument.
+_FEISHU_IMAGE_FETCH_JS = """
+async (args) => {
+    const { tokens, cdn, mount_token } = args;
+    const results = {};
+    for (const token of tokens) {
+        try {
+            const url = `${cdn}/space/api/box/stream/download/v2/cover/${token}/?fallback_source=1&height=1280&mount_node_token=${mount_token}&mount_point=docx_image&policy=equal&width=1280`;
+            const resp = await fetch(url, { credentials: 'include' });
+            if (resp.ok) {
+                const buf = await resp.arrayBuffer();
+                if (buf.byteLength > 100) {
+                    const bytes = new Uint8Array(buf);
+                    let binary = '';
+                    const chunkSize = 8192;
+                    for (let i = 0; i < bytes.length; i += chunkSize) {
+                        binary += String.fromCharCode.apply(
+                            null, bytes.subarray(i, i + chunkSize)
+                        );
+                    }
+                    results[token] = btoa(binary);
+                } else {
+                    results[token] = 'error:empty';
+                }
+            } else {
+                results[token] = 'error:' + resp.status;
+            }
+        } catch (e) {
+            results[token] = 'error:' + e.message;
+        }
+    }
+    return results;
+}
+"""
 
 # JS to fetch sheet client_vars via internal API from the page context.
 # The request body format was reverse-engineered from Feishu sheet editor

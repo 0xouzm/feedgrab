@@ -596,7 +596,7 @@ cp .env.example .env
 | `GITHUB_TOKEN` | 否 | GitHub personal access token（无 token 60 次/小时，有 token 5000 次/小时） |
 | `FEISHU_APP_ID` | 仅飞书 API | 飞书开放平台 App ID（[申请地址](https://open.feishu.cn/app)） |
 | `FEISHU_APP_SECRET` | 仅飞书 API | 飞书开放平台 App Secret |
-| `FEISHU_DOWNLOAD_IMAGES` | 否 | 下载图片到本地 attachments/ 目录（默认：`false`） |
+| `FEISHU_DOWNLOAD_IMAGES` | 否 | 下载图片到本地 `attachments/{item_id}/` 子目录，每篇文档独立存放（默认：`false`） |
 | `FEISHU_WIKI_DELAY` | 否 | 知识库批量抓取间隔秒数（默认：`1.0`） |
 | `FEISHU_WIKI_SINCE` | 否 | 仅抓取此日期后修改的文档（`YYYY-MM-DD`，留空=全部） |
 | `FEISHU_CUSTOM_DOMAINS` | 否 | 私有化部署域名（逗号分隔，如 `feishu.mycompany.cn`） |

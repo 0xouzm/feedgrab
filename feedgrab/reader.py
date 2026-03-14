@@ -151,7 +151,7 @@ class UniversalReader:
                 content.category = "status"
             saved_path = save_to_markdown(content)
 
-            # Feishu: download images to {md_dir}/attachments/ after saving
+            # Feishu: download images to {md_dir}/attachments/{subdir}/ after saving
             if (saved_path
                     and content.source_type == SourceType.FEISHU
                     and content.extra.get("images_info")):
@@ -162,6 +162,7 @@ class UniversalReader:
                         saved_path,
                         content.extra["images_info"],
                         content.url,
+                        img_subdir=content.extra.get("img_subdir", ""),
                     )
 
             # Register in global dedup index (single fetch: always save, never skip)

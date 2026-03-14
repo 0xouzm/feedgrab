@@ -2,6 +2,38 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-14 · v0.11.2 · 飞书图片 CDN 下载修复 + 浏览器预下载 + 按文档独立图片目录
+
+### 背景
+飞书文档图片下载存在两个问题：
+1. **CDN 403 错误**：企业私有化部署的图片实际由 `internal-api-drive-stream.feishu.cn` 中央 CDN 提供，而非页面所在域名，导致 HTTP 下载全部 403
+2. **图片目录管理混乱**：所有文档的图片平铺在同一个 `attachments/` 目录，几百张图片难以管理和对应
+
+### 方案决策
+- **三阶段浏览器预下载**：Phase 1 network interceptor 捕获页面加载时的图片 → Phase 2 滚动触发懒加载 → Phase 3 从 DOM `<img>` 元素发现真实 CDN 域名和 `mount_node_token`，用 JS `fetch()` 批量下载（10 张/批）
+- **按文档独立图片子目录**：`attachments/{item_id}/`，item_id 与 front matter 的 `item_id` 字段完全一致（MD5(url)[:12]），方便查找对应关系
+- **预下载优先写入**：`_download_images_via_cdn()` 优先写入 `_bytes`（浏览器预下载的二进制数据），跳过 HTTP 请求
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/browser.py` | 修改 | 新增 image response interceptor + CDN 域名发现 JS + 图片批量 fetch JS + `_find_image_tokens_from_tree` 双路径检查 + 三阶段预下载流程 |
+| `feedgrab/fetchers/feishu.py` | 修改 | `blocks_to_markdown()` / `_block_to_md()` / `_render_children()` 新增 `img_subdir` 参数；`download_feishu_images()` 支持子目录；预下载 `_bytes` 优先写入；CDN headers 修复（Origin + CSRF） |
+| `feedgrab/fetchers/feishu_wiki.py` | 修改 | 两个 Tier 均计算 `img_subdir` 并传递；Sheet 拦截器 + sheet 缓存 + 图片预下载集成；页面等待优化（author selector 替代固定等待） |
+| `feedgrab/reader.py` | 修改 | 传递 `img_subdir` 到 `download_feishu_images()` |
+| `feedgrab/schema.py` | 修改 | `from_feishu()` 传递 `img_subdir` 到 extra 字典 |
+
+### 验证结果
+- 654 张图片测试文档：654/654 全部预下载成功（0 intercepted + 654 JS fetched）✅
+- 图片保存到 `attachments/ac5b0cf176d7/` 子目录 ✅
+- Markdown 中 639 处引用路径 `attachments/ac5b0cf176d7/xxx.png` 与文件一致 ✅
+- item_id 子目录与 front matter `item_id: ac5b0cf176d7` 完全匹配 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-14 · v0.11.1 · 浏览器层 3 处 bug 修复（微信指标丢失 + Twitter 隐身引擎统一）
 
 ### 背景

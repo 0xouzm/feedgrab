@@ -7,6 +7,7 @@ Tier 1: Playwright – sidebar DOM parsing + per-page PageMain extraction
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -17,17 +18,22 @@ from typing import Any, Dict, List, Optional
 from feedgrab.config import (
     feishu_app_id,
     feishu_app_secret,
+    feishu_download_images,
+    feishu_page_load_timeout,
     feishu_wiki_batch_enabled,
     feishu_wiki_delay,
     feishu_wiki_since,
     get_data_dir,
 )
 from feedgrab.fetchers.feishu import (
+    _decode_sheet_client_vars,
     _fetch_document_blocks,
     _get_lark_client,
     _is_api_available,
+    _PLAYWRIGHT_SHEET_CACHE,
     _resolve_wiki_node,
     blocks_to_markdown,
+    download_feishu_images,
     parse_feishu_url,
 )
 from feedgrab.utils.dedup import add_item, has_item, load_index
@@ -201,9 +207,8 @@ async def _fetch_wiki_via_api(
             continue
 
         # Skip if already in dedup index
-        import hashlib
         item_id = hashlib.md5(node_token.encode()).hexdigest()[:12]
-        if has_item(dedup_idx, item_id):
+        if has_item(item_id, dedup_idx):
             skipped += 1
             done_set.add(node_token)
             continue
@@ -211,24 +216,37 @@ async def _fetch_wiki_via_api(
         print(f"  [{i}/{len(doc_nodes)}] {title}")
 
         try:
+            doc_url = url.rsplit("/wiki/", 1)[0] + f"/wiki/{node_token}"
+            _img_subdir = hashlib.md5(doc_url.encode()).hexdigest()[:12]
+
             doc_title, blocks = _fetch_document_blocks(obj_token)
-            content = blocks_to_markdown(blocks)
+            images_list: List[dict] = []
+            content = blocks_to_markdown(blocks, images=images_list,
+                                         img_subdir=_img_subdir)
 
             data = {
                 "title": title or doc_title,
                 "content": content,
-                "url": url.rsplit("/wiki/", 1)[0] + f"/wiki/{node_token}",
+                "url": doc_url,
                 "author": "",
                 "doc_type": node["obj_type"],
                 "doc_token": obj_token,
-                "images": [],
+                "images": [img.get("token", "") for img in images_list],
+                "images_info": images_list,
+                "img_subdir": _img_subdir,
                 "tags": [],
             }
 
             # Save via standard pipeline
             uc = from_feishu(data)
-            save_to_markdown(uc, subdir=f"Feishu/{wiki_title}")
-            add_item(dedup_idx, item_id, data["url"], "Feishu")
+            uc.category = wiki_title
+            saved_path = save_to_markdown(uc)
+            add_item(item_id, data["url"], dedup_idx)
+
+            # Download images if enabled
+            if saved_path and images_list and feishu_download_images():
+                download_feishu_images(saved_path, images_list, doc_url,
+                                       img_subdir=_img_subdir)
 
             fetched += 1
             done_set.add(node_token)
@@ -302,27 +320,63 @@ async def _fetch_wiki_via_playwright(
     """Tier 1 – Batch fetch wiki documents via Playwright sidebar scraping."""
     from feedgrab.fetchers.browser import (
         evaluate_feishu_doc,
-        get_async_playwright,
         get_session_path,
         get_stealth_context_options,
-        setup_resource_blocking,
-        stealth_launch,
+        FEISHU_DOC_JS_EVALUATE,
+        FEISHU_SHEET_FETCH_JS,
+        _find_sheet_tokens,
     )
+
+    # Use vanilla playwright for Feishu — patchright causes ERR_CONNECTION_CLOSED
+    try:
+        from playwright.async_api import async_playwright as _pw_factory
+    except ImportError:
+        from feedgrab.fetchers.browser import get_async_playwright
+        _pw_factory = get_async_playwright()
 
     session_path = get_session_path("feishu")
     if not Path(session_path).exists():
         raise RuntimeError("Feishu session not found. Run: feedgrab login feishu")
 
-    pw_cls = get_async_playwright()
-    pw = await pw_cls().start()
+    pw = await _pw_factory().start()
     browser = None
 
     try:
-        browser = await stealth_launch(pw)
+        # Headed mode + no resource blocking (Feishu internal JS/API needed)
+        browser = await pw.chromium.launch(
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         ctx_opts = get_stealth_context_options(storage_state=session_path)
         context = await browser.new_context(**ctx_opts)
-        setup_resource_blocking(context)
         page = await context.new_page()
+
+        # Disable copy restrictions (same as evaluate_feishu_doc)
+        await page.add_init_script("""
+            if (window.copyControl && window.copyControl.enable) {
+                window.copyControl.enable();
+            }
+        """)
+
+        # Sheet data interceptor — captures client_vars responses per page
+        sheet_cv_data: dict = {}
+
+        async def _capture_sheet_response(response):
+            try:
+                if "client_vars" in response.url and response.status == 200:
+                    body = await response.json()
+                    if body and isinstance(body, dict):
+                        # Extract token from URL or response
+                        url_str = response.url
+                        for part in url_str.split("/"):
+                            if len(part) > 10 and part.isalnum():
+                                sheet_cv_data[part] = body
+                                break
+            except Exception:
+                pass
+
+        page.on("response", _capture_sheet_response)
 
         # Navigate to wiki root
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -368,9 +422,8 @@ async def _fetch_wiki_via_playwright(
                 skipped += 1
                 continue
 
-            import hashlib
             item_id = hashlib.md5(token.encode()).hexdigest()[:12]
-            if has_item(dedup_idx, item_id):
+            if has_item(item_id, dedup_idx):
                 skipped += 1
                 done_set.add(token)
                 continue
@@ -378,10 +431,13 @@ async def _fetch_wiki_via_playwright(
             print(f"  [{i}/{len(links)}] {title}")
 
             try:
+                # Clear per-page sheet data
+                sheet_cv_data.clear()
+
                 # Navigate to each page
                 await page.goto(link_url, wait_until="domcontentloaded", timeout=30000)
 
-                # Wait for editor
+                # Wait for editor — use author selector as full-render signal
                 try:
                     await page.wait_for_function(
                         "() => window.PageMain?.blockManager?.rootBlockModel != null"
@@ -391,19 +447,107 @@ async def _fetch_wiki_via_playwright(
                 except Exception:
                     pass
 
-                await page.wait_for_timeout(1000)
+                try:
+                    await page.wait_for_selector(
+                        ".docs-info-avatar-name-text, .docs-info-avatar-name",
+                        timeout=feishu_page_load_timeout(),
+                    )
+                except Exception:
+                    await page.wait_for_timeout(2000)
 
-                from feedgrab.fetchers.browser import FEISHU_DOC_JS_EVALUATE
                 data = await page.evaluate(FEISHU_DOC_JS_EVALUATE)
                 if not data or data.get("error"):
                     raise RuntimeError(data.get("error", "extraction failed"))
 
+                # Sheet processing: intercepted data + active fetch
+                if sheet_cv_data:
+                    data["sheet_client_vars"] = dict(sheet_cv_data)
+                else:
+                    sheet_tokens = _find_sheet_tokens(data.get("blockTree"))
+                    if sheet_tokens:
+                        logger.info(
+                            f"[Feishu Wiki PW] Fetching {len(sheet_tokens)} "
+                            "sheet(s) via internal API"
+                        )
+                        fetched_sheets = await page.evaluate(
+                            FEISHU_SHEET_FETCH_JS, list(sheet_tokens)
+                        )
+                        if fetched_sheets:
+                            data["sheet_client_vars"] = fetched_sheets
+
+                # Populate sheet cache for blocks_to_markdown()
+                _PLAYWRIGHT_SHEET_CACHE.clear()
+                for tk, cv in (data.get("sheet_client_vars") or {}).items():
+                    try:
+                        table_md = _decode_sheet_client_vars(cv)
+                        if table_md:
+                            _PLAYWRIGHT_SHEET_CACHE[tk] = table_md
+                    except Exception as e:
+                        logger.debug(f"[Feishu Wiki PW] Sheet decode: {e}")
+
+                # Convert block tree to Markdown with image collection
+                _img_subdir = hashlib.md5(link_url.encode()).hexdigest()[:12]
+                images_list: List[dict] = []
                 block_tree = data.get("blockTree")
                 if block_tree:
                     children = block_tree.get("children", [])
-                    content = blocks_to_markdown(children)
+                    content = blocks_to_markdown(children, images=images_list,
+                                                 img_subdir=_img_subdir)
                 else:
                     content = data.get("content", "")
+
+                _PLAYWRIGHT_SHEET_CACHE.clear()
+
+                # Pre-download images via JS fetch (page security context)
+                if images_list and feishu_download_images():
+                    img_tokens = [
+                        img.get("token", "") for img in images_list
+                        if img.get("token")
+                    ]
+                    if img_tokens:
+                        from feedgrab.fetchers.browser import (
+                            _FEISHU_IMAGE_CDN_DISCOVER_JS,
+                            _FEISHU_IMAGE_FETCH_JS,
+                        )
+                        try:
+                            cdn_info = await page.evaluate(
+                                _FEISHU_IMAGE_CDN_DISCOVER_JS
+                            )
+                            if cdn_info:
+                                import base64 as _b64
+                                batch_size = 10
+                                for s in range(
+                                    0, len(img_tokens), batch_size
+                                ):
+                                    batch = img_tokens[s:s + batch_size]
+                                    fetched_imgs = await page.evaluate(
+                                        _FEISHU_IMAGE_FETCH_JS,
+                                        {
+                                            "tokens": batch,
+                                            "cdn": cdn_info["cdn"],
+                                            "mount_token": cdn_info[
+                                                "mount_token"
+                                            ],
+                                        },
+                                    )
+                                    if not fetched_imgs:
+                                        continue
+                                    for img_info in images_list:
+                                        tk = img_info.get("token", "")
+                                        b64 = fetched_imgs.get(tk, "")
+                                        if (b64
+                                                and not b64.startswith(
+                                                    "error:")):
+                                            try:
+                                                raw = _b64.b64decode(b64)
+                                                if len(raw) > 100:
+                                                    img_info["_bytes"] = raw
+                                            except Exception:
+                                                pass
+                        except Exception as e:
+                            logger.debug(
+                                f"[Feishu Wiki PW] JS image fetch: {e}"
+                            )
 
                 doc_data = {
                     "title": title or data.get("title", ""),
@@ -412,13 +556,21 @@ async def _fetch_wiki_via_playwright(
                     "author": data.get("author", ""),
                     "doc_type": "wiki",
                     "doc_token": token,
-                    "images": [],
+                    "images": [img.get("token", "") for img in images_list],
+                    "images_info": images_list,
+                    "img_subdir": _img_subdir,
                     "tags": [],
                 }
 
                 uc = from_feishu(doc_data)
-                save_to_markdown(uc, subdir=f"Feishu/{wiki_title}")
-                add_item(dedup_idx, item_id, link_url, "Feishu")
+                uc.category = wiki_title
+                saved_path = save_to_markdown(uc)
+                add_item(item_id, link_url, dedup_idx)
+
+                # Download images if enabled
+                if saved_path and images_list and feishu_download_images():
+                    download_feishu_images(saved_path, images_list, link_url,
+                                           img_subdir=_img_subdir)
 
                 fetched += 1
                 done_set.add(token)
