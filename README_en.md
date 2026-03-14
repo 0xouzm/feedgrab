@@ -56,6 +56,7 @@ X_USER_TWEETS_SINCE=2026-02-01 feedgrab https://x.com/iBigQiang  # After date
 # Batch fetch Twitter List tweets (requires X_LIST_TWEETS_ENABLED=true)
 feedgrab https://x.com/i/lists/2002743803959300263               # Last 1 day (default)
 X_LIST_TWEETS_DAYS=3 feedgrab https://x.com/i/lists/2002743803959300263  # Last 3 days
+X_LIST_TWEETS_SUMMARY=true feedgrab https://x.com/i/lists/...    # Generate summary table (MD + CSV)
 
 # Batch fetch XHS author notes (requires XHS_USER_NOTES_ENABLED=true + feedgrab login xhs)
 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
@@ -487,6 +488,7 @@ cp .env.example .env
 | `X_LIST_TWEETS_DAYS` | No | Fetch tweets from last N days (default: `1`, supports 1/2/3/7) |
 | `X_LIST_TWEET_MAX_PAGES` | No | Max pagination for list tweets (default: `50`) |
 | `X_LIST_TWEET_DELAY` | No | Delay between list tweet fetches in seconds (default: `2`) |
+| `X_LIST_TWEETS_SUMMARY` | No | Generate summary table (MD + CSV) after list fetch (default: `false`) |
 | `X_SEARCH_SUPPLEMENTARY` | No | Search supplement when UserTweets insufficient (default: `true`) |
 | `X_SEARCH_MAX_PAGES_PER_CHUNK` | No | Max pages per monthly search chunk (default: `50`) |
 | `TWITTERAPI_IO_KEY` | No | TwitterAPI.io paid API key from https://twitterapi.io |
