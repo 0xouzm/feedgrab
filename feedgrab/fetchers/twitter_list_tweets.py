@@ -152,7 +152,7 @@ def _generate_list_summary(
         lines.append("*No tweets found in this list.*")
     else:
         lines.append(
-            "| # | 作者 | 内容摘要 | 日期 | 点赞 | 转帖 | 回复 | 查看 | 收藏 | 在线查看 |"
+            "| # | 作者 | 内容摘要 | 日期 | 点赞 | 转帖 | 回复 | 查看 | 收藏 | 打开 |"
         )
         lines.append(
             "|:---:|------|----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|"
