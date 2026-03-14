@@ -187,7 +187,9 @@ def _generate_list_summary(
             saved = saved_paths.get(tweet_id, "")
             if saved:
                 stem = Path(saved).stem
-                summary_col = f"[[{stem}|{summary}]]"
+                # Strip [ ] that would break [[...]] wikilink syntax
+                safe_stem = stem.replace("[", "").replace("]", "")
+                summary_col = f"[[{safe_stem}]]"
             else:
                 summary_col = summary
 
