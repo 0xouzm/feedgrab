@@ -2,6 +2,36 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-15 · v0.11.4 · Twitter 列表批量抓取 — 汇总表格文档（MD + CSV）
+
+### 背景
+`feedgrab x-so <keyword>` 关键词搜索完成后会生成一个按查看数排序的 MD + CSV 汇总表格，方便快速浏览结果。Twitter 列表批量抓取（`feedgrab https://x.com/i/lists/{id}`）此前只逐条保存单篇推文 .md，缺少同样的汇总视图。用户希望列表抓取也能生成汇总文档，并通过配置开关控制。
+
+### 方案决策
+- **配置开关**：新增 `X_LIST_TWEETS_SUMMARY`（默认 false），在 `config.py` 中添加 `x_list_tweets_summary()` 布尔函数
+- **独立汇总函数**：在 `twitter_list_tweets.py` 中新增 `_generate_list_summary()`，不复用 `twitter_keyword_search.py` 的 `_generate_summary_table()`（后者 YAML front matter 含搜索语义字段），但表格渲染模式保持一致
+- **表格列**：`# | 作者 | 内容摘要 | 日期 | 点赞 | 转帖 | 回复 | 查看 | 收藏 | 在线查看`，按查看数降序排列
+- **内容摘要列**：使用 Obsidian wikilink `[[文件名|摘要文本]]` 链接到保存的对应 .md 文档，特殊字符（`|`、`[`、`]`、换行）转义处理
+- **在线查看列**（最右列）：外部链接 `[查看](https://x.com/{author}/status/{id})`
+- **CSV**：UTF-8 BOM 编码，摘要截断 80 字符（MD 40），显式 URL 列
+- **数据收集**：在处理循环中收集 `collected_tweets`（tweet_data）和 `saved_paths`（tweet_id → 文件路径），循环结束后一次性生成汇总
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/config.py` | 修改 | 新增 `x_list_tweets_summary()` 配置函数 |
+| `feedgrab/fetchers/twitter_list_tweets.py` | 修改 | 新增 `_generate_list_summary()` 汇总表格生成（~120 行）；`fetch_list_tweets()` 添加数据收集 + 汇总调用 + 返回值 `summary_path` |
+| `feedgrab/reader.py` | 修改 | `_read_list_tweets()` 输出追加汇总表格路径 |
+| `.env.example` | 修改 | 新增 `X_LIST_TWEETS_SUMMARY` 配置项 |
+
+### 验证结果
+- 模块编译检查通过：`twitter_list_tweets.py` 和 `reader.py` 导入无报错 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-15 · v0.11.3 · 飞书嵌入电子表格 Tier 0 API 修复（block_type 映射 + SDK token 提取）
 
 ### 背景

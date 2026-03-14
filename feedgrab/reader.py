@@ -318,6 +318,8 @@ class UniversalReader:
             f"跳过: {result['skipped']}, 失败: {result['failed']}\n"
             f"批量记录: {result.get('list_path', '')}"
         )
+        if result.get("summary_path"):
+            summary += f"\n汇总表格: {result['summary_path']}"
 
         return UnifiedContent(
             source_type=SourceType.TWITTER,

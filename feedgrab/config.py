@@ -278,6 +278,11 @@ def x_list_tweets_days() -> int:
         return 1
 
 
+def x_list_tweets_summary() -> bool:
+    """Whether to generate a summary table (MD + CSV) after list tweets batch fetch."""
+    return os.getenv("X_LIST_TWEETS_SUMMARY", "false").lower() in ("true", "1", "yes")
+
+
 def x_search_supplementary_enabled() -> bool:
     """Whether to use Search API to supplement UserTweets for older tweets.
 

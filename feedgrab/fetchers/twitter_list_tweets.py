@@ -13,18 +13,20 @@ Design:
     - Reuses classification/processing from twitter_bookmarks
 """
 
+import csv
 import json
 import re
 import time as _time
 from datetime import datetime, timedelta
 from pathlib import Path
 from loguru import logger
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from feedgrab.config import (
     x_list_tweet_max_pages,
     x_list_tweet_delay,
     x_list_tweets_days,
+    x_list_tweets_summary,
     force_refetch,
     parse_twitter_date_local,
 )
@@ -101,6 +103,141 @@ def _save_list_record(tweet_list: list, list_id: str, list_name: str) -> Path:
 
     logger.info(f"[ListTweets] 批量记录已保存: {path}")
     return path
+
+
+# ---------------------------------------------------------------------------
+# Summary table generation
+# ---------------------------------------------------------------------------
+
+def _generate_list_summary(
+    list_name: str,
+    list_id: str,
+    days: int,
+    tweets: List[dict],
+    saved_paths: Dict[str, str],
+    output_dir: Path,
+) -> Path:
+    """Generate summary MD table + CSV for list tweets, sorted by views.
+
+    MD: 内容摘要 uses Obsidian wikilink to the saved .md; 在线查看 links to x.com.
+    CSV: explicit URL column, no wikilinks.
+
+    Args:
+        tweets: list of extract_tweet_data() dicts.
+        saved_paths: mapping tweet_id -> saved .md file path.
+        output_dir: directory for the summary files (same level as tweet .md files).
+
+    Returns:
+        Path to the generated .md summary file.
+    """
+    from feedgrab.fetchers.twitter import _clean_title
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    tweets.sort(key=lambda td: int(td.get("views", 0) or 0), reverse=True)
+
+    # --- Markdown ---
+    lines = [
+        "---",
+        f'title: "列表推文汇总 — {list_name}"',
+        f'list_id: "{list_id}"',
+        f"days: {days}",
+        f"total: {len(tweets)}",
+        f"created: {date_str}",
+        "cssclasses: wide",
+        "---",
+        "",
+    ]
+
+    if not tweets:
+        lines.append("*No tweets found in this list.*")
+    else:
+        lines.append(
+            "| # | 作者 | 内容摘要 | 日期 | 点赞 | 转帖 | 回复 | 查看 | 收藏 | 在线查看 |"
+        )
+        lines.append(
+            "|:---:|------|----------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|"
+        )
+
+        for i, td in enumerate(tweets, 1):
+            author_name = td.get("author_name", "")
+            handle = td.get("author", "")
+            author = author_name if author_name else (f"@{handle}" if handle else "")
+            if td.get("is_blue_verified"):
+                author = f"\u2705{author}"
+            author = author.replace("|", "\\|").replace("\n", " ").replace("\r", "")
+
+            summary = _clean_title(td.get("text", ""), max_len=40)
+            # Escape pipe and brackets for table safety
+            summary = summary.replace("|", "\\|")
+            summary = summary.replace("[", "\\[").replace("]", "\\]")
+
+            likes = int(td.get("likes", 0) or 0)
+            retweets = int(td.get("retweets", 0) or 0)
+            replies_count = int(td.get("replies", 0) or 0)
+            views = int(td.get("views", 0) or 0)
+            bookmarks = int(td.get("bookmarks", 0) or 0)
+            created_at = td.get("created_at", "")
+            date_short = parse_twitter_date_local(created_at, "%m-%d")
+
+            tweet_id = td.get("id", "")
+            tweet_author = td.get("author", "")
+            tweet_url = f"https://x.com/{tweet_author}/status/{tweet_id}"
+
+            # Content column: Obsidian wikilink if saved .md exists, else plain text
+            saved = saved_paths.get(tweet_id, "")
+            if saved:
+                stem = Path(saved).stem
+                summary_col = f"[[{stem}|{summary}]]"
+            else:
+                summary_col = summary
+
+            # Online link column (rightmost)
+            online_col = f"[查看]({tweet_url})"
+
+            lines.append(
+                f"| {i} | {author} | {summary_col} "
+                f"| {date_short} | {likes} | {retweets} | {replies_count} "
+                f"| {views} | {bookmarks} | {online_col} |"
+            )
+
+    summary_name = _sanitize_folder_name(list_name) or list_id
+    summary_path = output_dir / f"{summary_name}_summary.md"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    logger.info(f"[ListTweets] 汇总表格已保存: {summary_path}")
+
+    # --- CSV ---
+    csv_path = summary_path.with_suffix(".csv")
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "#", "作者", "内容摘要", "日期", "点赞", "转帖",
+            "回复", "查看", "收藏", "链接",
+        ])
+        for i, td in enumerate(tweets, 1):
+            author_name = td.get("author_name", "")
+            handle = td.get("author", "")
+            author = author_name if author_name else (f"@{handle}" if handle else "")
+            if td.get("is_blue_verified"):
+                author = f"\u2705{author}"
+            summary = _clean_title(td.get("text", ""), max_len=80)
+            likes = int(td.get("likes", 0) or 0)
+            retweets = int(td.get("retweets", 0) or 0)
+            replies_count = int(td.get("replies", 0) or 0)
+            views = int(td.get("views", 0) or 0)
+            bookmarks = int(td.get("bookmarks", 0) or 0)
+            created_at = td.get("created_at", "")
+            date_short = parse_twitter_date_local(created_at, "%m-%d")
+            tweet_id = td.get("id", "")
+            tweet_author = td.get("author", "")
+            tweet_url = f"https://x.com/{tweet_author}/status/{tweet_id}"
+            writer.writerow([
+                i, author, summary, date_short, likes, retweets,
+                replies_count, views, bookmarks, tweet_url,
+            ])
+    logger.info(f"[ListTweets] CSV 表格已保存: {csv_path}")
+
+    return summary_path
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +373,8 @@ async def fetch_list_tweets(
     skipped = 0
     failed = 0
     tweet_list = []
+    collected_tweets: List[dict] = []
+    saved_paths: Dict[str, str] = {}
 
     for i, entry in enumerate(all_tweet_entries):
         tweet_data = extract_tweet_data(entry)
@@ -318,19 +457,35 @@ async def fetch_list_tweets(
 
             content = from_twitter(data)
             content.category = subfolder
-            save_to_markdown(content)
+            saved_path = save_to_markdown(content)
             add_item(item_id, tweet_url, saved_ids)
             fetched += 1
             tweet_list.append({"url": tweet_url, "status": "fetched"})
+            collected_tweets.append(tweet_data)
+            if saved_path:
+                saved_paths[tweet_id] = saved_path
 
         except Exception as e:
             logger.error(f"[ListTweets] 处理失败 {tweet_url}: {e}")
             failed += 1
             tweet_list.append({"url": tweet_url, "status": f"failed: {e}"})
 
-    # Step 7: Save index and batch record
+    # Step 8: Save index and batch record
     save_index(saved_ids)
     list_path = _save_list_record(tweet_list, list_id, list_name)
+
+    # Step 9: Generate summary table if enabled
+    summary_path = ""
+    if x_list_tweets_summary() and collected_tweets:
+        import os as _os
+        vault = _os.getenv("OBSIDIAN_VAULT", "")
+        out = _os.getenv("OUTPUT_DIR", "")
+        base = vault or out
+        if base:
+            output_dir = Path(base) / "X" / subfolder
+            summary_path = str(_generate_list_summary(
+                list_name, list_id, days, collected_tweets, saved_paths, output_dir,
+            ))
 
     total = fetched + skipped + failed
     logger.info(
@@ -345,4 +500,5 @@ async def fetch_list_tweets(
         "failed": failed,
         "list_name": list_name,
         "list_path": str(list_path),
+        "summary_path": summary_path,
     }
