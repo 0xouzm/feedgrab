@@ -2,6 +2,58 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-16 · v0.12.0 · CDP Cookie 提取 + 微信专辑批量 + 媒体文件本地化
+
+### 背景
+三个独立增益功能：(1) Chrome 146 支持 `chrome://inspect/#remote-debugging` 一键开启 CDP，可用于从运行中的浏览器直接提取 Cookie，省去手动登录流程；(2) 微信公众号专辑页面可批量抓取全部文章；(3) Twitter/小红书图片视频可下载到本地 `attachments/` 目录，Markdown 中使用相对路径，Obsidian 离线可读。
+
+### 方案决策
+
+**CDP Cookie 提取**（`CHROME_CDP_LOGIN=true`）：
+- 两级策略：Tier 0 Playwright `connect_over_cdp(ws://127.0.0.1:{port}/devtools/browser)` — Chrome 146 兼容（HTTP `/json/*` 端点返回 404，只能走 WebSocket）；Tier 1 传统 HTTP 发现 + 原始 WebSocket — `--remote-debugging-port` 兼容
+- Playwright context cookies 已是 storage_state 格式，按平台域名过滤后直接保存
+- 默认关闭，`CHROME_CDP_LOGIN=true` 开启后 `feedgrab login <platform>` 优先走 CDP，失败自动回退浏览器登录
+
+**微信专辑批量**（`mpweixin-zhuanji`）：
+- 以 `mpweixin_account.py` 为模板，结构完全对齐
+- 差异：不需要 MP 后台 session（公开专辑可直接访问）；分页用 `begin_msgid`/`begin_itemidx`（非偏移量）
+- 断点续传 + mpweixin 共享去重索引 + 日期过滤
+
+**媒体文件本地化**（`X_DOWNLOAD_MEDIA` / `XHS_DOWNLOAD_MEDIA`）：
+- 通用模块 `utils/media.py`，仿飞书图片下载模式
+- Twitter 图片 `name=orig` 原图质量；XHS 去 CDN resize 后缀 + Referer 防盗链
+- 单篇（`reader.py`）+ 全部 8 个批量 fetcher 均已适配
+- 单张失败保留远程 URL，不影响其他下载
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/login.py` | 修改 | 重写 CDP 登录：两级策略（Playwright ws:// + 传统 HTTP+WebSocket），+160 行 |
+| `feedgrab/config.py` | 修改 | 新增 6 个配置函数：CDP 开关/端口、媒体下载开关×2、专辑日期/间隔 |
+| `feedgrab/fetchers/mpweixin_album.py` | 新建 | 微信专辑批量 fetcher ~280 行（分页、断点续传、去重、日期过滤） |
+| `feedgrab/utils/media.py` | 新建 | 通用媒体下载模块 ~190 行（下载+URL优化+MD替换） |
+| `feedgrab/cli.py` | 修改 | 新增 `mpweixin-zhuanji` 路由 + `cmd_mpweixin_album()` |
+| `feedgrab/reader.py` | 修改 | 单篇 Twitter/XHS 媒体下载触发（仿飞书模式） |
+| `feedgrab/fetchers/twitter_bookmarks.py` | 修改 | 批量媒体下载触发 +8 行 |
+| `feedgrab/fetchers/twitter_user_tweets.py` | 修改 | 批量媒体下载触发 +8 行 |
+| `feedgrab/fetchers/twitter_list_tweets.py` | 修改 | 批量媒体下载触发 +8 行 |
+| `feedgrab/fetchers/twitter_search_tweets.py` | 修改 | 批量媒体下载触发 +8 行 |
+| `feedgrab/fetchers/twitter_keyword_search.py` | 修改 | 批量媒体下载触发（`--save` 模式）+8 行 |
+| `feedgrab/fetchers/twitter_api_user_tweets.py` | 修改 | 批量媒体下载触发 +8 行 |
+| `feedgrab/fetchers/xhs_user_notes.py` | 修改 | 批量媒体下载触发 +15 行 |
+| `feedgrab/fetchers/xhs_search_notes.py` | 修改 | 批量媒体下载触发 +15 行 |
+| `.env.example` | 修改 | 新增 CDP / 专辑 / 媒体下载配置段 |
+
+### 验证结果
+- CDP Cookie 提取：Chrome 146 Remote Debugging 模式，`CHROME_CDP_LOGIN=true feedgrab login twitter` → 27 cookies 提取成功，`feedgrab doctor x` 13 项全部通过 ✅
+- 媒体下载：`X_DOWNLOAD_MEDIA=true feedgrab https://x.com/wong2__/status/2032697322451382324` → `attachments/9a54ff583902/HDWWgyVaMAUUGuI.jpg` 下载成功，.md 中 URL 已替换为相对路径 ✅
+- 双扩展名 bug（`.jpg.jpg`）修复验证通过 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-15 · v0.11.4 · Twitter 列表批量抓取 — 汇总表格文档（MD + CSV）
 
 ### 背景

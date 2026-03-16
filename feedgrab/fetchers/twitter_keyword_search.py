@@ -427,7 +427,21 @@ def search_twitter_keyword(
                 data = _build_single_tweet_data(td, tweet_url)
                 content = from_twitter(data)
                 content.category = tweet_subdir
-                save_to_markdown(content)
+                saved_path = save_to_markdown(content)
+
+                # Media download
+                if saved_path:
+                    from feedgrab.config import x_download_media
+                    if x_download_media():
+                        from feedgrab.utils.media import download_media
+                        download_media(
+                            saved_path,
+                            content.extra.get("images", []),
+                            content.extra.get("videos", []),
+                            content.id,
+                            platform="twitter",
+                        )
+
                 add_item(item_id, tweet_url, dedup_index)
                 saved += 1
             except Exception as e:

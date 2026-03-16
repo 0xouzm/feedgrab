@@ -1232,6 +1232,40 @@ def cmd_mpweixin_account(account_name: str):
         sys.exit(1)
 
 
+def cmd_mpweixin_album(url: str):
+    """Fetch all articles from a WeChat album (专辑/合集)."""
+    from feedgrab.config import mpweixin_zhuanji_since, mpweixin_zhuanji_delay
+    from feedgrab.fetchers.mpweixin_album import fetch_album_articles
+
+    since = mpweixin_zhuanji_since()
+    delay = mpweixin_zhuanji_delay()
+
+    async def run():
+        result = await fetch_album_articles(
+            url, since=since, delay=delay,
+        )
+        album_name = result.get('album_name', '') or 'unknown'
+        print(f"\n\u2705 Album fetch complete: '{album_name}'")
+        print(f"   Total: {result['total']}, Fetched: {result['fetched']}, "
+              f"Skipped: {result['skipped']}, Failed: {result['failed']}")
+        if result['articles']:
+            print("\n   Articles:")
+            for art in result['articles']:
+                title = art.get('title', 'untitled')[:50]
+                date = art.get('publish_date', '')
+                print(f"   - [{date}] {title}")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n\u23f9 Cancelled")
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"\u274c {e}")
+        sys.exit(1)
+
+
 def _split_keywords(raw: str) -> list[str]:
     """Split comma-separated keywords (supports both , and ，).
 
@@ -1586,6 +1620,14 @@ Examples:
             print("   Requires: feedgrab login wechat (MP backend session)")
             sys.exit(1)
         cmd_mpweixin_account(sys.argv[2])
+    elif cmd == "mpweixin-zhuanji":
+        if len(sys.argv) < 3:
+            print("\u274c Usage: feedgrab mpweixin-zhuanji <album_url>")
+            print('   Example: feedgrab mpweixin-zhuanji "https://mp.weixin.qq.com/mp/appmsgalbum?__biz=xxx&album_id=xxx"')
+            print("   Config:  MPWEIXIN_ZHUANJI_SINCE=2026-01-01  (date filter)")
+            print("            MPWEIXIN_ZHUANJI_DELAY=3            (request interval)")
+            sys.exit(1)
+        cmd_mpweixin_album(sys.argv[2])
     elif cmd == "mpweixin-so":
         if len(sys.argv) < 3:
             print("\u274c Usage: feedgrab mpweixin-so <keyword> [--limit N]")

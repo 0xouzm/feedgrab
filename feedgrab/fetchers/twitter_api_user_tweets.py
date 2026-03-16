@@ -582,7 +582,20 @@ async def _process_tweets(
             # Convert to UnifiedContent and save
             content = from_twitter(data)
             content.category = subfolder
-            save_to_markdown(content)
+            saved_path = save_to_markdown(content)
+
+            # Media download
+            if saved_path:
+                from feedgrab.config import x_download_media
+                if x_download_media():
+                    from feedgrab.utils.media import download_media
+                    download_media(
+                        saved_path,
+                        content.extra.get("images", []),
+                        content.extra.get("videos", []),
+                        content.id,
+                        platform="twitter",
+                    )
 
             # Update index
             add_item(item_id, tweet_url, saved_ids)

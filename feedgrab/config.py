@@ -614,6 +614,23 @@ def mpweixin_id_delay() -> float:
 
 
 # ---------------------------------------------------------------------------
+# WeChat MP album batch fetch (mpweixin-zhuanji)
+# ---------------------------------------------------------------------------
+
+def mpweixin_zhuanji_since() -> str:
+    """Date filter for album articles (e.g. '2025-10-01'). Empty = all."""
+    return os.getenv("MPWEIXIN_ZHUANJI_SINCE", "").strip()
+
+
+def mpweixin_zhuanji_delay() -> float:
+    """Delay in seconds between fetching each album article (default 3.0)."""
+    try:
+        return float(os.getenv("MPWEIXIN_ZHUANJI_DELAY", "3.0"))
+    except ValueError:
+        return 3.0
+
+
+# ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------
 
@@ -697,3 +714,34 @@ def feishu_page_load_timeout() -> int:
         return int(os.getenv("FEISHU_PAGE_LOAD_TIMEOUT", "5000"))
     except ValueError:
         return 5000
+
+
+# ── Media download ───────────────────────────────────────────
+
+def x_download_media() -> bool:
+    """Download Twitter images/videos to local attachments directory. Default false."""
+    return os.getenv("X_DOWNLOAD_MEDIA", "false").lower() in ("true", "1", "yes")
+
+
+def xhs_download_media() -> bool:
+    """Download XHS images to local attachments directory. Default false."""
+    return os.getenv("XHS_DOWNLOAD_MEDIA", "false").lower() in ("true", "1", "yes")
+
+
+# ── Chrome CDP ───────────────────────────────────────────────
+
+def chrome_cdp_login() -> bool:
+    """Extract cookies from a running Chrome via CDP instead of browser login.
+
+    Requires Chrome with Remote Debugging enabled (chrome://inspect/#remote-debugging
+    or --remote-debugging-port=9222). Default false.
+    """
+    return os.getenv("CHROME_CDP_LOGIN", "false").lower() in ("true", "1", "yes")
+
+
+def chrome_cdp_port() -> int:
+    """CDP debugging port. Default 9222."""
+    try:
+        return int(os.getenv("CHROME_CDP_PORT", "9222"))
+    except ValueError:
+        return 9222

@@ -165,6 +165,36 @@ class UniversalReader:
                         img_subdir=content.extra.get("img_subdir", ""),
                     )
 
+            # Twitter: download media to attachments/{item_id}/
+            if (saved_path
+                    and content.source_type == SourceType.TWITTER
+                    and (content.extra.get("images") or content.extra.get("videos"))):
+                from feedgrab.config import x_download_media
+                if x_download_media():
+                    from feedgrab.utils.media import download_media
+                    download_media(
+                        saved_path,
+                        content.extra.get("images", []),
+                        content.extra.get("videos", []),
+                        content.id,
+                        platform="twitter",
+                    )
+
+            # XHS: download media to attachments/{item_id}/
+            if (saved_path
+                    and content.source_type == SourceType.XIAOHONGSHU
+                    and content.extra.get("images")):
+                from feedgrab.config import xhs_download_media
+                if xhs_download_media():
+                    from feedgrab.utils.media import download_media
+                    download_media(
+                        saved_path,
+                        content.extra.get("images", []),
+                        content.extra.get("videos", []),
+                        content.id,
+                        platform="xhs",
+                    )
+
             # Register in global dedup index (single fetch: always save, never skip)
             try:
                 from feedgrab.utils.dedup import load_index, save_index, add_item

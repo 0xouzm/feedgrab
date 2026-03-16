@@ -104,6 +104,15 @@ feedgrab https://url1.com https://url2.com
 # Login to a platform (one-time, for browser fallback)
 feedgrab login xhs
 
+# Chrome CDP auto-extract cookies (from already logged-in Chrome, no manual login needed)
+# Prerequisite: enable Remote Debugging in Chrome (chrome://inspect/#remote-debugging)
+CHROME_CDP_LOGIN=true feedgrab login twitter
+CHROME_CDP_LOGIN=true feedgrab login xhs
+
+# Download tweet images/videos to local (saved to attachments/{item_id}/ subdirectory)
+X_DOWNLOAD_MEDIA=true feedgrab https://x.com/user/status/123
+XHS_DOWNLOAD_MEDIA=true feedgrab https://www.xiaohongshu.com/explore/xxx
+
 # Auto-detect local Chrome UA and write to .env (recommended on first setup)
 feedgrab detect-ua
 
@@ -181,7 +190,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | YouTube | **YouTube Data API v3** search + yt-dlp subtitles | yt-dlp subtitles → Groq Whisper fallback |
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
-| WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) | — |
+| WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) / Album batch (`mpweixin-zhuanji`) | — |
 | GitHub | **REST API** (repo metadata + Chinese README priority + summary extraction) | — |
 | Xiaohongshu (小红书) | **API (xhshow)** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
 | Feishu/Lark (飞书) | **Open API** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
@@ -270,7 +279,7 @@ Create `sessions/x.json`:
 }
 ```
 
-> Also supports Method 4: Chrome CDP auto-extraction (requires Chrome `--remote-debugging-port=9222`).
+> Also supports Method 4: Chrome CDP auto-extraction — enable `chrome://inspect/#remote-debugging` in Chrome, then `CHROME_CDP_LOGIN=true feedgrab login twitter` to instantly extract cookies from your logged-in Chrome.
 
 **Cookie priority**: Environment variables > Playwright session (`twitter.json`) > Cookie file (`x.json`) > Chrome CDP
 
@@ -522,6 +531,12 @@ cp .env.example .env
 | `MPWEIXIN_SOGOU_ENABLED` | No | Enable Sogou WeChat article search (default: `false`) |
 | `MPWEIXIN_SOGOU_MAX_RESULTS` | No | Max articles per search (default: `10`, max `100`) |
 | `MPWEIXIN_SOGOU_DELAY` | No | Delay between article fetches in seconds (default: `3.0`) |
+| `MPWEIXIN_ZHUANJI_SINCE` | No | Album batch: only fetch articles after this date (`YYYY-MM-DD`, empty=all) |
+| `MPWEIXIN_ZHUANJI_DELAY` | No | Album batch: delay between article fetches in seconds (default: `3.0`) |
+| `CHROME_CDP_LOGIN` | No | Enable CDP cookie extraction from running Chrome (default: `false`) |
+| `CHROME_CDP_PORT` | No | Chrome CDP port (default: `9222`) |
+| `X_DOWNLOAD_MEDIA` | No | Download Twitter images/videos to local `attachments/` subdirectory (default: `false`) |
+| `XHS_DOWNLOAD_MEDIA` | No | Download XHS images to local `attachments/` subdirectory (default: `false`) |
 | `GITHUB_TOKEN` | No | GitHub personal access token (without: 60 req/h, with: 5000 req/h) |
 | `BROWSER_USER_AGENT` | No | Global browser UA (recommend `feedgrab detect-ua` for auto-detection) |
 | `TG_API_ID` | Telegram only | From https://my.telegram.org |
@@ -541,7 +556,7 @@ feedgrab/
 │   ├── config.py              # Centralized config (paths, feature flags)
 │   ├── reader.py              # URL dispatcher (UniversalReader)
 │   ├── schema.py              # Unified data model (UnifiedContent + Inbox)
-│   ├── login.py               # Browser login manager (saves sessions)
+│   ├── login.py               # Browser login manager (+ CDP cookie extraction)
 │   ├── fetchers/
 │   │   ├── jina.py            # Jina Reader (universal fallback)
 │   │   ├── browser.py         # Playwright headless (anti-scraping fallback)
@@ -563,6 +578,8 @@ feedgrab/
 │   │   ├── twitter_api_user_tweets.py # Paid API supplement/full fetch
 │   │   ├── twitter_markdown.py# Thread Markdown renderer (YAML front matter + media)
 │   │   ├── wechat.py          # Jina → Playwright WeChat JS extraction
+│   │   ├── mpweixin_account.py # WeChat account batch (MP backend API + resume)
+│   │   ├── mpweixin_album.py  # WeChat album batch (mpweixin-zhuanji + resume)
 │   │   ├── xhs.py             # API (xhshow) → Jina → Playwright + session fallback
 │   │   ├── xhs_user_notes.py  # XHS author batch fetch (__INITIAL_STATE__ + XHR intercept + scroll)
 │   │   ├── xhs_search_notes.py # XHS search batch fetch (xhs-so API search + search page scroll + per-note deep fetch)
@@ -571,7 +588,8 @@ feedgrab/
 │   └── utils/
 │       ├── storage.py         # Per-platform Markdown + JSON dual output
 │       ├── dedup.py           # Global dedup index (cross-mode unified tracking)
-│       └── http_client.py     # Unified HTTP client (curl_cffi TLS fingerprint → requests fallback)
+│       ├── http_client.py     # Unified HTTP client (curl_cffi TLS fingerprint → requests fallback)
+│       └── media.py           # Media file download (Twitter/XHS image/video localization)
 ├── sessions/                  # Cookie/session storage (auto-created, git-ignored)
 ├── skills/                    # Claude Code skills
 │   ├── video/                 # Video/podcast → transcript + summary

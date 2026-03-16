@@ -101,6 +101,10 @@ feedgrab ytb-dla https://youtu.be/xxx?si=xxx           # 支持短分享链接
 feedgrab mpweixin-id "饼干哥哥AGI"
 MPWEIXIN_ID_SINCE=2025-01-01 feedgrab mpweixin-id "饼干哥哥AGI"  # 指定日期之后
 
+# 按专辑批量抓取公众号文章（公开专辑，无需登录）
+feedgrab mpweixin-zhuanji "https://mp.weixin.qq.com/mp/appmsgalbum?__biz=xxx&album_id=xxx"
+MPWEIXIN_ZHUANJI_SINCE=2026-01-01 feedgrab mpweixin-zhuanji "..."  # 指定日期之后
+
 # 抓取 GitHub 仓库 README（自动检测中文 README 优先）
 feedgrab https://github.com/nicepkg/aide                          # 仓库首页
 feedgrab https://github.com/nicepkg/aide/blob/main/README.md      # README 文件页
@@ -119,6 +123,15 @@ feedgrab https://url1.com https://url2.com
 
 # 登录某个平台（一次性操作，用于浏览器兜底）
 feedgrab login xhs
+
+# Chrome CDP 自动提取 Cookie（Chrome 已登录状态下，免去手动登录流程）
+# 前提：Chrome 开启 Remote Debugging（chrome://inspect/#remote-debugging）
+CHROME_CDP_LOGIN=true feedgrab login twitter
+CHROME_CDP_LOGIN=true feedgrab login xhs
+
+# 下载推文图片/视频到本地（保存到 attachments/{item_id}/ 子目录）
+X_DOWNLOAD_MEDIA=true feedgrab https://x.com/user/status/123
+XHS_DOWNLOAD_MEDIA=true feedgrab https://www.xiaohongshu.com/explore/xxx
 
 # 自动检测本机 Chrome UA 并写入 .env（推荐首次部署时运行）
 feedgrab detect-ua
@@ -203,7 +216,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | YouTube | **YouTube Data API v3** 搜索 + yt-dlp 字幕 | yt-dlp 字幕 → Groq Whisper 兜底 |
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
-| 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`） | — |
+| 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`）/ 专辑批量（`mpweixin-zhuanji`） | — |
 | GitHub | **REST API**（仓库元数据 + 中文 README 优先 + 摘要提取） | — |
 | 小红书 | **API (xhshow)** → Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量** + **关键词搜索 `xhs-so`**) | — |
 | 飞书/Lark | **Open API** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载） | — |
@@ -292,7 +305,7 @@ X_CT0=你的ct0值
 }
 ```
 
-> 还支持方式 4：Chrome CDP 自动提取（需启动 Chrome `--remote-debugging-port=9222`），适合高级用户。
+> 还支持方式 4：Chrome CDP 自动提取 — 在 Chrome 中开启 `chrome://inspect/#remote-debugging`，然后 `CHROME_CDP_LOGIN=true feedgrab login twitter` 即可从已登录的 Chrome 秒提取 Cookie。
 
 **Cookie 优先级**：环境变量 > Playwright session (`twitter.json`) > Cookie 文件 (`x.json`) > Chrome CDP
 
@@ -595,6 +608,8 @@ cp .env.example .env
 | `MPWEIXIN_SOGOU_DELAY` | 否 | 文章处理间隔秒数（默认：`3.0`） |
 | `MPWEIXIN_ID_SINCE` | 否 | 按账号批量：仅抓取该日期之后的文章（`YYYY-MM-DD`，留空=全部） |
 | `MPWEIXIN_ID_DELAY` | 否 | 按账号批量：文章处理间隔秒数（默认：`3.0`） |
+| `MPWEIXIN_ZHUANJI_SINCE` | 否 | 按专辑批量：仅抓取该日期之后的文章（`YYYY-MM-DD`，留空=全部） |
+| `MPWEIXIN_ZHUANJI_DELAY` | 否 | 按专辑批量：文章处理间隔秒数（默认：`3.0`） |
 | `GITHUB_TOKEN` | 否 | GitHub personal access token（无 token 60 次/小时，有 token 5000 次/小时） |
 | `FEISHU_APP_ID` | 仅飞书 API | 飞书开放平台 App ID（[申请地址](https://open.feishu.cn/app)） |
 | `FEISHU_APP_SECRET` | 仅飞书 API | 飞书开放平台 App Secret |
@@ -603,6 +618,10 @@ cp .env.example .env
 | `FEISHU_WIKI_SINCE` | 否 | 仅抓取此日期后修改的文档（`YYYY-MM-DD`，留空=全部） |
 | `FEISHU_CUSTOM_DOMAINS` | 否 | 私有化部署域名（逗号分隔，如 `feishu.mycompany.cn`） |
 | `FEISHU_PAGE_LOAD_TIMEOUT` | 否 | Playwright 页面元素等待超时毫秒（默认：`5000`） |
+| `CHROME_CDP_LOGIN` | 否 | 启用 CDP Cookie 提取，`feedgrab login` 优先从运行中的 Chrome 提取（默认：`false`） |
+| `CHROME_CDP_PORT` | 否 | Chrome CDP 端口（默认：`9222`） |
+| `X_DOWNLOAD_MEDIA` | 否 | Twitter 图片/视频下载到本地 `attachments/` 子目录（默认：`false`） |
+| `XHS_DOWNLOAD_MEDIA` | 否 | 小红书图片下载到本地 `attachments/` 子目录（默认：`false`） |
 | `BROWSER_USER_AGENT` | 否 | 全局浏览器 UA（推荐 `feedgrab detect-ua` 自动检测） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |
@@ -621,7 +640,7 @@ feedgrab/
 │   ├── config.py              # 集中配置（路径、开关、stealth headers）
 │   ├── reader.py              # URL 调度器（UniversalReader）
 │   ├── schema.py              # 统一数据模型（UnifiedContent + Inbox）
-│   ├── login.py               # 浏览器登录管理器（保存 session）
+│   ├── login.py               # 浏览器登录管理器（+ CDP Cookie 提取）
 │   ├── fetchers/
 │   │   ├── jina.py            # Jina Reader（万能兜底）
 │   │   ├── browser.py         # 隐身浏览器引擎（patchright Tier 1 → playwright Tier 3 + 52 stealth flags）
@@ -645,6 +664,8 @@ feedgrab/
 │   │   ├── twitter_markdown.py# 线程 Markdown 渲染器（YAML front matter + 媒体）
 │   │   ├── wechat.py          # Jina → Playwright WeChat JS 提取
 │   │   ├── wechat_search.py   # 搜狗微信搜索（markdownify 富文本转换）
+│   │   ├── mpweixin_account.py # 公众号按账号批量（MP 后台 API + 断点续传）
+│   │   ├── mpweixin_album.py  # 公众号专辑批量（mpweixin-zhuanji + 断点续传）
 │   │   ├── xhs.py             # API (xhshow) → Jina → Playwright + Session 兜底
 │   │   ├── xhs_user_notes.py  # 小红书作者批量抓取（API 分页 + __INITIAL_STATE__ + XHR 拦截 + 滚动加载）
 │   │   ├── xhs_search_notes.py# 小红书搜索批量抓取（xhs-so API 搜索 + 搜索结果页滚动 + 逐篇深度抓取）
@@ -653,7 +674,8 @@ feedgrab/
 │   └── utils/
 │       ├── storage.py         # 按平台分目录 Markdown + JSON 双重输出
 │       ├── dedup.py           # 全局去重索引（跨模式统一 item_id 追踪）
-│       └── http_client.py     # 统一 HTTP 客户端（curl_cffi TLS 指纹 → requests fallback）
+│       ├── http_client.py     # 统一 HTTP 客户端（curl_cffi TLS 指纹 → requests fallback）
+│       └── media.py           # 媒体文件下载（Twitter/XHS 图片视频本地化）
 ├── sessions/                  # Cookie/Session 存储（自动创建，git 忽略）
 ├── skills/                    # Claude Code 技能
 │   ├── video/                 # 视频/播客 → 转录 + 摘要
