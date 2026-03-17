@@ -372,7 +372,7 @@ output/
 │   ├── notes_xxx/        #   作者笔记（按作者名分目录）
 │   ├── search_xxx/       #   搜索笔记（按关键词分目录）
 │   └── search/           #   关键词搜索结果（xhs-so 命令，.md + .csv）
-├── WeChat/               # 微信公众号
+├── mpweixin/             # 微信公众号
 ├── YouTube/              # YouTube
 │   └── search_xxx/       #   搜索结果（按关键词分目录）
 ├── GitHub/               # GitHub 仓库
@@ -723,6 +723,16 @@ feedgrab 基于以下项目融合升级而来：
 ## 作者
 
 由 [@iBigQiang](https://github.com/iBigQiang) 维护
+
+## 捐赠打赏
+
+如果 feedgrab 对你有帮助，欢迎请作者喝杯咖啡 :)
+
+<p align="center">
+  <img src="docs/Payment_QR_code_alipay.jpg" alt="支付宝" width="250">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/Payment_QR_code_wechat.jpg" alt="微信支付" width="250">
+</p>
 
 ## 许可证
 
