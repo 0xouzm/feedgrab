@@ -112,6 +112,7 @@ CHROME_CDP_LOGIN=true feedgrab login xhs
 # Download tweet images/videos to local (saved to attachments/{item_id}/ subdirectory)
 X_DOWNLOAD_MEDIA=true feedgrab https://x.com/user/status/123
 XHS_DOWNLOAD_MEDIA=true feedgrab https://www.xiaohongshu.com/explore/xxx
+MPWEIXIN_DOWNLOAD_MEDIA=true feedgrab https://mp.weixin.qq.com/s/xxx
 
 # Auto-detect local Chrome UA and write to .env (recommended on first setup)
 feedgrab detect-ua
@@ -539,6 +540,7 @@ cp .env.example .env
 | `CHROME_CDP_PORT` | No | Chrome CDP port (default: `9222`) |
 | `X_DOWNLOAD_MEDIA` | No | Download Twitter images/videos to local `attachments/` subdirectory (default: `false`) |
 | `XHS_DOWNLOAD_MEDIA` | No | Download XHS images to local `attachments/` subdirectory (default: `false`) |
+| `MPWEIXIN_DOWNLOAD_MEDIA` | No | Download WeChat article videos to local `attachments/` subdirectory (default: `false`) |
 | `GITHUB_TOKEN` | No | GitHub personal access token (without: 60 req/h, with: 5000 req/h) |
 | `BROWSER_USER_AGENT` | No | Global browser UA (recommend `feedgrab detect-ua` for auto-detection) |
 | `TG_API_ID` | Telegram only | From https://my.telegram.org |
