@@ -346,7 +346,7 @@ output/
 │   ├── notes_xxx/        #   Author notes (subdirectory per author)
 │   ├── search_xxx/       #   Search notes (subdirectory per keyword)
 │   └── search/           #   Keyword search results (xhs-so command, .md + .csv)
-├── WeChat/               # WeChat articles
+├── mpweixin/             # WeChat articles
 ├── YouTube/
 ├── GitHub/               # GitHub repos
 │   └── index/            #   Dedup index
@@ -634,6 +634,16 @@ feedgrab is built upon:
 ## Author
 
 Maintained by [@iBigQiang](https://github.com/iBigQiang)
+
+## Donate
+
+If feedgrab has been helpful to you, feel free to buy the author a coffee :)
+
+<p align="center">
+  <img src="docs/Payment_QR_code_alipay.jpg" alt="Alipay" width="250">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/Payment_QR_code_wechat.jpg" alt="WeChat Pay" width="250">
+</p>
 
 ## License
 
