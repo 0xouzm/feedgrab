@@ -195,6 +195,21 @@ class UniversalReader:
                         platform="xhs",
                     )
 
+            # WeChat: download videos to attachments/{item_id}/
+            if (saved_path
+                    and content.source_type == SourceType.WECHAT
+                    and (content.extra.get("videos") or content.extra.get("images"))):
+                from feedgrab.config import mpweixin_download_media
+                if mpweixin_download_media():
+                    from feedgrab.utils.media import download_media
+                    download_media(
+                        saved_path,
+                        content.extra.get("images", []),
+                        content.extra.get("videos", []),
+                        content.id,
+                        platform="wechat",
+                    )
+
             # Register in global dedup index (single fetch: always save, never skip)
             try:
                 from feedgrab.utils.dedup import load_index, save_index, add_item

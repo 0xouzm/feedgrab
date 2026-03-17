@@ -310,6 +310,11 @@ def from_wechat(article: dict) -> UnifiedContent:
     cover_image = article.get('cover_image', '') or article.get('thumbnail', '')
     content_text = article.get('content', '')
 
+    # Extract video URLs from JS evaluate data
+    raw_videos = article.get('videos', [])
+    video_urls = [v['src'] for v in raw_videos if v.get('src')]
+    image_urls = []  # WeChat images are inline in HTML, not separate list
+
     # Prepend cover image at top of content
     if cover_image and content_text:
         content_text = f"![cover]({cover_image})\n\n{content_text}"
@@ -336,6 +341,8 @@ def from_wechat(article: dict) -> UnifiedContent:
             "shares": article.get('shares', 0),
             "comments": article.get('comments', 0),
             "comment_list": article.get('comment_list', []),
+            "videos": video_urls,
+            "images": image_urls,
         },
     )
 

@@ -530,12 +530,97 @@ WECHAT_ARTICLE_JS_EVALUATE = """() => {
         }
     }
 
-    // 8. Rich content HTML from #js_content
+    // 8. Videos — extract from <video> tags, data-mpvid containers, and page scripts
+    result.videos = [];
+    const seenVids = new Set();
+
+    // 8a. Direct <video src> tags (may not be loaded due to resource blocking)
+    document.querySelectorAll('video[src]').forEach(v => {
+        const src = v.src || '';
+        if (src && !seenVids.has(src)) {
+            seenVids.add(src);
+            result.videos.push({ src, poster: v.getAttribute('poster') || '' });
+        }
+    });
+
+    // 8b. span.video_iframe[data-mpvid] / mpvideo[data-mpvid] containers
+    const mpvidElements = document.querySelectorAll('span.video_iframe[data-mpvid], mpvideo[data-mpvid]');
+    const mpvids = [];
+    mpvidElements.forEach(el => {
+        const vid = el.getAttribute('data-mpvid') || '';
+        if (vid) mpvids.push(vid);
+    });
+
+    // 8c. Extract video URLs from page scripts (most reliable — <video> often blocked)
+    //     Scripts contain: url: ('http://mpvideo.qpic.cn/xxx.f10002.mp4?...')
+    if (mpvids.length > 0) {
+        for (const s of scripts) {
+            const text = s.textContent || '';
+            if (!text.includes('mpvideo.qpic.cn')) continue;
+            // Match mpvideo URLs, prefer highest quality (f10002 SD -> f10004 HD)
+            // Use string matching instead of regex to avoid Python/JS escape issues
+            const lines = text.split('mpvideo.qpic.cn');
+            const qualityMap = {};  // {base_name: {quality: url}}
+            for (let i = 1; i < lines.length; i++) {
+                // Reconstruct URL: find the mp4 part
+                const after = lines[i];
+                const mp4Idx = after.indexOf('.mp4');
+                if (mp4Idx === -1) continue;
+                // Extract quality code (f10002, f10004, etc.)
+                const fIdx = after.lastIndexOf('.f', mp4Idx);
+                if (fIdx === -1) continue;
+                const qualStr = after.substring(fIdx + 2, mp4Idx);
+                const quality = parseInt(qualStr);
+                if (isNaN(quality)) continue;
+                // Get path up to end of query params
+                let endIdx = mp4Idx + 4;  // past ".mp4"
+                // Include query params (stop at quote, space, or backslash)
+                while (endIdx < after.length && !/['\"\\s<>]/.test(after[endIdx])) endIdx++;
+                const pathAndQuery = after.substring(0, endIdx);
+                // Find the protocol prefix from before the split
+                const before = lines[i-1];
+                let proto = 'http://';
+                if (before.endsWith('https://')) proto = 'https://';
+                else if (before.endsWith('http://')) proto = 'http://';
+                let url = proto + 'mpvideo.qpic.cn' + pathAndQuery;
+                // Base name for dedup (before quality suffix)
+                const slashIdx = pathAndQuery.indexOf('/');
+                const dotFIdx = pathAndQuery.indexOf('.f');
+                const base = pathAndQuery.substring(slashIdx >= 0 ? slashIdx + 1 : 0, dotFIdx >= 0 ? dotFIdx : undefined);
+                if (!qualityMap[base] || quality > qualityMap[base].quality) {
+                    qualityMap[base] = { quality, url };
+                }
+                if (!qualityMap[base] || quality > qualityMap[base].quality) {
+                    qualityMap[base] = { quality, url };
+                }
+            }
+            // Add best quality URL for each unique video
+            for (const key in qualityMap) {
+                const url = qualityMap[key].url;
+                if (!seenVids.has(url)) {
+                    seenVids.add(url);
+                    result.videos.push({ src: url, vid: mpvids[0] || '' });
+                }
+            }
+            break;  // Only need first script with video URLs
+        }
+    }
+
+    // 8d. Fallback: if we found mpvid elements but no URLs, store vid for reference
+    mpvids.forEach(vid => {
+        if (!result.videos.some(v => v.vid === vid)) {
+            const el = document.querySelector('[data-mpvid="' + vid + '"]');
+            const cover = el ? decodeURIComponent(el.getAttribute('data-cover') || '') : '';
+            result.videos.push({ vid, cover, src: '' });
+        }
+    });
+
+    // 9. Rich content HTML from #js_content
     const content = document.querySelector('#js_content');
     result.html = content ? content.innerHTML : '';
     result.hasContent = !!content;
 
-    // 9. cgiDataNew — WeChat embeds article metadata in window.cgiDataNew
+    // 10. cgiDataNew — WeChat embeds article metadata in window.cgiDataNew
     //    user_info.appmsg_bar_data contains read/like/share/comment counts
     //    NOTE: only populated with real data when accessed via authenticated WeChat session;
     //    anonymous browser access returns empty object {} with all counts = 0.
@@ -569,6 +654,36 @@ def _build_wechat_result(data: dict, page_url: str, md_converter=None) -> dict:
                       If None, uses a simple tag-stripping fallback.
     """
     html = data.get("html", "")
+
+    # Inject video URLs into HTML before markdown conversion.
+    # JS evaluate extracts MP4 URLs from page scripts, but the DOM only has
+    # span.video_iframe[data-mpvid] without <video src> (blocked by resource filter).
+    videos = data.get("videos", [])
+    if html and videos:
+        video_urls_with_src = [v for v in videos if v.get("src")]
+        if video_urls_with_src:
+            import re as _re
+            for v in video_urls_with_src:
+                src = _clean_wechat_video_url(v["src"])
+                vid = v.get("vid", "")
+                # Try to inject <video src> into the matching span.video_iframe container
+                if vid:
+                    pattern = (
+                        r'(<span[^>]*data-mpvid="' + _re.escape(vid) + r'"[^>]*>)'
+                        r'(.*?)(</span>)'
+                    )
+                    # Use lambda to avoid regex escape interpretation in replacement
+                    video_html = f'<video src="{src}"></video>'
+                    new_html = _re.sub(
+                        pattern,
+                        lambda m: m.group(1) + video_html + m.group(3),
+                        html, flags=_re.DOTALL,
+                    )
+                    if new_html != html:
+                        html = new_html
+                        continue
+                # Fallback: append video link at end of content
+                html += f'\n<p><a href="{src}">\u25b6 视频</a></p>\n'
 
     if md_converter and html:
         content = md_converter(html)
@@ -618,7 +733,26 @@ def _build_wechat_result(data: dict, page_url: str, md_converter=None) -> dict:
     result["comment_id"] = data.get("commentId", "")
     result["appmsg_token"] = data.get("appmsgToken", "")
 
+    # videos extracted from <video> tags and data-mpvid containers
+    # Clean JS escape sequences from URLs before passing to downstream consumers
+    raw_videos = data.get("videos", [])
+    for v in raw_videos:
+        if v.get("src"):
+            v["src"] = _clean_wechat_video_url(v["src"])
+    result["videos"] = raw_videos
+
     return result
+
+
+def _clean_wechat_video_url(url: str) -> str:
+    """Decode JS hex escapes and HTML entities in WeChat video URLs."""
+    # \x26amp; → &amp; → &  (JS hex escape of HTML entity)
+    url = url.replace("\\x26amp;", "&").replace("\\x26", "&")
+    url = url.replace("&amp;", "&")
+    # mpvideo.qpic.cn requires HTTPS
+    if url.startswith("http://mpvideo"):
+        url = "https://" + url[7:]
+    return url
 
 
 async def evaluate_wechat_article(page, md_converter=None) -> dict:

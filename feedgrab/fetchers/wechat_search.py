@@ -272,6 +272,50 @@ def _preprocess_wechat_html(html: str) -> tuple:
         code_blocks.append((lang, code_text))
         pre.replace_with(soup.new_string(f"\n\n{placeholder}\n\n"))
 
+    # Handle video elements: span.video_iframe / mpvideo / video containers
+    # Replace with [▶ 视频](mp4_url) links before markdownify
+    for container in soup.select("span.video_iframe, mpvideo"):
+        # Try to find a <video> with direct MP4 src inside or nearby
+        video_tag = container.find("video", src=True)
+        video_src = video_tag["src"] if video_tag else ""
+
+        if not video_src:
+            # Fallback: check parent for <video>
+            parent = container.parent
+            if parent:
+                video_tag = parent.find("video", src=True)
+                video_src = video_tag["src"] if video_tag else ""
+
+        if video_src:
+            link_tag = soup.new_tag("p")
+            a_tag = soup.new_tag("a", href=video_src)
+            a_tag.string = "▶ 视频"
+            link_tag.append(a_tag)
+            container.replace_with(link_tag)
+        else:
+            # No direct MP4 URL — just remove the broken placeholder
+            container.decompose()
+
+    # Remove standalone <video> tags that were already handled above or are orphaned
+    for video_tag in soup.find_all("video"):
+        src = video_tag.get("src", "")
+        if src:
+            link_tag = soup.new_tag("p")
+            a_tag = soup.new_tag("a", href=src)
+            a_tag.string = "▶ 视频"
+            link_tag.append(a_tag)
+            video_tag.replace_with(link_tag)
+        else:
+            video_tag.decompose()
+
+    # Remove "视频加载失败" error text from video poster containers
+    for el in soup.select(".js_video_poster"):
+        el.decompose()
+    # Also remove common video error text nodes
+    for el in soup.find_all(string=re.compile(r"视频加载失败|请刷新页面再试")):
+        if el.parent and el.parent.name in ("p", "div", "span"):
+            el.parent.decompose()
+
     return str(soup), code_blocks
 
 

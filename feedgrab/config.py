@@ -741,6 +741,11 @@ def xhs_download_media() -> bool:
     return os.getenv("XHS_DOWNLOAD_MEDIA", "false").lower() in ("true", "1", "yes")
 
 
+def mpweixin_download_media() -> bool:
+    """Download WeChat article videos/images to local attachments directory. Default false."""
+    return os.getenv("MPWEIXIN_DOWNLOAD_MEDIA", "false").lower() in ("true", "1", "yes")
+
+
 # ── Chrome CDP ───────────────────────────────────────────────
 
 def chrome_cdp_login() -> bool:

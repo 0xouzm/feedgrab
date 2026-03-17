@@ -146,6 +146,20 @@ def _extract_filename(url: str, platform: str) -> str:
         if basename:
             return _sanitize(basename)
 
+    elif platform == "wechat":
+        # mpvideo.qpic.cn/.../xxx.f10002.mp4?dis_k=...
+        basename = path.split("/")[-1]
+        # Strip query params already handled by urlparse, just sanitize
+        if "." in basename:
+            return _sanitize(basename)
+        # Fallback: use last two segments (some URLs have no extension in last part)
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 2 and "." in parts[-1]:
+            return _sanitize(parts[-1])
+        # Last resort: hash-based name
+        if basename:
+            return _sanitize(f"{basename}.mp4")
+
     # Generic fallback
     basename = path.split("/")[-1]
     if "." in basename:
@@ -159,6 +173,7 @@ def _optimize_url(url: str, platform: str) -> str:
 
     Twitter: append name=orig for original resolution.
     XHS: strip CDN resize suffix.
+    WeChat: upgrade http to https.
     """
     if platform == "twitter" and "pbs.twimg.com/media/" in url:
         parsed = urlparse(url)
@@ -171,6 +186,12 @@ def _optimize_url(url: str, platform: str) -> str:
         # Remove CDN resize/format suffixes
         return re.sub(r"![a-z_0-9]+$", "", url)
 
+    if platform == "wechat":
+        # mpvideo.qpic.cn requires HTTPS
+        if url.startswith("http://"):
+            url = "https://" + url[7:]
+        return url
+
     return url
 
 
@@ -178,6 +199,8 @@ def _download_headers(platform: str) -> dict:
     """Platform-specific download headers."""
     if platform == "xhs":
         return {"Referer": "https://www.xiaohongshu.com/"}
+    if platform == "wechat":
+        return {"Referer": "https://mp.weixin.qq.com/"}
     return {}
 
 

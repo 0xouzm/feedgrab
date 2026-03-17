@@ -132,6 +132,7 @@ CHROME_CDP_LOGIN=true feedgrab login xhs
 # 下载推文图片/视频到本地（保存到 attachments/{item_id}/ 子目录）
 X_DOWNLOAD_MEDIA=true feedgrab https://x.com/user/status/123
 XHS_DOWNLOAD_MEDIA=true feedgrab https://www.xiaohongshu.com/explore/xxx
+MPWEIXIN_DOWNLOAD_MEDIA=true feedgrab https://mp.weixin.qq.com/s/xxx
 
 # 自动检测本机 Chrome UA 并写入 .env（推荐首次部署时运行）
 feedgrab detect-ua
@@ -624,6 +625,7 @@ cp .env.example .env
 | `CHROME_CDP_PORT` | 否 | Chrome CDP 端口（默认：`9222`） |
 | `X_DOWNLOAD_MEDIA` | 否 | Twitter 图片/视频下载到本地 `attachments/` 子目录（默认：`false`） |
 | `XHS_DOWNLOAD_MEDIA` | 否 | 小红书图片下载到本地 `attachments/` 子目录（默认：`false`） |
+| `MPWEIXIN_DOWNLOAD_MEDIA` | 否 | 微信公众号视频下载到本地 `attachments/` 子目录（默认：`false`） |
 | `BROWSER_USER_AGENT` | 否 | 全局浏览器 UA（推荐 `feedgrab detect-ua` 自动检测） |
 | `TG_API_ID` | 仅 Telegram | 从 https://my.telegram.org 获取 |
 | `TG_API_HASH` | 仅 Telegram | 从 https://my.telegram.org 获取 |

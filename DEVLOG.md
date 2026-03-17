@@ -2,6 +2,54 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-17 · v0.12.2 · 微信公众号视频提取 + 媒体下载
+
+### 背景
+微信公众号文章中嵌入的视频（`<span class="video_iframe" data-mpvid>`）在当前抓取流程中被丢弃，Markdown 输出显示为"视频加载失败，请刷新页面再试"。实际上页面 JS 脚本中包含可直接访问的 MP4 地址（`mpvideo.qpic.cn` 域名，带签名时效），需要提取到 Markdown 中并支持可选下载。
+
+### 方案决策
+
+**视频 URL 提取（JS evaluate + 脚本解析）**：
+- `<video>` 标签的 `src` 因资源拦截通常为空，不可靠
+- 改为从页面 `<script>` 文本中用字符串分割法提取 `mpvideo.qpic.cn` URL
+- 多质量版本去重：f10002(SD) / f10004(HD) / f10102 / f10104，自动选择最高质量
+- URL 清理：JS hex escape `\x26amp;` → `&`，`http://` → `https://`（mpvideo CDN 要求 HTTPS）
+
+**HTML 预处理注入**：
+- `_build_wechat_result()` 在调用 `md_converter` 前将视频 URL 注入 `span.video_iframe` 容器
+- `_preprocess_wechat_html()` 将 `<video src>` 和 `span.video_iframe` 替换为 `[▶ 视频](url)` 链接
+- 同时清理"视频加载失败"错误文本和 `.js_video_poster` 容器
+
+**媒体下载**：
+- 仿 Twitter/XHS 模式：`MPWEIXIN_DOWNLOAD_MEDIA=true` 开启
+- `utils/media.py` 新增 `platform="wechat"` 分支（filename 提取 + HTTPS 升级 + Referer 头）
+- 覆盖范围：单篇（`reader.py`）+ 按账号批量 + 专辑批量
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/browser.py` | 修改 | JS evaluate 新增视频提取（脚本解析 + 质量选优）；`_build_wechat_result()` HTML 注入视频链接；`_clean_wechat_video_url()` URL 清理 |
+| `feedgrab/fetchers/wechat_search.py` | 修改 | `_preprocess_wechat_html()` 新增视频元素→链接替换 + 错误文本清理 |
+| `feedgrab/schema.py` | 修改 | `from_wechat()` extra 新增 `videos` / `images` 字段 |
+| `feedgrab/config.py` | 修改 | 新增 `mpweixin_download_media()` 配置函数 |
+| `feedgrab/utils/media.py` | 修改 | `platform="wechat"` 分支（filename / headers / URL 优化） |
+| `feedgrab/reader.py` | 修改 | 单篇 WeChat 媒体下载触发 |
+| `feedgrab/fetchers/mpweixin_account.py` | 修改 | 批量媒体下载触发 |
+| `feedgrab/fetchers/mpweixin_album.py` | 修改 | 批量媒体下载触发 |
+| `.env.example` | 修改 | 新增 `MPWEIXIN_DOWNLOAD_MEDIA` 配置项 |
+
+### 验证结果
+- 测试文章 `https://mp.weixin.qq.com/s/GlNS_Lzf6pacqqNCGGXD4A`（含 1 个视频）
+- 默认模式：视频链接正确出现在 Markdown 第 149 行 `[▶ 视频](https://mpvideo.qpic.cn/...f10104.mp4?...)` ✅
+- 下载模式：视频成功下载到 `attachments/42d48779ff55/` (582KB f10104 最高质量) ✅
+- Markdown URL 替换为相对路径 `attachments/42d48779ff55/xxx.f10104.mp4` ✅
+- "视频加载失败"错误文本被正确清理 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-17 · v0.12.1 · 微信公众号评论抓取（实验性）
 
 ### 背景

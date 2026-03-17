@@ -351,7 +351,20 @@ async def fetch_account_articles(
                         # Save
                         item = from_wechat(art_data)
                         item.category = f"account/{nickname}"
-                        save_to_markdown(item)
+                        saved_path = save_to_markdown(item)
+
+                        # Download media if enabled
+                        if saved_path and (item.extra.get("videos") or item.extra.get("images")):
+                            from feedgrab.config import mpweixin_download_media
+                            if mpweixin_download_media():
+                                from feedgrab.utils.media import download_media
+                                download_media(
+                                    saved_path,
+                                    item.extra.get("images", []),
+                                    item.extra.get("videos", []),
+                                    item.id,
+                                    platform="wechat",
+                                )
 
                         # Update dedup index
                         if item_id:
