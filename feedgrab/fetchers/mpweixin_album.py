@@ -194,11 +194,15 @@ async def fetch_album_articles(
     from feedgrab.fetchers.browser import (
         get_async_playwright, stealth_launch, get_stealth_context_options,
         setup_resource_blocking, generate_referer,
-        evaluate_wechat_article,
+        evaluate_wechat_article, fetch_wechat_comments,
     )
     from feedgrab.fetchers.wechat_search import _html_to_markdown
     from feedgrab.schema import from_wechat
     from feedgrab.utils.storage import save_to_markdown
+    from feedgrab.config import mpweixin_fetch_comments, mpweixin_max_comments
+
+    _fetch_comments = mpweixin_fetch_comments()
+    _max_comments = mpweixin_max_comments()
 
     album_info = parse_album_url(url)
     album_id = album_info["album_id"]
@@ -318,6 +322,17 @@ async def fetch_album_articles(
                         art_data = await evaluate_wechat_article(
                             art_page, md_converter=_html_to_markdown,
                         )
+
+                        # Fetch comments before closing page
+                        if _fetch_comments and art_data.get("comment_id"):
+                            cmt = await fetch_wechat_comments(
+                                art_page, art_data["comment_id"],
+                                appmsg_token=art_data.get("appmsg_token", ""),
+                                max_comments=_max_comments,
+                            )
+                            if cmt:
+                                art_data["comment_list"] = cmt
+
                         await art_page.close()
 
                         # Fallback metadata from album API

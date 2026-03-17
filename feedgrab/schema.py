@@ -335,6 +335,7 @@ def from_wechat(article: dict) -> UnifiedContent:
             "wow": article.get('wow', 0),
             "shares": article.get('shares', 0),
             "comments": article.get('comments', 0),
+            "comment_list": article.get('comment_list', []),
         },
     )
 

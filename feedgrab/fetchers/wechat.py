@@ -20,9 +20,10 @@ async def _browser_fetch(url: str) -> Dict[str, Any]:
     from feedgrab.fetchers.browser import (
         get_async_playwright, stealth_launch, get_stealth_context_options,
         setup_resource_blocking, generate_referer,
-        evaluate_wechat_article,
+        evaluate_wechat_article, fetch_wechat_comments,
     )
     from feedgrab.fetchers.wechat_search import _html_to_markdown
+    from feedgrab.config import mpweixin_fetch_comments, mpweixin_max_comments
 
     async_pw = get_async_playwright()
     async with async_pw() as p:
@@ -41,6 +42,17 @@ async def _browser_fetch(url: str) -> Dict[str, Any]:
             )
             if not result.get("content"):
                 raise ValueError("Browser extraction returned empty content")
+
+            # Fetch comments if enabled (requires WeChat client session for auth)
+            if mpweixin_fetch_comments() and result.get("comment_id"):
+                comments = await fetch_wechat_comments(
+                    page, result["comment_id"],
+                    appmsg_token=result.get("appmsg_token", ""),
+                    max_comments=mpweixin_max_comments(),
+                )
+                if comments:
+                    result["comment_list"] = comments
+
             logger.info(f"[WeChat] Browser OK: {result['title'][:60]}")
             return result
         finally:

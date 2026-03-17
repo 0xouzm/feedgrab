@@ -610,6 +610,8 @@ cp .env.example .env
 | `MPWEIXIN_ID_DELAY` | 否 | 按账号批量：文章处理间隔秒数（默认：`3.0`） |
 | `MPWEIXIN_ZHUANJI_SINCE` | 否 | 按专辑批量：仅抓取该日期之后的文章（`YYYY-MM-DD`，留空=全部） |
 | `MPWEIXIN_ZHUANJI_DELAY` | 否 | 按专辑批量：文章处理间隔秒数（默认：`3.0`） |
+| `MPWEIXIN_FETCH_COMMENTS` | 否 | 抓取文章评论（实验性，默认：`false`，需微信客户端 session） |
+| `MPWEIXIN_MAX_COMMENTS` | 否 | 最大评论采集数（默认：`100`） |
 | `GITHUB_TOKEN` | 否 | GitHub personal access token（无 token 60 次/小时，有 token 5000 次/小时） |
 | `FEISHU_APP_ID` | 仅飞书 API | 飞书开放平台 App ID（[申请地址](https://open.feishu.cn/app)） |
 | `FEISHU_APP_SECRET` | 仅飞书 API | 飞书开放平台 App Secret |

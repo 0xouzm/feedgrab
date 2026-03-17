@@ -515,12 +515,27 @@ WECHAT_ARTICLE_JS_EVALUATE = """() => {
     // Fallback to og:image
     if (!result.coverImage) result.coverImage = result.ogImage;
 
-    // 7. Rich content HTML from #js_content
+    // 7. comment_id + appmsg_token from page scripts (for appmsg_comment API)
+    result.commentId = '';
+    result.appmsgToken = '';
+    for (const s of scripts) {
+        const text = s.textContent || '';
+        if (!result.commentId) {
+            let m = text.match(/comment_id\\s*[:=]\\s*['"]?(\\d+)['"]?/);
+            if (m) result.commentId = m[1];
+        }
+        if (!result.appmsgToken) {
+            let m = text.match(/appmsg_token\\s*[:=]\\s*['"]([^'"]+)['"]/);
+            if (m) result.appmsgToken = m[1];
+        }
+    }
+
+    // 8. Rich content HTML from #js_content
     const content = document.querySelector('#js_content');
     result.html = content ? content.innerHTML : '';
     result.hasContent = !!content;
 
-    // 8. cgiDataNew — WeChat embeds article metadata in window.cgiDataNew
+    // 9. cgiDataNew — WeChat embeds article metadata in window.cgiDataNew
     //    user_info.appmsg_bar_data contains read/like/share/comment counts
     //    NOTE: only populated with real data when accessed via authenticated WeChat session;
     //    anonymous browser access returns empty object {} with all counts = 0.
@@ -599,6 +614,10 @@ def _build_wechat_result(data: dict, page_url: str, md_converter=None) -> dict:
         result["shares"] = cgi.get("shareNum", 0)
         result["comments"] = cgi.get("commentNum", 0)
 
+    # comment_id + appmsg_token for fetching comment content via appmsg_comment API
+    result["comment_id"] = data.get("commentId", "")
+    result["appmsg_token"] = data.get("appmsgToken", "")
+
     return result
 
 
@@ -634,6 +653,93 @@ async def evaluate_wechat_article(page, md_converter=None) -> dict:
         }
 
     return _build_wechat_result(data, page.url, md_converter)
+
+
+async def fetch_wechat_comments(page, comment_id: str, appmsg_token: str = "",
+                                max_comments: int = 100) -> list:
+    """Fetch article comments via appmsg_comment API in page context.
+
+    Uses page.evaluate(fetch(...)) so the request inherits page cookies.
+    Returns standardized comment list:
+        [{user_nickname, content, like_count, sub_comments: [{user_nickname, content}]}]
+    """
+    if not comment_id:
+        return []
+
+    js = """
+    async (args) => {
+        try {
+            let url = '/mp/appmsg_comment?action=getcomment&f=json'
+                + '&comment_id=' + args.commentId
+                + '&offset=0&limit=' + args.limit;
+            if (args.appmsgToken) {
+                url += '&appmsg_token=' + encodeURIComponent(args.appmsgToken);
+            }
+            const resp = await fetch(url, { credentials: 'include' });
+            const data = await resp.json();
+            return data;
+        } catch(e) {
+            return { error: e.message };
+        }
+    }
+    """
+    try:
+        raw = await page.evaluate(js, {
+            "commentId": comment_id,
+            "appmsgToken": appmsg_token,
+            "limit": max_comments,
+        })
+    except Exception as e:
+        logger.debug(f"[wechat-comment] evaluate failed: {e}")
+        return []
+
+    if not raw or raw.get("error"):
+        logger.debug(f"[wechat-comment] API error: {raw}")
+        return []
+
+    # Check for WeChat auth failure (ret=-3 "no session")
+    ret = raw.get("ret", 0)
+    if ret != 0:
+        errmsg = raw.get("errmsg", "unknown")
+        logger.warning(
+            f"[wechat-comment] API rejected (ret={ret}, {errmsg}). "
+            "WeChat comments require client session — not available in regular browser."
+        )
+        return []
+
+    # Parse response: elected_comment is the main comment list
+    elected = raw.get("elected_comment", [])
+    if not elected:
+        logger.debug("[wechat-comment] No elected_comment in response")
+        return []
+
+    comments = []
+    for c in elected:
+        nick = c.get("nick_name", "匿名")
+        text = (c.get("content", "") or "").strip()
+        likes = c.get("like_num", 0)
+
+        # Sub-comments (replies)
+        sub_comments = []
+        for r in c.get("reply_new", {}).get("reply_list", []):
+            sub_nick = r.get("nick_name", "匿名")
+            sub_text = (r.get("content", "") or "").strip()
+            if sub_text:
+                sub_comments.append({
+                    "user_nickname": sub_nick,
+                    "content": sub_text,
+                })
+
+        if text:
+            comments.append({
+                "user_nickname": nick,
+                "content": text,
+                "like_count": likes,
+                "sub_comments": sub_comments,
+            })
+
+    logger.info(f"[wechat-comment] Fetched {len(comments)} comments")
+    return comments
 
 
 def get_session_path(platform: str) -> str:

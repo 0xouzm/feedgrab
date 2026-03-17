@@ -630,6 +630,19 @@ def mpweixin_zhuanji_delay() -> float:
         return 3.0
 
 
+def mpweixin_fetch_comments() -> bool:
+    """Whether to fetch article comments via appmsg_comment API (default false)."""
+    return os.getenv("MPWEIXIN_FETCH_COMMENTS", "false").lower() in ("true", "1", "yes")
+
+
+def mpweixin_max_comments() -> int:
+    """Maximum number of comments to fetch per article (default 100)."""
+    try:
+        return int(os.getenv("MPWEIXIN_MAX_COMMENTS", "100"))
+    except ValueError:
+        return 100
+
+
 # ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------

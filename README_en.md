@@ -533,6 +533,8 @@ cp .env.example .env
 | `MPWEIXIN_SOGOU_DELAY` | No | Delay between article fetches in seconds (default: `3.0`) |
 | `MPWEIXIN_ZHUANJI_SINCE` | No | Album batch: only fetch articles after this date (`YYYY-MM-DD`, empty=all) |
 | `MPWEIXIN_ZHUANJI_DELAY` | No | Album batch: delay between article fetches in seconds (default: `3.0`) |
+| `MPWEIXIN_FETCH_COMMENTS` | No | Fetch article comments (experimental, default: `false`, requires WeChat client session) |
+| `MPWEIXIN_MAX_COMMENTS` | No | Max comments to fetch per article (default: `100`) |
 | `CHROME_CDP_LOGIN` | No | Enable CDP cookie extraction from running Chrome (default: `false`) |
 | `CHROME_CDP_PORT` | No | Chrome CDP port (default: `9222`) |
 | `X_DOWNLOAD_MEDIA` | No | Download Twitter images/videos to local `attachments/` subdirectory (default: `false`) |

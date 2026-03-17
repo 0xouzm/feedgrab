@@ -579,6 +579,27 @@ def _format_markdown(item: UnifiedContent) -> str:
         else:
             fm_lines.append(item.content)
 
+        # WeChat comments section (when fetched via appmsg_comment API)
+        if is_wechat:
+            comment_list = extra.get("comment_list", [])
+            if comment_list:
+                fm_lines.append("")
+                fm_lines.append("## 评论")
+                fm_lines.append("")
+                for c in comment_list:
+                    user = c.get("user_nickname", "匿名")
+                    text = c.get("content", "").strip()
+                    likes = c.get("like_count", 0)
+                    sub_comments = c.get("sub_comments", [])
+                    fm_lines.append(f"> **{user}**（{likes} 赞）：{text}")
+                    fm_lines.append(">")
+                    for sc in sub_comments:
+                        sc_user = sc.get("user_nickname", "匿名")
+                        sc_text = sc.get("content", "").strip()
+                        fm_lines.append(f">> **{sc_user}**：{sc_text}")
+                        fm_lines.append(">>")
+                    fm_lines.append("")
+
     fm_lines.append("")  # trailing newline
     result = "\n".join(fm_lines)
     # Strip Twitter emoji SVG images (displayed oversized in Obsidian)

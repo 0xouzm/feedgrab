@@ -2,6 +2,49 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-17 · v0.12.1 · 微信公众号评论抓取（实验性）
+
+### 背景
+用户希望在抓取微信公众号文章时同时保存精选评论。微信文章评论通过 `appmsg_comment` API 动态加载，不在文章 HTML 中渲染。
+
+### 方案决策
+
+**评论基础设施**：
+- JS evaluate 提取 `comment_id` + `appmsg_token`（从页面脚本变量）
+- `fetch_wechat_comments()` 在页面上下文内调用 `appmsg_comment` API（继承 cookie）
+- 解析 `elected_comment` 列表：主评论 + 子评论（reply_new.reply_list）
+- Markdown 渲染为 blockquote 格式（用户名 + 点赞数 + 内容 + 缩进子评论）
+
+**认证限制发现**：
+- `appmsg_comment` API 需要微信客户端 session（`uin`/`key`/`pass_ticket`/`appmsg_token`），只有在微信 app 内打开文章时才会注入
+- 普通浏览器访问时 `appmsg_token = ""`，API 返回 `ret=-3 "no session"`
+- MP 后台 session（`feedgrab login wechat`）是管理 session，不等于阅读者 session
+- 当前代码优雅降级：无 session 时输出 WARNING 日志，不影响文章抓取
+
+**覆盖范围**：单篇（`wechat.py`）+ 按账号批量（`mpweixin_account.py`）+ 专辑批量（`mpweixin_album.py`）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/config.py` | 修改 | 新增 `mpweixin_fetch_comments()` + `mpweixin_max_comments()` 配置函数 |
+| `feedgrab/fetchers/browser.py` | 修改 | JS evaluate 提取 comment_id + appmsg_token；`fetch_wechat_comments()` 新函数 ~75 行；"no session" 错误 WARNING |
+| `feedgrab/fetchers/wechat.py` | 修改 | 单篇评论抓取触发（`MPWEIXIN_FETCH_COMMENTS=true` 开启） |
+| `feedgrab/fetchers/mpweixin_account.py` | 修改 | 按账号批量评论抓取触发 |
+| `feedgrab/fetchers/mpweixin_album.py` | 修改 | 专辑批量评论抓取触发 |
+| `feedgrab/schema.py` | 修改 | `from_wechat()` 传递 `comment_list` 到 extra |
+| `feedgrab/utils/storage.py` | 修改 | `_format_markdown()` 渲染评论 blockquote 区块 |
+| `.env.example` | 修改 | 新增 `MPWEIXIN_FETCH_COMMENTS` / `MPWEIXIN_MAX_COMMENTS` 配置段 |
+
+### 验证结果
+- 评论 API 调用正常触发，参数完整（`f=json` + `comment_id` + `appmsg_token`）✅
+- 无 session 时 WARNING 日志清晰输出，文章抓取不受影响 ✅
+- 模块导入检查通过 ✅
+
+### 状态：已完成 ✅（评论功能基础设施就绪，等待可行的微信客户端认证方案）
+
+---
+
 ## 2026-03-16 · v0.12.0 · CDP Cookie 提取 + 微信专辑批量 + 媒体文件本地化
 
 ### 背景
