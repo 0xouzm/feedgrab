@@ -729,9 +729,7 @@ feedgrab 基于以下项目融合升级而来：
 如果 feedgrab 对你有帮助，欢迎请作者喝杯咖啡 :)
 
 <p align="center">
-  <img src="docs/Payment_QR_code_alipay.jpg" alt="支付宝" width="250">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/Payment_QR_code_wechat.jpg" alt="微信支付" width="250">
+  <img src="docs/Payment_QR_code.png" alt="打赏码" width="600">
 </p>
 
 ## 许可证

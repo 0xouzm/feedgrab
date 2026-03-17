@@ -640,9 +640,7 @@ Maintained by [@iBigQiang](https://github.com/iBigQiang)
 If feedgrab has been helpful to you, feel free to buy the author a coffee :)
 
 <p align="center">
-  <img src="docs/Payment_QR_code_alipay.jpg" alt="Alipay" width="250">
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/Payment_QR_code_wechat.jpg" alt="WeChat Pay" width="250">
+  <img src="docs/Payment_QR_code.png" alt="Pay QR code" width="600">
 </p>
 
 ## License
