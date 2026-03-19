@@ -2,6 +2,49 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-19 · v0.12.3 · 三项 Bug 修复（微信短链 + GitHub 中文 README + 图片链接 + clip 命令）
+
+### 背景
+三个用户报告的 Bug：(1) 微信短链带追踪参数（`?scene=1&click_id=3`）时 PowerShell `&` 解析报错；(2) GitHub 仓库中文 README 在非根目录（如 `docs/README.zh-CN.md`）时找不到；(3) GitHub README 中相对路径图片在本地 Markdown 中无法预览。
+
+### 方案决策
+
+**Bug 1 — 微信短链 query 参数清理 + `feedgrab clip` 命令**：
+- `_normalize_wechat_url()` 短链格式剥离全部 query 参数和 fragment（短链的 `/s/hash` 就是文章标识，追踪参数是垃圾）
+- PowerShell 的 `&` 报错发生在 shell 解析阶段，Python 程序无法拦截。新增 `feedgrab clip` 命令从系统剪贴板读取 URL，完全绕过 shell 解析
+- `_read_clipboard()` 跨平台实现：Windows `Get-Clipboard` / macOS `pbpaste` / Linux `xclip`/`xsel`
+- 从剪贴板文本中用正则提取第一个 URL，自动清理尾部标点
+
+**Bug 2 — GitHub 中文 README 搜索扩展**：
+- 原实现只查根目录 8 种变体文件名，无法发现子目录中的中文文档
+- 新增 `_find_chinese_readme_from_content()`：解析默认 README 内容中的语言导航链接
+- 6 种中文标记模式：`中文`/`简体中文`/`繁體中文`/`Chinese`/`ZH-CN`/`zh-CN`，兼容 bold/italic 包裹（`[**中文**](path)`）
+- 支持相对路径（`./docs/README.zh-CN.md`）和完整 GitHub URL（自动提取相对路径）
+- 零额外 API 调用（复用已获取的默认 README 内容）
+
+**Bug 3 — GitHub README 图片链接补全**：
+- 新增 `_resolve_relative_urls()`：将相对图片路径转为 `raw.githubusercontent.com` 绝对 URL
+- 同时处理 Markdown `![alt](path)` 和 HTML `<img src="path">` 两种格式
+- 正确处理 README 所在子目录的相对路径（基于 `readme_file` 计算 base_dir）
+- `../` 路径规范化，绝对 URL / data URI / 锚点链接保持不变
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/reader.py` | 修改 | `_normalize_wechat_url()` 短链格式剥离全部 query + fragment |
+| `feedgrab/fetchers/github.py` | 修改 | 新增 `_find_chinese_readme_from_content()`（~45 行）+ `_resolve_relative_urls()`（~50 行）；`fetch_github()` 新增 Step 3b + Step 4 |
+| `feedgrab/cli.py` | 修改 | 新增 `_read_clipboard()`（跨平台剪贴板）+ `cmd_clip()`（URL 提取+抓取）+ `clip` 命令路由 + 帮助信息更新 |
+
+### 验证结果
+- Bug 1：`?scene=1&click_id=3` 短链 → 干净 URL ✅；长链保留 `__biz/mid/idx/sn` ✅；`feedgrab clip` 剪贴板读取正常 ✅
+- Bug 2：`saicaca/fuwari` 仓库成功从 `[**中文**](https://github.com/.../docs/README.zh-CN.md)` 链接发现中文版，`readme_file=docs/README.zh-CN.md` ✅
+- Bug 3：`axtonliu/axton-obsidian-visual-skills` 仓库 `assets/excalidraw-demo.png` 补全为 `raw.githubusercontent.com/.../assets/excalidraw-demo.png` ✅；外部绝对 URL 不变 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-17 · v0.12.2 · 微信公众号视频提取 + 媒体下载
 
 ### 背景

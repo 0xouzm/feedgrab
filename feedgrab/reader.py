@@ -97,7 +97,8 @@ class UniversalReader:
         essential = {k: v for k, v in qs.items()
                      if k in ("__biz", "mid", "idx", "sn")}
         if not essential:
-            return url  # short link or no query params
+            # Short link or no essential params — strip all tracking junk
+            return urlunparse(parsed._replace(query="", fragment=""))
         clean_query = urlencode(essential, doseq=True)
         return urlunparse(parsed._replace(query=clean_query))
 

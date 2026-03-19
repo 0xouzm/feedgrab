@@ -165,6 +165,125 @@ def _fetch_default_readme(owner: str, repo: str) -> tuple:
     return content, filename
 
 
+def _find_chinese_readme_from_content(
+    owner: str, repo: str, readme_content: str
+) -> Optional[tuple]:
+    """Search README content for Chinese README links.
+
+    Scans for language navigation patterns like:
+      [中文](docs/README.zh-CN.md)
+      README in [中文](./docs/README.zh-CN.md) / [日本語](...)
+
+    Returns (path, content) tuple if found, None otherwise.
+    """
+    # Patterns for Chinese language link text (with optional bold/italic markers)
+    cn_link_patterns = [
+        r'\[\*{0,2}中文\*{0,2}\]\(([^)]+)\)',
+        r'\[\*{0,2}简体中文\*{0,2}\]\(([^)]+)\)',
+        r'\[\*{0,2}繁體中文\*{0,2}\]\(([^)]+)\)',
+        r'\[\*{0,2}Chinese\*{0,2}\]\(([^)]+)\)',
+        r'\[\*{0,2}ZH-CN\*{0,2}\]\(([^)]+)\)',
+        r'\[\*{0,2}zh-CN\*{0,2}\]\(([^)]+)\)',
+    ]
+
+    for pattern in cn_link_patterns:
+        match = re.search(pattern, readme_content, re.IGNORECASE)
+        if not match:
+            continue
+
+        path = match.group(1).strip()
+
+        # Handle full GitHub URLs pointing to the same repo
+        if path.startswith(("http://", "https://")):
+            if f"{owner}/{repo}" in path:
+                # Extract relative path: .../blob/main/docs/README.zh-CN.md
+                parts = path.split(f"{owner}/{repo}/", 1)
+                if len(parts) > 1:
+                    path = re.sub(r"^(blob|tree)/[^/]+/", "", parts[1])
+                else:
+                    continue
+            else:
+                continue
+
+        # Clean leading ./
+        if path.startswith("./"):
+            path = path[2:]
+
+        # Skip anchors and empty paths
+        if not path or path.startswith("#"):
+            continue
+
+        try:
+            content = _fetch_file_raw(owner, repo, path)
+            logger.info(f"[GitHub] Found Chinese README from content link: {path}")
+            return path, content
+        except Exception as e:
+            logger.debug(
+                f"[GitHub] Failed to fetch linked Chinese README {path}: {e}"
+            )
+            continue
+
+    return None
+
+
+def _resolve_relative_urls(
+    content: str, owner: str, repo: str, branch: str, readme_path: str
+) -> str:
+    """Convert relative image URLs in README to absolute GitHub raw URLs.
+
+    Handles both Markdown images ![alt](path) and HTML <img src="path">.
+    """
+    # Base directory of the README file
+    if "/" in readme_path:
+        base_dir = readme_path.rsplit("/", 1)[0] + "/"
+    else:
+        base_dir = ""
+
+    raw_base = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/"
+
+    def _resolve(rel_path: str) -> str:
+        """Resolve a single relative path to an absolute raw URL."""
+        # Skip absolute URLs, anchors, data URIs
+        if rel_path.startswith(("http://", "https://", "//", "data:", "#")):
+            return rel_path
+
+        if rel_path.startswith("./"):
+            rel_path = rel_path[2:]
+
+        full_path = base_dir + rel_path
+
+        # Normalize ../ segments
+        parts = full_path.split("/")
+        resolved = []
+        for part in parts:
+            if part == "..":
+                if resolved:
+                    resolved.pop()
+            elif part and part != ".":
+                resolved.append(part)
+
+        return raw_base + "/".join(resolved)
+
+    # Markdown images: ![alt](relative/path)
+    def _replace_md_img(m):
+        return f"![{m.group(1)}]({_resolve(m.group(2))})"
+
+    content = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", _replace_md_img, content)
+
+    # HTML img src: <img src="relative/path" ...> or <img src='path'>
+    def _replace_html_img(m):
+        return f"{m.group(1)}{m.group(2)}{_resolve(m.group(3))}{m.group(2)}"
+
+    content = re.sub(
+        r'(<img\s[^>]*?src=)(["\'])([^"\']+)\2',
+        _replace_html_img,
+        content,
+        flags=re.IGNORECASE,
+    )
+
+    return content
+
+
 def _extract_readme_summary(content: str) -> str:
     """Extract the first meaningful descriptive line from README content.
 
@@ -255,10 +374,24 @@ async def fetch_github(url: str) -> Dict[str, Any]:
             readme_content, default_name = _fetch_default_readme(owner, repo)
             readme_file = readme_file or default_name
             logger.info(f"[GitHub] Using default README: {readme_file}")
+
+            # Step 3b: Search default README for Chinese version link
+            cn_result = _find_chinese_readme_from_content(
+                owner, repo, readme_content
+            )
+            if cn_result:
+                readme_file, readme_content = cn_result
         except Exception as e:
             logger.warning(f"[GitHub] No README found: {e}")
             readme_content = meta.get("description", "") or "(No README)"
             readme_file = ""
+
+    # Step 4: Resolve relative image URLs to absolute GitHub raw URLs
+    if readme_file:
+        readme_content = _resolve_relative_urls(
+            readme_content, owner, repo,
+            meta["default_branch"], readme_file,
+        )
 
     # Build title: prefer README summary, fallback to API description
     summary = _extract_readme_summary(readme_content)

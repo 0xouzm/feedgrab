@@ -41,6 +41,9 @@ feedgrab 可自由组合，按需使用：
 # 抓取任意 URL
 feedgrab https://mp.weixin.qq.com/s/abc123
 
+# 从剪贴板读取 URL 并抓取（解决 PowerShell 中 & 符号报错问题）
+feedgrab clip
+
 # 抓取推文（配置好 Cookie 后自动走 GraphQL 深度抓取）
 feedgrab https://x.com/elonmusk/status/123456
 
@@ -218,7 +221,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`）/ 专辑批量（`mpweixin-zhuanji`） | — |
-| GitHub | **REST API**（仓库元数据 + 中文 README 优先 + 摘要提取） | — |
+| GitHub | **REST API**（仓库元数据 + 中文 README 优先（含子目录语言链接搜索）+ 相对图片链接补全 + 摘要提取） | — |
 | 小红书 | **API (xhshow)** → Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量** + **关键词搜索 `xhs-so`**) | — |
 | 飞书/Lark | **Open API** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载） | — |
 | Telegram | Telethon | — |
@@ -650,7 +653,7 @@ feedgrab/
 │   │   ├── browser.py         # 隐身浏览器引擎（patchright Tier 1 → playwright Tier 3 + 52 stealth flags）
 │   │   ├── bilibili.py        # B 站 API
 │   │   ├── youtube.py         # yt-dlp 字幕提取
-│   │   ├── github.py          # GitHub REST API（仓库元数据 + 中文 README 优先）
+│   │   ├── github.py          # GitHub REST API（仓库元数据 + 中文 README 优先 + 子目录搜索 + 图片链接补全）
 │   │   ├── rss.py             # RSS 解析（feedparser）
 │   │   ├── telegram.py        # Telegram 频道（Telethon）
 │   │   ├── twitter.py         # X/Twitter 六级兜底调度器
@@ -700,7 +703,7 @@ feedgrab/
     │   └─ GraphQL（完整线程 + 媒体）→ FxTwitter → Syndication → oEmbed → Jina → Playwright
     │
     ├─ GitHub 仓库
-    │   └─ REST API → 仓库元数据 + 中文 README 优先 → Markdown
+    │   └─ REST API → 仓库元数据 + 中文 README 优先（根目录 + 子目录语言链接）→ 相对图片补全 → Markdown
     │
     ├─ 视频（YouTube、B站、X 视频）
     │   ├─ Python 抓取器 → 元数据（标题、描述）

@@ -41,6 +41,9 @@ feedgrab is composable. Use the layers you need:
 # Fetch any URL
 feedgrab https://mp.weixin.qq.com/s/abc123
 
+# Fetch URL from clipboard (solves PowerShell '&' parsing error)
+feedgrab clip
+
 # Fetch a tweet (with GraphQL deep fetch if cookies configured)
 feedgrab https://x.com/elonmusk/status/123456
 
@@ -192,7 +195,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) / Album batch (`mpweixin-zhuanji`) | — |
-| GitHub | **REST API** (repo metadata + Chinese README priority + summary extraction) | — |
+| GitHub | **REST API** (repo metadata + Chinese README priority (incl. subdirectory language link search) + relative image URL resolution + summary extraction) | — |
 | Xiaohongshu (小红书) | **API (xhshow)** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
 | Feishu/Lark (飞书) | **Open API** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
 | Telegram | Telethon | — |
@@ -566,7 +569,7 @@ feedgrab/
 │   │   ├── browser.py         # Playwright headless (anti-scraping fallback)
 │   │   ├── bilibili.py        # Bilibili API
 │   │   ├── youtube.py         # yt-dlp subtitle extraction
-│   │   ├── github.py          # GitHub REST API (repo metadata + Chinese README priority)
+│   │   ├── github.py          # GitHub REST API (repo metadata + Chinese README priority + subdirectory search + image URL resolution)
 │   │   ├── rss.py             # RSS (feedparser)
 │   │   ├── telegram.py        # Telegram (Telethon)
 │   │   ├── twitter.py         # X/Twitter six-tier dispatcher

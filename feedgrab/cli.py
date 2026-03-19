@@ -12,6 +12,7 @@ import sys
 import os
 import re
 import shutil
+import subprocess
 import time
 import asyncio
 from pathlib import Path
@@ -25,6 +26,53 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from feedgrab.reader import UniversalReader
+
+
+def _read_clipboard() -> str:
+    """Read text from system clipboard (Windows/macOS/Linux)."""
+    if sys.platform == "win32":
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout.strip()
+    elif sys.platform == "darwin":
+        r = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=5)
+        return r.stdout.strip()
+    else:
+        for cmd in (["xclip", "-selection", "clipboard", "-o"],
+                    ["xsel", "--clipboard", "--output"]):
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                if r.returncode == 0:
+                    return r.stdout.strip()
+            except FileNotFoundError:
+                continue
+    return ""
+
+
+def cmd_clip():
+    """Read URL from clipboard and fetch it.
+
+    Solves the PowerShell '&' operator issue — user copies a URL, runs
+    'feedgrab clip', and the URL is read from clipboard without shell parsing.
+    """
+    text = _read_clipboard()
+    if not text:
+        print("❌ 剪贴板为空或无法读取")
+        sys.exit(1)
+
+    # Extract first URL from clipboard text
+    url_match = re.search(r'https?://[^\s<>"\']+', text)
+    if not url_match:
+        print(f"❌ 剪贴板中未找到 URL: {text[:100]}")
+        sys.exit(1)
+
+    url = url_match.group(0)
+    # Strip trailing punctuation that might be copied
+    url = url.rstrip(".,;:!?")
+    print(f"📋 从剪贴板读取: {url}")
+    cmd_fetch([url])
 
 
 def cmd_fetch(urls: list):
@@ -1537,6 +1585,7 @@ def main():
 Usage:
     feedgrab setup              First-time deployment guide (recommended for new users)
     feedgrab <url>              Fetch content from any URL
+    feedgrab clip               Fetch URL from clipboard (solves PowerShell '&' issue)
     feedgrab <url1> <url2>      Fetch multiple URLs
     feedgrab x-so <keyword>     Search Twitter by keyword (engagement table)
     feedgrab xhs-so <keyword>   Search XHS by keyword (engagement table)
@@ -1589,6 +1638,8 @@ Examples:
 
     if cmd == "setup":
         cmd_setup()
+    elif cmd == "clip":
+        cmd_clip()
     elif cmd == "login":
         if len(sys.argv) < 3:
             print("\u274c Usage: feedgrab login <platform> [--headless]")
