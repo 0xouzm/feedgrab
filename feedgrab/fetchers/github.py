@@ -47,13 +47,17 @@ def _raw_headers() -> dict:
 
 
 def parse_github_url(url: str) -> tuple:
-    """Extract (owner, repo) from any GitHub URL.
+    """Extract (owner, repo, file_path) from any GitHub URL.
 
     Handles:
-      - https://github.com/owner/repo
-      - https://github.com/owner/repo/blob/main/README.md
-      - https://github.com/owner/repo/tree/main/src
-      - https://github.com/owner/repo/issues/123
+      - https://github.com/owner/repo           → (owner, repo, None)
+      - https://github.com/owner/repo/blob/main/docs/README.zh.md
+                                                 → (owner, repo, "docs/README.zh.md")
+      - https://github.com/owner/repo/tree/main/src  → (owner, repo, None)
+      - https://github.com/owner/repo/issues/123     → (owner, repo, None)
+
+    Returns (owner, repo, file_path) — file_path is set only for /blob/ URLs
+    pointing to a file (not directory).
     """
     parsed = urlparse(url)
     path_parts = [p for p in parsed.path.strip("/").split("/") if p]
@@ -68,7 +72,18 @@ def parse_github_url(url: str) -> tuple:
     if repo.endswith(".git"):
         repo = repo[:-4]
 
-    return owner, repo
+    # Extract file path from /blob/{branch}/path/to/file URLs
+    file_path = None
+    if (
+        len(path_parts) >= 4
+        and path_parts[2] == "blob"
+    ):
+        # path_parts[3] = branch, path_parts[4:] = file path segments
+        candidate = "/".join(path_parts[4:])
+        if candidate and "." in candidate.split("/")[-1]:
+            file_path = candidate
+
+    return owner, repo, file_path
 
 
 def _fetch_repo_metadata(owner: str, repo: str) -> dict:
@@ -176,17 +191,26 @@ def _find_chinese_readme_from_content(
 
     Returns (path, content) tuple if found, None otherwise.
     """
-    # Patterns for Chinese language link text (with optional bold/italic markers)
-    cn_link_patterns = [
-        r'\[\*{0,2}中文\*{0,2}\]\(([^)]+)\)',
-        r'\[\*{0,2}简体中文\*{0,2}\]\(([^)]+)\)',
-        r'\[\*{0,2}繁體中文\*{0,2}\]\(([^)]+)\)',
-        r'\[\*{0,2}Chinese\*{0,2}\]\(([^)]+)\)',
-        r'\[\*{0,2}ZH-CN\*{0,2}\]\(([^)]+)\)',
-        r'\[\*{0,2}zh-CN\*{0,2}\]\(([^)]+)\)',
+    # Chinese keyword variants to match in link text
+    cn_keywords = [
+        "中文", "简体中文", "繁體中文", "Chinese", "ZH-CN", "zh-CN",
     ]
 
-    for pattern in cn_link_patterns:
+    # Build keyword alternation for regex
+    cn_alt = "|".join(re.escape(k) for k in cn_keywords)
+
+    # Pattern 1: Markdown links — [any prefix 中文 any suffix](url)
+    md_patterns = [
+        rf'\[[^\]]*(?:{cn_alt})[^\]]*\]\(([^)]+)\)',
+    ]
+    # Pattern 2: HTML <a> links — <a href="url">...中文...</a>
+    html_patterns = [
+        rf'<a\s[^>]*href=["\']([^"\']+)["\'][^>]*>[^<]*(?:{cn_alt})[^<]*</a>',
+    ]
+
+    all_patterns = md_patterns + html_patterns
+
+    for pattern in all_patterns:
         match = re.search(pattern, readme_content, re.IGNORECASE)
         if not match:
             continue
@@ -319,6 +343,12 @@ def _extract_readme_summary(content: str) -> str:
         # Skip lines that are just separators like "---" or "***" or "|"
         if re.match(r'^[\|\-\s:]+$', line):
             continue
+        # Skip translation disclaimers (e.g. "🌐 这是自动翻译。欢迎社区修正!")
+        if re.search(
+            r"auto.?translat|machine.?translat|自动翻译|机器翻译",
+            line, re.IGNORECASE,
+        ):
+            continue
         # Found a meaningful line — clean it up
         # Remove inline markdown links: [text](url) → text
         summary = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', line)
@@ -341,7 +371,7 @@ async def fetch_github(url: str) -> Dict[str, Any]:
       2. GET /repos/{owner}/{repo}/contents/  → root dir listing → find CN readme
       3. GET /repos/{owner}/{repo}/contents/{readme} or /readme → content
     """
-    owner, repo = parse_github_url(url)
+    owner, repo, specific_file = parse_github_url(url)
     logger.info(f"[GitHub] Fetching {owner}/{repo}")
 
     # Step 1: Repo metadata
@@ -352,21 +382,34 @@ async def fetch_github(url: str) -> Dict[str, Any]:
         f"lang={meta['language']}"
     )
 
-    # Step 2: Find Chinese README
+    # Step 1b: If URL points to a specific file, fetch it directly
     readme_file = None
     readme_content = ""
 
-    chinese_readme = _find_chinese_readme(owner, repo)
-    if chinese_readme:
-        logger.info(f"[GitHub] Found Chinese README: {chinese_readme}")
+    if specific_file:
+        logger.info(f"[GitHub] URL points to specific file: {specific_file}")
         try:
-            readme_content = _fetch_file_raw(owner, repo, chinese_readme)
-            readme_file = chinese_readme
+            readme_content = _fetch_file_raw(owner, repo, specific_file)
+            readme_file = specific_file
         except Exception as e:
             logger.warning(
-                f"[GitHub] Failed to fetch {chinese_readme}: {e}, "
-                f"falling back to default README"
+                f"[GitHub] Failed to fetch {specific_file}: {e}, "
+                f"falling back to normal flow"
             )
+
+    # Step 2: Find Chinese README (only if no specific file was fetched)
+    if not readme_content:
+        chinese_readme = _find_chinese_readme(owner, repo)
+        if chinese_readme:
+            logger.info(f"[GitHub] Found Chinese README: {chinese_readme}")
+            try:
+                readme_content = _fetch_file_raw(owner, repo, chinese_readme)
+                readme_file = chinese_readme
+            except Exception as e:
+                logger.warning(
+                    f"[GitHub] Failed to fetch {chinese_readme}: {e}, "
+                    f"falling back to default README"
+                )
 
     # Step 3: Fallback to default README
     if not readme_content:

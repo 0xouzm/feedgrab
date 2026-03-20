@@ -2,6 +2,44 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-21 · v0.12.4 · GitHub 中文 README 检测增强（HTML `<a>` 标签 + 直接文件 URL + 翻译声明跳过）
+
+### 背景
+v0.12.3 修复了从 README 内容中查找子目录中文文档的功能，但仅支持 Markdown `[中文](url)` 链接格式。实际上很多仓库（如 `thedotmack/claude-mem`）使用 HTML `<a href="docs/i18n/README.zh.md">🇨🇳 中文</a>` 格式，且链接文本含 emoji 前缀。同时，直接给定中文 README 的 `/blob/main/path/to/file.md` URL 时，`parse_github_url()` 丢弃文件路径，退化为抓取英文 README。
+
+### 方案决策
+
+**Bug 1 — HTML `<a>` 标签 + emoji 前缀链接不识别**：
+- `_find_chinese_readme_from_content()` 原有 6 个正则模式仅匹配 `[*{0,2}中文*{0,2}](url)` 格式
+- 重构为两类模式：Markdown `[any prefix 中文 any suffix](url)` + HTML `<a href="url">...中文...</a>`
+- 6 个关键词（中文/简体中文/繁體中文/Chinese/ZH-CN/zh-CN）构建正则交替组
+- 允许链接文本中任意前缀/后缀（emoji、空格、bold/italic 等）
+
+**Bug 2 — 直接文件 URL 路径被丢弃**：
+- `parse_github_url()` 返回值从 `(owner, repo)` 扩展为 `(owner, repo, file_path)`
+- 从 `/blob/{branch}/path/to/file` URL 提取 file_path（仅当最后一段含 `.` 扩展名时）
+- `fetch_github()` 新增 Step 1b：有 specific_file 时直接获取，跳过中文 README 搜索
+
+**优化 — 翻译声明跳过**：
+- `_extract_readme_summary()` 新增过滤：匹配 `auto-translat/machine-translat/自动翻译/机器翻译` 的行不作为标题
+- 避免 `🌐 这是自动翻译。欢迎社区修正!` 成为文件名
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/github.py` | 修改 | `parse_github_url()` 返回 3 元组（+file_path）；`_find_chinese_readme_from_content()` 重构正则（Markdown+HTML 双格式）；`_extract_readme_summary()` 跳过翻译声明行；`fetch_github()` 新增 Step 1b 直接文件抓取 |
+
+### 验证结果
+- `thedotmack/claude-mem`（HTML `<a>` 格式）：首页 URL → 成功检测 `docs/i18n/README.zh.md` ✅
+- `thedotmack/claude-mem/blob/main/docs/i18n/README.zh.md`（直接文件 URL）→ 直接抓取中文版 ✅
+- `saicaca/fuwari`（Markdown `[**中文**](url)` 格式）→ 回归测试通过 ✅
+- 标题提取：跳过翻译声明，正确提取项目描述 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-19 · v0.12.3 · 三项 Bug 修复（微信短链 + GitHub 中文 README + 图片链接 + clip 命令）
 
 ### 背景
