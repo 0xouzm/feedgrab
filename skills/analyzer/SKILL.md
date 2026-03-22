@@ -1,3 +1,8 @@
+---
+name: analyzer
+description: Content Analyzer — any content (URL, text, transcript) into structured analysis report with actionable insights. Use when user asks to analyze, summarize, or extract key takeaways from content.
+---
+
 # Content Analyzer Skill
 
 > Any content → structured analysis report with actionable insights

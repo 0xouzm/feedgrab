@@ -32,7 +32,7 @@ feedgrab 可自由组合，按需使用：
 | 层级 | 功能 | 格式 | 安装方式 |
 |------|------|------|----------|
 | **Python CLI/库** | 基础内容抓取 + 统一数据结构 | 见 [安装](#安装) | 必需 |
-| **Claude Code 技能** | 视频转录 + AI 分析 | 复制 `skills/` 到 `~/.claude/skills/` | 可选 |
+| **Claude Code 技能** | 视频转录 + AI 分析 + 内容抓取 | `npx skills add iBigQiang/feedgrab` | 可选 |
 | **MCP 服务器** | 将阅读能力暴露为 MCP 工具 | `python mcp_server.py` | 可选 |
 
 ### 第一层：Python CLI
@@ -166,23 +166,23 @@ feedgrab clean-index --yes            # 跳过确认直接清理
 
 ### 第二层：Claude Code 技能
 
-> 需要克隆仓库（pip install 不包含此部分）。
+一键安装所有技能：
 
-用于视频/播客转录和内容分析：
-
-```
-skills/
-├── video/       # YouTube/B站/播客 → 通过 Whisper 生成完整转录
-└── analyzer/    # 任意内容 → 结构化分析报告
-```
-
-安装：
 ```bash
-cp -r skills/video ~/.claude/skills/video
-cp -r skills/analyzer ~/.claude/skills/analyzer
+npx skills add iBigQiang/feedgrab
 ```
 
-安装后，在 Claude Code 中直接发送 YouTube/B站/播客链接，video 技能会自动触发并生成完整的转录 + 摘要。
+包含 5 个技能：
+
+| 技能 | 命令 | 说明 |
+|------|------|------|
+| `feedgrab` | `/feedgrab <URL>` | 核心抓取 — 给 URL 返回结构化 Markdown |
+| `feedgrab-batch` | `/feedgrab-batch` | 批量抓取 — 书签、用户推文、搜索、微信批量等 |
+| `feedgrab-setup` | `/feedgrab-setup` | 安装引导 — pip install + 配置 + 诊断 |
+| `analyzer` | `/analyze <URL>` | 内容分析 — 多维度结构化分析报告 |
+| `video` | 自动触发 | 视频转录 — yt-dlp 字幕 + Whisper 转录 |
+
+安装后在 Claude Code 中直接发送 URL，对应技能会自动触发。
 
 ### 第三层：MCP 服务器
 
@@ -684,7 +684,10 @@ feedgrab/
 │       ├── http_client.py     # 统一 HTTP 客户端（curl_cffi TLS 指纹 → requests fallback）
 │       └── media.py           # 媒体文件下载（Twitter/XHS 图片视频本地化）
 ├── sessions/                  # Cookie/Session 存储（自动创建，git 忽略）
-├── skills/                    # Claude Code 技能
+├── skills/                    # Claude Code 技能（npx skills add iBigQiang/feedgrab）
+│   ├── feedgrab/              # 核心抓取 — /feedgrab <URL>
+│   ├── feedgrab-batch/        # 批量抓取 — /feedgrab-batch
+│   ├── feedgrab-setup/        # 安装引导 — /feedgrab-setup
 │   ├── video/                 # 视频/播客 → 转录 + 摘要
 │   └── analyzer/              # 内容 → 结构化分析
 ├── mcp_server.py              # MCP 服务器入口

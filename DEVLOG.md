@@ -2,6 +2,41 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-22 · v0.12.5 · Claude Code Skill 发布（5 个技能，支持 `npx skills add` 一键安装）
+
+### 背景
+将 feedgrab 制作成可通过 `npx skills add iBigQiang/feedgrab` 一键安装的 Claude Code 技能集合，让其他用户能在 Claude Code 中直接使用 feedgrab 的内容抓取能力。基于 [Vercel Labs skills](https://github.com/vercel-labs/skills) 开放标准，遵循 `SKILL.md` frontmatter 规范。
+
+### 技能列表
+
+| 技能 | 命令 | 说明 |
+|------|------|------|
+| `feedgrab` | `/feedgrab <URL>` | 核心抓取 — 给 URL 返回结构化 Markdown，支持 8+ 平台 |
+| `feedgrab-batch` | `/feedgrab-batch` | 批量抓取 — 书签、用户推文、搜索、微信批量、飞书知识库等 |
+| `feedgrab-setup` | `/feedgrab-setup` | 安装引导 — pip install + setup + Cookie 配置 + doctor 诊断 |
+| `analyzer` | `/analyze <URL>` | 内容分析 — 多维度结构化分析报告 |
+| `video` | 自动触发 | 视频转录 — yt-dlp 字幕 + Groq Whisper 转录 + 结构化摘要 |
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `skills/feedgrab/SKILL.md` | 新建 | 核心抓取技能（平台路由表 + 安装检测 + 错误处理） |
+| `skills/feedgrab-batch/SKILL.md` | 新建 | 批量抓取技能（命令映射 + 环境变量速查 + 断点续传） |
+| `skills/feedgrab-setup/SKILL.md` | 新建 | 安装引导技能（5 步交互 + doctor 验证） |
+| `skills/analyzer/SKILL.md` | 重命名+升级 | skill.md → SKILL.md + YAML frontmatter |
+| `skills/video/SKILL.md` | 重命名+升级 | skill.md → SKILL.md + YAML frontmatter + 精简注释 |
+
+### 安装方式
+
+```bash
+npx skills add iBigQiang/feedgrab
+```
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-21 · v0.12.4 · GitHub 中文 README 检测增强（HTML `<a>` 标签 + 直接文件 URL + 翻译声明跳过）
 
 ### 背景

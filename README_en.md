@@ -32,7 +32,7 @@ feedgrab is composable. Use the layers you need:
 | Layer | What | Format | Install |
 |-------|------|--------|---------|
 | **Python CLI/Library** | Basic content fetching + unified schema | See [Install](#install) | Required |
-| **Claude Code Skills** | Video transcription + AI analysis | Copy `skills/` to `~/.claude/skills/` | Optional |
+| **Claude Code Skills** | Video transcription + AI analysis + content fetching | `npx skills add iBigQiang/feedgrab` | Optional |
 | **MCP Server** | Expose reading as MCP tools | `python mcp_server.py` | Optional |
 
 ### Layer 1: Python CLI
@@ -140,23 +140,23 @@ feedgrab clean-index --yes            # Skip confirmation
 
 ### Layer 2: Claude Code Skills
 
-> Requires cloning the repo (not included in pip install).
+Install all skills with one command:
 
-For video/podcast transcription and content analysis:
-
-```
-skills/
-├── video/       # YouTube/Bilibili/podcast → full transcript via Whisper
-└── analyzer/    # Any content → structured analysis report
-```
-
-Install:
 ```bash
-cp -r skills/video ~/.claude/skills/video
-cp -r skills/analyzer ~/.claude/skills/analyzer
+npx skills add iBigQiang/feedgrab
 ```
 
-Then in Claude Code, just send a YouTube/Bilibili/podcast link — the video skill auto-triggers and produces a full transcript + summary.
+Includes 5 skills:
+
+| Skill | Command | Description |
+|-------|---------|-------------|
+| `feedgrab` | `/feedgrab <URL>` | Core fetcher — URL to structured Markdown |
+| `feedgrab-batch` | `/feedgrab-batch` | Batch fetcher — bookmarks, user tweets, search, etc. |
+| `feedgrab-setup` | `/feedgrab-setup` | Setup guide — pip install + config + diagnostics |
+| `analyzer` | `/analyze <URL>` | Content analyzer — multi-dimensional analysis report |
+| `video` | Auto-triggered | Video/podcast — yt-dlp subtitles + Whisper transcription |
+
+After installation, just send a URL in Claude Code — the corresponding skill auto-triggers.
 
 ### Layer 3: MCP Server
 
@@ -598,7 +598,10 @@ feedgrab/
 │       ├── http_client.py     # Unified HTTP client (curl_cffi TLS fingerprint → requests fallback)
 │       └── media.py           # Media file download (Twitter/XHS image/video localization)
 ├── sessions/                  # Cookie/session storage (auto-created, git-ignored)
-├── skills/                    # Claude Code skills
+├── skills/                    # Claude Code skills (npx skills add iBigQiang/feedgrab)
+│   ├── feedgrab/              # Core fetcher — /feedgrab <URL>
+│   ├── feedgrab-batch/        # Batch fetcher — /feedgrab-batch
+│   ├── feedgrab-setup/        # Setup guide — /feedgrab-setup
 │   ├── video/                 # Video/podcast → transcript + summary
 │   └── analyzer/              # Content → structured analysis
 ├── mcp_server.py              # MCP server entry point
