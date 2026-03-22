@@ -191,7 +191,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 
 | Platform | Text Fetch | Video/Audio Transcript |
 |----------|-----------|----------------------|
-| YouTube | **YouTube Data API v3** search + yt-dlp subtitles | yt-dlp subtitles → Groq Whisper fallback |
+| YouTube | **InnerTube API** (zero deps, zero quota) + YouTube Data API v3 search | InnerTube → yt-dlp subtitles → Groq Whisper fallback + smart segmentation + chapters |
 | Bilibili (B站) | API | via Claude Code skill |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) / Album batch (`mpweixin-zhuanji`) | — |

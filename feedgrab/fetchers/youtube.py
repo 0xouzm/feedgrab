@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-YouTube video fetcher — API-first content extraction:
+YouTube video fetcher — multi-tier content extraction:
 
-1. YouTube Data API v3 for metadata (title/author/duration/views/tags/thumbnail)
-2. yt-dlp auto-subtitles (skip if API says no captions)
-3. yt-dlp audio + Groq Whisper transcription (for non-subtitled videos)
-4. API description fallback (no Jina needed)
+Tier 0: InnerTube API (zero deps, zero quota) + smart segmentation + chapters
+Tier 1: yt-dlp auto-subtitles + smart segmentation
+Tier 2: yt-dlp audio + Groq Whisper transcription
+Tier 3: API description / Jina fallback
 
-Requires: yt-dlp installed (pip install yt-dlp)
 Optional: YOUTUBE_API_KEY (rich metadata), GROQ_API_KEY (Whisper transcription)
 """
 
+import html
 import re
 import os
 import shutil
 import subprocess
 import tempfile
+import unicodedata
 from loguru import logger
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional, Tuple
 
 
 def _js_runtime_args() -> list:
@@ -34,14 +35,405 @@ def _js_runtime_args() -> list:
 
 def _extract_video_id(url: str) -> str:
     """Extract video ID from YouTube URL."""
-    match = re.search(r'(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})', url)
+    match = re.search(r'(?:v=|youtu\.be/|/shorts/)([a-zA-Z0-9_-]{11})', url)
     return match.group(1) if match else ""
 
 
-def _get_subtitles_via_ytdlp(url: str, lang: str = "en") -> str:
+# ---------------------------------------------------------------------------
+# InnerTube API — Tier 0 (zero deps, zero quota)
+# ---------------------------------------------------------------------------
+
+_INNERTUBE_PLAYER_URL = "https://www.youtube.com/youtubei/v1/player"
+
+# Sentence-ending punctuation (Latin + CJK)
+_SENTENCE_END_RE = re.compile(r'[.?!…。？！⁈⁇‼‽．]+')
+
+# CJK Unicode ranges for smart text joining
+_CJK_RANGES = (
+    (0x4E00, 0x9FFF),    # CJK Unified Ideographs
+    (0x3400, 0x4DBF),    # CJK Extension A
+    (0x3040, 0x309F),    # Hiragana
+    (0x30A0, 0x30FF),    # Katakana
+    (0xAC00, 0xD7AF),    # Hangul
+    (0xFF00, 0xFFEF),    # Fullwidth Forms
+)
+
+
+def _is_cjk(ch: str) -> bool:
+    cp = ord(ch)
+    return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+
+
+def _fetch_innertube_transcript(
+    video_id: str, lang: str = "en"
+) -> Tuple[List[Dict], Dict]:
+    """Fetch subtitles via YouTube InnerTube API (zero deps, zero API key).
+
+    Returns (snippets, innertube_meta):
+        snippets: [{text, start (float seconds), duration (float seconds)}]
+        innertube_meta: {title, author, description, ...} from InnerTube
     """
-    Download auto-generated subtitles using yt-dlp.
-    Returns subtitle text, or empty string if unavailable.
+    from feedgrab.utils import http_client
+
+    snippets: List[Dict] = []
+    meta: Dict = {}
+
+    try:
+        # Step 1: Get page HTML → extract INNERTUBE_API_KEY
+        resp = http_client.get(
+            f"https://www.youtube.com/watch?v={video_id}",
+            headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en-US,en;q=0.9"},
+            timeout=15,
+        )
+        page_html = resp.text
+
+        # Handle EU consent redirect
+        if "consent.youtube.com" in page_html or 'action="https://consent' in page_html:
+            logger.info("[InnerTube] EU consent detected, adding CONSENT cookie")
+            resp = http_client.get(
+                f"https://www.youtube.com/watch?v={video_id}",
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Cookie": "CONSENT=YES+cb.20210328-17-p0.en+FX+999",
+                },
+                timeout=15,
+            )
+            page_html = resp.text
+
+        key_match = re.search(r'"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"', page_html)
+        api_key = key_match.group(1) if key_match else "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
+
+        # Step 2: InnerTube Player API (ANDROID client bypasses some restrictions)
+        player_resp = http_client.post(
+            f"{_INNERTUBE_PLAYER_URL}?key={api_key}",
+            headers={"Content-Type": "application/json"},
+            json={
+                "context": {
+                    "client": {
+                        "clientName": "ANDROID",
+                        "clientVersion": "20.10.38",
+                    }
+                },
+                "videoId": video_id,
+            },
+            timeout=15,
+        )
+        player_data = player_resp.json()
+
+        # Extract basic metadata from InnerTube
+        video_details = player_data.get("videoDetails", {})
+        meta = {
+            "title": video_details.get("title", ""),
+            "author": video_details.get("author", ""),
+            "description": video_details.get("shortDescription", ""),
+            "length_seconds": int(video_details.get("lengthSeconds", 0)),
+            "view_count": int(video_details.get("viewCount", 0)),
+            "thumbnail": (video_details.get("thumbnail", {}).get("thumbnails", [{}])[-1].get("url", "")),
+        }
+
+        # Step 3: Find caption tracks
+        captions = player_data.get("captions", {})
+        renderer = captions.get("playerCaptionsTracklistRenderer", {})
+        tracks = renderer.get("captionTracks", [])
+
+        if not tracks:
+            logger.info("[InnerTube] No caption tracks available")
+            return [], meta
+
+        # Language matching: prefer exact match, then prefix match, then first track + tlang
+        langs_to_try = [lang, "zh-CN", "zh-Hans", "zh-Hant", "zh", "en", "en-US"]
+        seen = set()
+        langs_to_try = [l for l in langs_to_try if l not in seen and not seen.add(l)]
+
+        base_url = ""
+        for try_lang in langs_to_try:
+            for track in tracks:
+                code = track.get("languageCode", "")
+                if code == try_lang or code.startswith(try_lang.split("-")[0]):
+                    base_url = track["baseUrl"]
+                    logger.info(f"[InnerTube] Matched caption track: {code}")
+                    break
+            if base_url:
+                break
+
+        if not base_url:
+            # Use first track + translation param
+            base_url = tracks[0]["baseUrl"]
+            target = langs_to_try[0]
+            if "&tlang=" not in base_url:
+                base_url += f"&tlang={target}"
+            logger.info(f"[InnerTube] Using first track + tlang={target}")
+
+        # Strip fmt=srv3 to get default XML format (<text start="" dur="">)
+        base_url = re.sub(r'&fmt=[^&]+', '', base_url)
+
+        # Step 4: Download and parse subtitle XML
+        xml_resp = http_client.get(base_url, timeout=15)
+        xml_text = xml_resp.text
+
+        for m in re.finditer(
+            r'<text\s+start="([^"]+)"\s+dur="([^"]+)"[^>]*>(.*?)</text>',
+            xml_text, re.DOTALL,
+        ):
+            start = float(m.group(1))
+            dur = float(m.group(2))
+            text = html.unescape(html.unescape(m.group(3))).replace("\n", " ").strip()
+            if text:
+                snippets.append({"text": text, "start": start, "duration": dur})
+
+        logger.info(f"[InnerTube] Got {len(snippets)} subtitle snippets")
+
+    except Exception as e:
+        logger.warning(f"[InnerTube] Failed: {e}")
+        return [], meta
+
+    return snippets, meta
+
+
+# ---------------------------------------------------------------------------
+# Smart segmentation — sentence splitting + paragraph grouping
+# ---------------------------------------------------------------------------
+
+def _merge_text(a: str, b: str) -> str:
+    """Merge two text fragments: no space between CJK chars, space for Latin."""
+    if not a:
+        return b
+    if not b:
+        return a
+    if _is_cjk(a[-1]) or _is_cjk(b[0]):
+        return a + b
+    return a + " " + b
+
+
+def _seconds_to_ts(s: float) -> str:
+    """Convert seconds to HH:MM:SS timestamp."""
+    h = int(s // 3600)
+    m = int((s % 3600) // 60)
+    sec = int(s % 60)
+    return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
+def _segment_into_sentences(snippets: List[Dict]) -> List[Dict]:
+    """Split raw subtitle snippets into natural sentences with timestamps.
+
+    Input: [{text, start (float), duration (float)}]
+    Output: [{text, start: "HH:MM:SS", end: "HH:MM:SS"}]
+
+    For auto-generated captions without punctuation, falls back to
+    snippet-level grouping (no sentence splitting).
+    """
+    if not snippets:
+        return []
+
+    # Phase 1: Split each snippet at sentence-ending punctuation
+    parts = []  # [{text, start (float), end (float)}]
+    for snip in snippets:
+        text = snip["text"]
+        s_start = snip["start"]
+        s_dur = snip["duration"]
+        total_len = len(text)
+        if total_len == 0:
+            continue
+
+        # Find all sentence-end positions
+        boundaries = []
+        for m in _SENTENCE_END_RE.finditer(text):
+            boundaries.append(m.end())
+
+        if not boundaries:
+            parts.append({"text": text, "start": s_start, "end": s_start + s_dur})
+            continue
+
+        prev = 0
+        for bound in boundaries:
+            frag = text[prev:bound].strip()
+            if frag:
+                frag_start = s_start + (prev / total_len) * s_dur
+                frag_end = s_start + (bound / total_len) * s_dur
+                parts.append({"text": frag, "start": frag_start, "end": frag_end})
+            prev = bound
+
+        # Remaining text after last punctuation
+        if prev < total_len:
+            frag = text[prev:].strip()
+            if frag:
+                frag_start = s_start + (prev / total_len) * s_dur
+                parts.append({"text": frag, "start": frag_start, "end": s_start + s_dur})
+
+    # Fallback: if very few punctuation found (<10% of snippets), skip sentence
+    # merging and convert raw snippets directly (auto-generated captions without punctuation)
+    punct_ratio = sum(1 for s in snippets if _SENTENCE_END_RE.search(s["text"])) / len(snippets)
+    if punct_ratio < 0.1 or len(parts) < 1:
+        return [
+            {
+                "text": snip["text"],
+                "start": _seconds_to_ts(snip["start"]),
+                "end": _seconds_to_ts(snip["start"] + snip["duration"]),
+            }
+            for snip in snippets if snip["text"]
+        ]
+
+    # Phase 2: Merge parts into complete sentences
+    sentences = []
+    buf_text = ""
+    buf_start = 0.0
+    buf_end = 0.0
+
+    for part in parts:
+        if not buf_text:
+            buf_start = part["start"]
+        buf_text = _merge_text(buf_text, part["text"])
+        buf_end = part["end"]
+
+        # Check if this part ends with sentence-ending punctuation
+        if _SENTENCE_END_RE.search(part["text"].rstrip()[-3:] if len(part["text"]) >= 3 else part["text"]):
+            sentences.append({
+                "text": buf_text,
+                "start": _seconds_to_ts(buf_start),
+                "end": _seconds_to_ts(buf_end),
+            })
+            buf_text = ""
+
+    # Flush remaining buffer
+    if buf_text:
+        sentences.append({
+            "text": buf_text,
+            "start": _seconds_to_ts(buf_start),
+            "end": _seconds_to_ts(buf_end),
+        })
+
+    return sentences
+
+
+def _group_into_paragraphs(
+    sentences: List[Dict], max_per_group: int = 5, gap_threshold: float = 2.0
+) -> List[List[Dict]]:
+    """Group sentences into paragraphs.
+
+    Rules: max N sentences per paragraph, force break on >gap_threshold silence.
+    """
+    if not sentences:
+        return []
+
+    def _ts_to_sec(ts: str) -> float:
+        parts = ts.split(":")
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+
+    groups = []
+    current = []
+
+    for i, sent in enumerate(sentences):
+        if current and (
+            len(current) >= max_per_group
+            or (i > 0 and _ts_to_sec(sent["start"]) - _ts_to_sec(sentences[i - 1]["end"]) > gap_threshold)
+        ):
+            groups.append(current)
+            current = []
+        current.append(sent)
+
+    if current:
+        groups.append(current)
+
+    return groups
+
+
+# ---------------------------------------------------------------------------
+# Chapter parsing
+# ---------------------------------------------------------------------------
+
+def _parse_chapters(description: str) -> List[Dict]:
+    """Parse chapter timestamps from video description.
+
+    Returns [{title, start_seconds}] or [] if fewer than 2 chapters found.
+    """
+    if not description:
+        return []
+
+    chapters = []
+    for line in description.split("\n"):
+        line = line.strip()
+        m = re.match(r'^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s+(.+)$', line)
+        if m:
+            h = int(m.group(1) or 0)
+            mins = int(m.group(2))
+            secs = int(m.group(3))
+            title = m.group(4).strip()
+            chapters.append({"title": title, "start_seconds": h * 3600 + mins * 60 + secs})
+
+    return chapters if len(chapters) >= 2 else []
+
+
+def _format_chapter_ts(seconds: int) -> str:
+    """Format chapter timestamp as M:SS or H:MM:SS."""
+    if seconds >= 3600:
+        return f"{seconds // 3600}:{(seconds % 3600) // 60:02d}:{seconds % 60:02d}"
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+# ---------------------------------------------------------------------------
+# Transcript Markdown formatting
+# ---------------------------------------------------------------------------
+
+def _format_transcript_markdown(
+    sentences: List[Dict],
+    chapters: List[Dict],
+) -> str:
+    """Format segmented sentences + chapters into structured Markdown.
+
+    Output with chapters:
+        ## Chapter Title [0:00]
+        Text... [00:00:05 → 00:01:23]
+
+    Output without chapters:
+        Text... [00:00:05 → 00:01:23]
+    """
+
+    def _ts_to_sec(ts: str) -> float:
+        parts = ts.split(":")
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+
+    def _render_paragraphs(sents: List[Dict]) -> str:
+        groups = _group_into_paragraphs(sents)
+        lines = []
+        for group in groups:
+            text = " ".join(s["text"] for s in group)
+            # CJK-aware join
+            merged = group[0]["text"]
+            for s in group[1:]:
+                merged = _merge_text(merged, s["text"])
+            ts_start = group[0]["start"]
+            ts_end = group[-1]["end"]
+            lines.append(f"{merged} [{ts_start} → {ts_end}]")
+        return "\n\n".join(lines)
+
+    if not sentences:
+        return ""
+
+    if not chapters:
+        return _render_paragraphs(sentences)
+
+    # Split sentences by chapter boundaries
+    parts = []
+    for i, ch in enumerate(chapters):
+        ch_start = ch["start_seconds"]
+        ch_end = chapters[i + 1]["start_seconds"] if i + 1 < len(chapters) else float("inf")
+
+        ch_sents = [
+            s for s in sentences
+            if ch_start <= _ts_to_sec(s["start"]) < ch_end
+        ]
+
+        header = f"## {ch['title']} [{_format_chapter_ts(ch_start)}]"
+        body = _render_paragraphs(ch_sents) if ch_sents else ""
+        parts.append(f"{header}\n\n{body}" if body else header)
+
+    return "\n\n".join(parts)
+
+
+def _get_subtitles_via_ytdlp(url: str, lang: str = "en") -> List[Dict]:
+    """Download auto-generated subtitles using yt-dlp.
+
+    Returns list of snippet dicts [{text, start, duration}], or [] if unavailable.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         output_path = os.path.join(tmpdir, "sub")
@@ -61,39 +453,65 @@ def _get_subtitles_via_ytdlp(url: str, lang: str = "en") -> str:
         try:
             subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         except FileNotFoundError:
-            logger.warning("yt-dlp not found. Install with: brew install yt-dlp")
-            return ""
+            logger.warning("yt-dlp not found. Install with: pip install yt-dlp")
+            return []
         except subprocess.TimeoutExpired:
             logger.warning("yt-dlp subtitle download timed out")
-            return ""
+            return []
 
         for ext in [f".{lang}.srt", f".{lang}.vtt"]:
             sub_file = output_path + ext
             if os.path.exists(sub_file):
-                return _parse_srt(sub_file)
+                return _parse_srt_to_snippets(sub_file)
 
-    return ""
+    return []
 
 
-def _parse_srt(filepath: str) -> str:
-    """Parse SRT file into clean text (strip timestamps and sequence numbers)."""
+def _parse_srt_to_snippets(filepath: str) -> List[Dict]:
+    """Parse SRT file into structured snippets [{text, start, duration}]."""
     with open(filepath, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
+        content = f.read()
 
-    text_lines = []
-    seen = set()
+    snippets = []
+    # Match SRT blocks: sequence number, timestamp line, text lines
+    blocks = re.split(r'\n\s*\n', content.strip())
 
-    for line in lines:
-        line = line.strip()
-        if not line or line.isdigit() or '-->' in line:
+    for block in blocks:
+        lines = block.strip().split('\n')
+        if len(lines) < 2:
             continue
-        if line.startswith('[') and line.endswith(']'):
-            continue
-        if line not in seen:
-            seen.add(line)
-            text_lines.append(line)
 
-    return " ".join(text_lines)
+        # Find the timestamp line
+        ts_line = None
+        text_lines = []
+        for line in lines:
+            if '-->' in line:
+                ts_line = line
+            elif ts_line is not None:
+                # Text lines come after timestamp
+                cleaned = line.strip()
+                if cleaned and not (cleaned.startswith('[') and cleaned.endswith(']')):
+                    text_lines.append(cleaned)
+
+        if not ts_line or not text_lines:
+            continue
+
+        # Parse timestamps: 00:00:01,234 --> 00:00:03,456
+        ts_match = re.match(
+            r'(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})',
+            ts_line.strip(),
+        )
+        if not ts_match:
+            continue
+
+        g = ts_match.groups()
+        start = int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2]) + int(g[3]) / 1000
+        end = int(g[4]) * 3600 + int(g[5]) * 60 + int(g[6]) + int(g[7]) / 1000
+
+        text = " ".join(text_lines)
+        snippets.append({"text": text, "start": start, "duration": end - start})
+
+    return snippets
 
 
 def _transcribe_via_whisper(url: str) -> str:
@@ -175,25 +593,17 @@ def _transcribe_via_whisper(url: str) -> str:
 
 async def fetch_youtube(url: str, sub_lang: str = "en") -> Dict[str, Any]:
     """
-    Fetch YouTube video content with API-first strategy.
+    Fetch YouTube video content with multi-tier strategy.
 
-    Strategy:
-    1. YouTube API → complete metadata (1 quota unit, if API key configured)
-    2. yt-dlp auto-subtitles (skip if API says no captions)
-    3. yt-dlp audio + Groq Whisper (for non-subtitled videos)
-    4. API description / Jina fallback (last resort)
-
-    Args:
-        url: YouTube video URL
-        sub_lang: Subtitle language code (default: "en")
-
-    Returns:
-        Dict with full video metadata + transcript content.
+    Tier 0: InnerTube API (zero deps, zero quota) + smart segmentation + chapters
+    Tier 1: yt-dlp subtitles + smart segmentation
+    Tier 2: yt-dlp audio + Groq Whisper transcription
+    Tier 3: API description / Jina fallback
     """
     logger.info(f"Fetching YouTube: {url}")
     video_id = _extract_video_id(url)
 
-    # Step 1: Try YouTube API for metadata (1 quota unit)
+    # Step 1: Try YouTube Data API v3 for rich metadata (1 quota unit)
     api_meta = None
     has_caption_hint = None
     if os.getenv("YOUTUBE_API_KEY", "").strip():
@@ -209,43 +619,65 @@ async def fetch_youtube(url: str, sub_lang: str = "en") -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"[YouTube] API metadata failed ({e}), falling back")
 
-    # Step 2: Extract subtitles — skip if API says no captions
-    transcript = ""
-    if has_caption_hint is not False:
-        # Try multiple language codes: YouTube auto-captions use varied codes
-        # e.g. zh-Hant (Traditional), zh-Hans (Simplified), en-US, en
+    # Step 2: Tier 0 — InnerTube API (zero deps, zero quota)
+    snippets = []
+    innertube_meta = {}
+    description_text = ""  # for chapter parsing
+    if video_id:
+        snippets, innertube_meta = _fetch_innertube_transcript(video_id, lang=sub_lang)
+        description_text = innertube_meta.get("description", "")
+
+    # Step 3: Tier 1 — yt-dlp fallback (if InnerTube failed)
+    if not snippets and has_caption_hint is not False:
         langs_to_try = [sub_lang, "zh-CN", "zh-Hans", "zh-Hant", "zh", "en", "en-US"]
-        # Deduplicate while preserving order
         seen = set()
         langs_to_try = [l for l in langs_to_try if l not in seen and not seen.add(l)]
 
         for lang in langs_to_try:
-            logger.info(f"Extracting subtitles ({lang})...")
-            transcript = _get_subtitles_via_ytdlp(url, lang=lang)
-            if transcript:
+            logger.info(f"[Tier 1] yt-dlp subtitles ({lang})...")
+            snippets = _get_subtitles_via_ytdlp(url, lang=lang)
+            if snippets:
                 break
 
-    # Step 3: No subtitles? Try Whisper transcription
-    if not transcript:
-        logger.info("No subtitles available, trying Whisper transcription...")
+    # Process snippets through segmentation pipeline
+    transcript = ""
+    has_transcript = False
+    if snippets:
+        # Use API description for chapters if available, else InnerTube description
+        desc_for_chapters = (api_meta.get("description", "") if api_meta else "") or description_text
+        chapters = _parse_chapters(desc_for_chapters)
+        sentences = _segment_into_sentences(snippets)
+        transcript = _format_transcript_markdown(sentences, chapters)
+        has_transcript = True
+        tier_used = "InnerTube" if innertube_meta else "yt-dlp"
+        logger.info(
+            f"[YouTube] {tier_used} transcript: {len(transcript)} chars, "
+            f"{len(sentences)} sentences, {len(chapters)} chapters"
+        )
+
+    # Step 4: Tier 2 — Whisper transcription
+    if not has_transcript:
+        logger.info("[Tier 2] No subtitles, trying Whisper transcription...")
         transcript = _transcribe_via_whisper(url)
+        has_transcript = bool(transcript)
 
-    # Determine content
-    has_transcript = bool(transcript)
-    if has_transcript:
-        logger.info(f"Got transcript: {len(transcript)} chars")
-        content = transcript
-    elif api_meta and api_meta.get("description"):
-        logger.info("No transcript, using API description")
-        content = api_meta["description"]
-    else:
-        # Last resort: Jina
-        logger.info("No transcript or API, falling back to Jina")
-        from feedgrab.fetchers.jina import fetch_via_jina
-        jina_data = fetch_via_jina(url)
-        content = jina_data.get("content", "")
+    # Step 5: Tier 3 — Description / Jina fallback
+    if not has_transcript:
+        if api_meta and api_meta.get("description"):
+            logger.info("[Tier 3] Using API description")
+            transcript = api_meta["description"]
+        elif innertube_meta.get("description"):
+            logger.info("[Tier 3] Using InnerTube description")
+            transcript = innertube_meta["description"]
+        else:
+            logger.info("[Tier 3] Falling back to Jina")
+            from feedgrab.fetchers.jina import fetch_via_jina
+            jina_data = fetch_via_jina(url)
+            transcript = jina_data.get("content", "")
 
-    # Build result — prefer API metadata when available
+    content = transcript
+
+    # Build result — prefer YouTube Data API metadata > InnerTube metadata
     if api_meta:
         return {
             "title": api_meta["title"],
@@ -268,8 +700,20 @@ async def fetch_youtube(url: str, sub_lang: str = "en") -> Dict[str, Any]:
             "has_caption": api_meta["has_caption"],
             "thumbnail": api_meta["thumbnail"],
         }
+    elif innertube_meta:
+        return {
+            "title": innertube_meta.get("title", "") or f"YouTube Video {video_id}",
+            "description": content,
+            "author": innertube_meta.get("author", ""),
+            "url": url,
+            "video_id": video_id,
+            "has_transcript": has_transcript,
+            "platform": "youtube",
+            "view_count": innertube_meta.get("view_count", 0),
+            "duration_seconds": innertube_meta.get("length_seconds", 0),
+            "thumbnail": innertube_meta.get("thumbnail", ""),
+        }
     else:
-        # Fallback: minimal metadata from Jina
         from feedgrab.fetchers.jina import fetch_via_jina
         jina_data = fetch_via_jina(url) if not content else {"title": "", "author": ""}
         return {

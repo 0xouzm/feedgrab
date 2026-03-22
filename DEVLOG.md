@@ -2,6 +2,44 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-23 · v0.13.0 · YouTube InnerTube API + 智能断句 + 章节解析
+
+### 背景
+feedgrab 的 YouTube 字幕抓取完全依赖 yt-dlp subprocess，存在三个问题：(1) 需要安装 yt-dlp + ffmpeg 二进制依赖；(2) 字幕输出是一整段无结构文本（丢弃时间戳、无断句、无分段）；(3) 不支持章节分割。参考 baoyu-youtube-transcript（@dotey 宝玉）的 InnerTube API 方案，融合为新 Tier 0 层。
+
+### 方案决策
+
+**InnerTube API（Tier 0）**：调用 YouTube 内部 `youtubei/v1/player` 端点获取字幕，零外部依赖零 API quota。使用 ANDROID 客户端身份绕过部分限制。字幕 XML `<text start="" dur="">` 解析为结构化 snippet。双重 HTML 实体解码（`&amp;#39;` → `'`）。EU consent 页面自动处理。`fmt=srv3` 参数剥离获取默认 XML 格式。
+
+**智能断句**：三阶段管线——按句尾标点拆分（`.?!。？！…` 等）→ 跨 snippet 合并为完整句子（CJK 字符无空格拼接，拉丁字符加空格）→ 段落分组（≤5句/段，>2s 间隔强制分段）。时间戳按字符长度比例分配。**无标点兜底**：自动字幕标点率 <10% 时跳过断句，直接 snippet 级分组，避免整段文本无结构。
+
+**章节解析**：从 description 正则匹配 `HH:MM:SS 标题` 格式，≥2 个章节才生效。按章节时间范围分割句子，输出 `## 章节标题 [M:SS]` + 带时间戳段落。
+
+### 降级链
+
+```
+Tier 0   InnerTube API（零依赖零 quota）+ 智能断句 + 章节  ← 新增
+Tier 1   yt-dlp 字幕 + 智能断句                           ← 升级
+Tier 2   Groq Whisper 转录                                ← 不变
+Tier 3   API description / Jina 兜底                       ← 不变
+```
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/youtube.py` | 修改 | 新增 `_fetch_innertube_transcript()`（InnerTube API）；`_segment_into_sentences()` + `_group_into_paragraphs()`（断句管线）；`_parse_chapters()` + `_format_transcript_markdown()`（章节 + 格式化）；`_parse_srt_to_snippets()` 替代原 `_parse_srt()`（返回结构化数据）；`fetch_youtube()` 插入 Tier 0 + 统一输出管线；`_extract_video_id()` 增加 `/shorts/` URL 支持 |
+
+### 验证结果
+- TED 演讲（8jPQjjsBbIc）：260 snippets → 117 自然句子，1.7s 完成 ✅
+- 影视飓风（bzfBdivz_KQ）：425 snippets，中文自动字幕无标点 → snippet 级分组 ✅
+- Rick Astley（dQw4w9WgXcQ）：61 snippets，歌词正确处理 ✅
+- JavaScript Pro Tips（Mus_vwhTCq0）：374 snippets，无标点 → fallback 分组 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-22 · v0.12.5 · Claude Code Skill 发布（5 个技能，支持 `npx skills add` 一键安装）
 
 ### 背景

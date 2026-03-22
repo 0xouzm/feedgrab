@@ -17,7 +17,7 @@
 任意 URL → 平台检测 → 抓取内容 → 统一输出
               ↓                ↓          ↓
          自动识别          文本：Jina Reader    → output/X/作者_日期：标题.md
-         8+ 平台           视频：yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
+         8+ 平台           视频：InnerTube API → yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
                            音频：Whisper 转录
                            API：Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / 飞书 Open API
                            X/Twitter：GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
@@ -217,7 +217,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 
 | 平台 | 文本抓取 | 视频/音频转录 |
 |------|---------|-------------|
-| YouTube | **YouTube Data API v3** 搜索 + yt-dlp 字幕 | yt-dlp 字幕 → Groq Whisper 兜底 |
+| YouTube | **InnerTube API**（零依赖零 quota）+ YouTube Data API v3 搜索 | InnerTube → yt-dlp 字幕 → Groq Whisper 兜底 + 智能断句 + 章节解析 |
 | B 站 (Bilibili) | API | 通过 Claude Code 技能 |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`）/ 专辑批量（`mpweixin-zhuanji`） | — |
