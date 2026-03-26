@@ -297,10 +297,51 @@ _BLOCK_TYPE_MAP = {
     35: "quote_container",
 }
 
+# Module-level heading cache for TOC generation
+_TOC_HEADINGS: List[tuple] = []  # [(level, text), ...]
+
+
+def _collect_headings(blocks) -> None:
+    """Pre-scan blocks recursively to collect headings for TOC."""
+    _TOC_HEADINGS.clear()
+    _scan_headings(blocks)
+
+
+def _scan_headings(blocks) -> None:
+    for block in blocks:
+        btype = _resolve_block_type(block)
+        if btype.startswith("heading"):
+            level = int(btype[-1]) if btype[-1].isdigit() else 1
+            text = _elements_text(block)
+            if text.strip():
+                _TOC_HEADINGS.append((level, text.strip()))
+        children = _get_children(block)
+        if children:
+            _scan_headings(children)
+
+
+def _render_isv_block(block) -> Optional[str]:
+    """Render ISV block — currently supports catalog (TOC) component."""
+    snap = block.get("snapshot", {}) if isinstance(block, dict) else {}
+    data = snap.get("data", {})
+    # Detect catalog/TOC component
+    if not isinstance(data, dict) or "showCataLogLevel" not in data:
+        return None  # Not a TOC component, skip
+    max_level = data.get("showCataLogLevel", 3)
+    if not _TOC_HEADINGS:
+        return None
+    lines: List[str] = []
+    for level, text in _TOC_HEADINGS:
+        if level > max_level:
+            continue
+        indent = "  " * (level - 1)
+        lines.append(f"{indent}- {text}")
+    return "\n".join(lines) if lines else None
+
 
 def blocks_to_markdown(
     blocks, depth: int = 0, images: Optional[List[dict]] = None,
-    img_subdir: str = "",
+    img_subdir: str = "", _is_root: bool = True,
 ) -> str:
     """Convert a list of API block objects to Markdown.
 
@@ -313,6 +354,11 @@ def blocks_to_markdown(
     *img_subdir* — when set, image paths become
     ``attachments/{img_subdir}/{fname}`` instead of ``attachments/{fname}``.
     """
+    # Pre-collect headings for TOC generation (ISV catalog blocks)
+    # Only on the true root call, not recursive _render_children calls
+    if _is_root:
+        _collect_headings(blocks)
+
     parts: List[str] = []
     ordered_counter = 0
 
@@ -394,7 +440,12 @@ def _block_to_md(
     if btype == "code":
         text = _get_code_text(block)
         lang = _get_code_lang(block)
-        return f"```{lang}\n{text}\n```"
+        # Use longer fence if content contains triple backticks (CommonMark spec)
+        fence = "```"
+        longest = max((len(m.group()) for m in re.finditer(r"`+", text)), default=0)
+        if longest >= 3:
+            fence = "`" * (longest + 1)
+        return f"{fence}{lang}\n{text}\n{fence}"
 
     if btype in ("quote", "quote_container"):
         text = _elements_text(block)
@@ -454,6 +505,10 @@ def _block_to_md(
     # Sheet / Bitable / embedded objects (editor reports type="fallback")
     if btype in ("fallback", "bitable", "sheet"):
         return _render_embedded_block(block)
+
+    # ISV catalog (TOC) component — generate from sibling headings
+    if btype == "isv":
+        return _render_isv_block(block)
 
     # Fallback: try to extract any text
     text = _elements_text(block)
@@ -595,6 +650,14 @@ def _get_elements(block) -> list:
             obj = block.get(key)
             if isinstance(obj, dict) and "elements" in obj:
                 return obj["elements"]
+        # Playwright Delta ops: zoneState.content.ops [{insert, attributes}]
+        zs = block.get("zoneState")
+        if isinstance(zs, dict):
+            content = zs.get("content")
+            if isinstance(content, dict):
+                ops = content.get("ops")
+                if isinstance(ops, list) and ops:
+                    return ops
     return []
 
 
@@ -1211,7 +1274,8 @@ def _render_children(
     children = _get_children(block)
     if not children:
         return ""
-    return blocks_to_markdown(children, depth, images, img_subdir)
+    return blocks_to_markdown(children, depth, images, img_subdir,
+                              _is_root=False)
 
 
 def _get_children(block) -> list:
@@ -1259,7 +1323,7 @@ def _render_table(block) -> str:
                 if not cell_text:
                     cell_children = _get_children(children[idx])
                     if cell_children:
-                        cell_text = blocks_to_markdown(cell_children).replace("\n", " ").strip()
+                        cell_text = blocks_to_markdown(cell_children, _is_root=False).replace("\n", " ").strip()
                 row_cells.append(cell_text or "")
             else:
                 row_cells.append("")

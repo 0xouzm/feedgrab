@@ -2,6 +2,41 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-27 · v0.13.1 · 飞书 Block→Markdown 三项修复（代码块嵌套 + 加粗保留 + 目录生成）
+
+### 背景
+飞书文档抓取后发现三个 Markdown 渲染问题：(1) 代码块内含 ``` 导致外层代码块提前闭合，正文被吞入代码块；(2) Playwright Block 树中的加粗标记丢失；(3) ISV 目录组件未渲染。
+
+### 修复内容
+
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| 代码块嵌套断裂 | 固定 ``` 围栏无法包含内含 ``` 的内容 | `_block_to_md()` 检测内容中最长反引号序列，使用 CommonMark 可变长度围栏（N+1 个反引号） |
+| 加粗格式丢失 | `_get_elements()` 仅支持 SDK `elements` 格式，不识别 Playwright Delta ops | 新增 `zoneState.content.ops` 提取路径（`[{insert, attributes: {bold}}]`），复用已有 `_apply_inline_style()` |
+| 目录（TOC）为空 | ISV block 类型未处理 + 无标题扫描机制 | `_collect_headings()` 预扫描全文标题 → `_render_isv_block()` 读取 `showCataLogLevel` 生成缩进列表 |
+
+### 技术细节
+
+- **可变长度代码围栏**：`re.finditer(r"`+", text)` 找最长反引号序列，若 ≥3 则用 `longest+1` 个反引号做围栏
+- **Delta ops 提取**：Playwright 的 block 树中富文本存储在 `zoneState.content.ops`（Delta 格式），与 SDK 的 `block["text"]["elements"]` 不同，但下游 `_apply_inline_style()` 兼容两种格式
+- **TOC 递归保护**：新增 `_is_root` 参数防止 `_render_children()` → `blocks_to_markdown()` 递归调用时重新清空标题缓存（callout/quote 等容器 block 传入 `depth=0` 会触发此问题）
+- **ISV block 识别**：飞书第三方组件统一为 `isv` 类型，通过 `snapshot.data.showCataLogLevel` 字段区分目录组件
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/feishu.py` | 修复 | `_block_to_md()` 可变长度围栏；`_get_elements()` Delta ops 路径；`_collect_headings()` + `_render_isv_block()` TOC 生成；`blocks_to_markdown()` + `_render_children()` + `_render_table()` `_is_root` 递归保护 |
+
+### 验证结果
+- 代码块：内含 ``` 的代码块使用 ````` 围栏正确包裹 ✅
+- 加粗：`**转型的勇气来自于对未来的清晰认知**` 保留在输出中 ✅
+- 目录：35 个标题按 `showCataLogLevel=3` 过滤生成缩进列表 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-23 · v0.13.0 · YouTube InnerTube API + 智能断句 + 章节解析
 
 ### 背景
