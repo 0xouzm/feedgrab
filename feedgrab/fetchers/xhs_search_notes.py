@@ -314,13 +314,148 @@ async def fetch_search_notes(search_url: str) -> dict:
             if result is not None:
                 return result
     except Exception as e:
-        logger.warning(f"[XHS-Search] API 模式失败 ({e})，降级到浏览器模式")
+        logger.warning(f"[XHS-Search] API 模式失败 ({e})，降级到 Pinia/浏览器模式")
+
+    # === Tier 0.5: Pinia Store search (browser-native fallback) ===
+    try:
+        from feedgrab.config import xhs_pinia_enabled
+
+        if xhs_pinia_enabled():
+            logger.info(f"[XHS-Search] Tier 0.5 — Pinia Store 搜索: {keyword}")
+            from feedgrab.fetchers.xhs_pinia import pinia_search_notes as _pinia_search
+
+            pinia_items = await _pinia_search(keyword)
+            if pinia_items:
+                logger.info(f"[XHS-Search] Pinia 搜索到 {len(pinia_items)} 条结果")
+                # Process items using the same logic as API path
+                result = await _process_pinia_search_results(
+                    pinia_items, keyword, saved_ids, initial_count, delay,
+                    from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+                )
+                if result is not None:
+                    return result
+    except Exception as e:
+        logger.warning(f"[XHS-Search] Pinia 搜索失败 ({e})，降级到浏览器模式")
 
     # === Browser fallback (original Tier 0/1/2) ===
     return await _fetch_search_notes_via_browser(
         search_url, keyword, saved_ids, initial_count, delay,
         from_xiaohongshu, save_to_markdown, _parse_xhs_date,
     )
+
+
+async def _process_pinia_search_results(
+    pinia_items, keyword, saved_ids, initial_count, delay,
+    from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+) -> dict | None:
+    """Process search results from Pinia Store injection.
+
+    Pinia items are already normalized (same format as normalize_search_item).
+    Saves each note with search-level data (no per-note feed_note call).
+
+    Returns result dict on success, None if no valid items.
+    """
+    total = len(pinia_items)
+    safe_keyword = re.sub(r'[\\/:*?"<>|]', '_', keyword)
+    subfolder = f"search_{safe_keyword}"
+
+    fetched = 0
+    skipped = 0
+    failed = 0
+    note_list = []
+
+    for idx, data in enumerate(pinia_items):
+        note_url = data.get("url", "")
+        if not note_url:
+            continue
+        item_id = item_id_from_url(note_url.split("?")[0])
+
+        # Dedup check
+        if has_item(item_id, saved_ids):
+            skipped += 1
+            note_list.append({
+                "url": note_url, "item_id": item_id,
+                "title": data.get("title", ""),
+                "status": "skipped", "error": "已存在",
+            })
+            continue
+
+        try:
+            data["platform"] = "xhs"
+            if not data.get("date"):
+                data["date"] = datetime.now().strftime("%Y-%m-%d")
+
+            note_date = _parse_xhs_date(data.get("date", ""))
+
+            content = from_xiaohongshu(data)
+            content.category = subfolder
+            saved_path = save_to_markdown(content)
+
+            # Media download
+            if saved_path:
+                from feedgrab.config import xhs_download_media
+                if xhs_download_media():
+                    from feedgrab.utils.media import download_media
+                    download_media(
+                        saved_path,
+                        content.extra.get("images", []),
+                        content.extra.get("videos", []),
+                        content.id,
+                        platform="xhs",
+                    )
+
+            add_item(item_id, note_url.split("?")[0], saved_ids)
+            fetched += 1
+
+            note_title = data.get("title") or data.get("content", "")[:30]
+            note_list.append({
+                "url": note_url.split("?")[0], "item_id": item_id,
+                "author": data.get("author", ""),
+                "date": note_date,
+                "title": note_title[:80],
+                "status": "fetched", "error": "",
+            })
+
+            if (idx + 1) % 10 == 0 or idx + 1 == total:
+                logger.info(
+                    f"[XHS-Search] Pinia 进度 [{idx+1}/{total}] "
+                    f"成功:{fetched} 跳过:{skipped} 失败:{failed}"
+                )
+
+        except Exception as e:
+            logger.warning(
+                f"[XHS-Search] [{idx+1}/{total}] Pinia 保存失败: "
+                f"{data.get('title', '')[:30]} - {str(e)[:80]}"
+            )
+            failed += 1
+            note_list.append({
+                "url": note_url, "item_id": item_id,
+                "title": data.get("title", ""),
+                "status": "failed", "error": str(e)[:200],
+            })
+
+    if fetched == 0 and skipped == 0:
+        return None
+
+    # Persist index
+    save_index(saved_ids, platform="XHS")
+    logger.info(f"[XHS-Search] 索引更新: {initial_count} -> {len(saved_ids)} 条")
+
+    list_path = _save_batch_record(note_list, keyword)
+
+    logger.info(
+        f"[XHS-Search] Pinia 搜索批量完成: "
+        f"总计 {total}, 成功 {fetched}, 跳过 {skipped}, 失败 {failed}"
+    )
+
+    return {
+        "total": total,
+        "fetched": fetched,
+        "skipped": skipped,
+        "failed": failed,
+        "list_path": str(list_path),
+        "keyword": keyword,
+    }
 
 
 async def _fetch_search_notes_via_api(
@@ -899,6 +1034,90 @@ def search_xhs_keyword(
     from feedgrab.fetchers.xhs_api import is_api_available, get_client, normalize_search_item
 
     if not is_api_available():
+        # Try Pinia Store fallback before giving up
+        try:
+            from feedgrab.config import xhs_pinia_enabled
+
+            if xhs_pinia_enabled():
+                import asyncio
+                logger.info(f"[XHS-SO] API 不可用，尝试 Pinia Store 搜索")
+                from feedgrab.fetchers.xhs_pinia import pinia_search_notes as _pinia_search
+
+                loop = asyncio.get_event_loop()
+                pinia_items = loop.run_until_complete(_pinia_search(keyword))
+                if pinia_items:
+                    logger.info(f"[XHS-SO] Pinia 搜索到 {len(pinia_items)} 条结果")
+                    all_notes = pinia_items[:max_results]
+
+                    # Optionally save individual notes
+                    saved_count = 0
+                    if save_notes:
+                        from feedgrab.schema import from_xiaohongshu
+                        from feedgrab.utils.storage import save_to_markdown
+
+                        saved_ids_local = load_index(platform="XHS")
+                        safe_kw = re.sub(r'[\\/:*?"<>|]', '_', keyword)
+                        subfolder_local = f"search_{safe_kw}"
+
+                        for idx_local, nd in enumerate(all_notes):
+                            base_url = nd.get("url", "").split("?")[0]
+                            if not base_url:
+                                continue
+                            iid = item_id_from_url(base_url)
+                            if has_item(iid, saved_ids_local):
+                                continue
+                            try:
+                                nd["platform"] = "xhs"
+                                if not nd.get("date"):
+                                    nd["date"] = datetime.now().strftime("%Y-%m-%d")
+                                c = from_xiaohongshu(nd)
+                                c.category = subfolder_local
+                                sp = save_to_markdown(c)
+                                if sp:
+                                    from feedgrab.config import xhs_download_media
+                                    if xhs_download_media():
+                                        from feedgrab.utils.media import download_media
+                                        download_media(
+                                            sp, c.extra.get("images", []),
+                                            c.extra.get("videos", []),
+                                            c.id, platform="xhs",
+                                        )
+                                add_item(iid, base_url, saved_ids_local)
+                                saved_count += 1
+                            except Exception as e_local:
+                                logger.warning(f"[XHS-SO] Pinia 保存失败 [{idx_local+1}]: {str(e_local)[:80]}")
+
+                        save_index(saved_ids_local, platform="XHS")
+
+                    # Generate summary table
+                    summary_path = Path("")
+                    csv_path = Path("")
+                    if not skip_summary:
+                        base_dir = _resolve_output_base()
+                        sort_label = _SORT_ZH.get(sort, sort)
+                        safe_kw2 = re.sub(r'[\\/:*?"<>|]', '_', keyword)
+                        date_str = datetime.now().strftime("%Y-%m-%d")
+                        summary_dir = base_dir / "XHS" / "search" / f"{sort_label}"
+                        summary_path = summary_dir / f"{safe_kw2}_{date_str}.md"
+
+                        _generate_xhs_summary_table(
+                            keyword=keyword, sort=sort, note_type=note_type,
+                            notes=all_notes, output_path=summary_path,
+                        )
+                        csv_path = summary_path.with_suffix(".csv")
+
+                    logger.info(f"[XHS-SO] Pinia 搜索完成: {len(all_notes)} 篇笔记")
+                    return {
+                        "total": len(all_notes),
+                        "saved": saved_count,
+                        "query": keyword,
+                        "output_path": str(summary_path),
+                        "csv_path": str(csv_path),
+                        "notes": all_notes,
+                    }
+        except Exception as e:
+            logger.warning(f"[XHS-SO] Pinia 搜索也失败: {e}")
+
         raise RuntimeError(
             "XHS API 不可用。请确保:\n"
             "  1. pip install xhshow\n"

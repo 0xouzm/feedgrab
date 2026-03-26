@@ -460,6 +460,15 @@ def xhs_api_enabled() -> bool:
     return os.getenv("XHS_API_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
+def xhs_pinia_enabled() -> bool:
+    """Use Pinia Store injection as fallback when xhshow API fails.
+
+    When true: xhshow fails → try Pinia Store in browser → Jina → Playwright.
+    Default true — transparent fallback, no impact on normal xhshow path.
+    """
+    return os.getenv("XHS_PINIA_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
 def xhs_api_delay() -> float:
     """API request interval in seconds (default 1.0, with Gaussian jitter)."""
     try:

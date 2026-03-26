@@ -2,10 +2,11 @@
 """
 Xiaohongshu (RED) note fetcher — multi-tier fallback:
 
-0. XHS API (xhshow signing — fastest, ~0.5s, needs pip install xhshow)
-1. Jina Reader (fast, no deps)
-2. Playwright + saved session (handles 451/403)
-3. Error with login instructions
+0.   XHS API (xhshow signing — fastest, ~0.5s, needs pip install xhshow)
+0.5  Pinia Store injection (browser-native, ~1-2s, xhshow failure fallback)
+1.   Jina Reader (fast, no deps)
+2.   Playwright + saved session (handles 451/403)
+3.   Error with login instructions
 
 Install API tier:     pip install xhshow
 Install browser tier: pip install "feedgrab[browser]" && playwright install chromium
@@ -29,6 +30,7 @@ async def fetch_xhs(url: str) -> Dict[str, Any]:
         Dict with: title, content, author, url, platform, tags, images, etc.
     """
     # Tier 0: XHS API (needs xhshow + session cookies)
+    note_id = None  # extracted early for Tier 0.5 Pinia fallback
     try:
         from feedgrab.config import xhs_api_enabled
 
@@ -85,7 +87,23 @@ async def fetch_xhs(url: str) -> Dict[str, Any]:
                         return data
                     logger.warning("[XHS] API Feed returned empty, falling back to Jina")
     except Exception as e:
-        logger.warning(f"[XHS] API Feed failed ({e}), falling back to Jina")
+        logger.warning(f"[XHS] API Feed failed ({e}), falling back")
+
+    # Tier 0.5: Pinia Store injection (browser-native fallback)
+    try:
+        from feedgrab.config import xhs_pinia_enabled
+
+        if xhs_pinia_enabled() and note_id:
+            logger.info(f"[XHS] Tier 0.5 — Pinia Store injection: {note_id}")
+            from feedgrab.fetchers.xhs_pinia import pinia_feed_note
+
+            pinia_data = await pinia_feed_note(note_id)
+            if pinia_data and pinia_data.get("content"):
+                logger.info(f"[XHS] Pinia success: {pinia_data.get('title', '')[:40]}")
+                return pinia_data
+            logger.warning("[XHS] Pinia returned empty, falling back to Jina")
+    except Exception as e:
+        logger.warning(f"[XHS] Pinia failed ({e}), falling back to Jina")
 
     # Tier 1: Jina Reader
     try:

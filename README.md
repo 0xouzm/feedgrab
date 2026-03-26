@@ -222,7 +222,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`）/ 专辑批量（`mpweixin-zhuanji`） | — |
 | GitHub | **REST API**（仓库元数据 + 中文 README 优先（含子目录语言链接搜索）+ 相对图片链接补全 + 摘要提取） | — |
-| 小红书 | **API (xhshow)** → Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量** + **关键词搜索 `xhs-so`**) | — |
+| 小红书 | **API (xhshow)** → **Pinia Store 注入** → Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量** + **关键词搜索 `xhs-so`**) | — |
 | 飞书/Lark | **Open API** → **CDP 直连** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载） | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
@@ -230,7 +230,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | Apple Podcasts | — | 通过 Claude Code 技能 |
 | 任意网页 | Jina 兜底 | — |
 
-> \*小红书支持 **API 抓取**（xhshow，无需登录）和 **浏览器抓取**（需一次性登录：`feedgrab login xhs`）。单篇抓取优先走 API（完整元数据 + 评论），API 不可用时回退 Jina → Playwright。**关键词搜索**（`feedgrab xhs-so`）通过 API 直接搜索，无需登录。**作者主页批量**和**搜索结果批量**采用 API 分页 + Tier 0 首页提取 + Tier 1 滚动加载 + Tier 2 逐篇深度抓取策略。
+> \*小红书支持 **API 抓取**（xhshow，无需登录）和 **浏览器抓取**（需一次性登录：`feedgrab login xhs`）。单篇抓取优先走 API（完整元数据 + 评论），API 不可用时自动降级到 **Pinia Store 注入**（浏览器原生请求，无需第三方签名库）→ Jina → Playwright。**关键词搜索**（`feedgrab xhs-so`）和**作者主页批量**、**搜索结果批量**同样支持 Pinia 兜底层。`XHS_PINIA_ENABLED=true`（默认开启）。
 >
 > YouTube Whisper 转录需要 `GROQ_API_KEY` — 从 [Groq](https://console.groq.com/keys) 免费获取
 
@@ -600,6 +600,7 @@ cp .env.example .env
 | `XHS_SEARCH_MAX_SCROLLS` | 否 | 搜索页最大滚动次数（默认：`30`） |
 | `XHS_SEARCH_DELAY` | 否 | 搜索笔记处理间隔秒数（默认：`3.0`） |
 | `XHS_API_ENABLED` | 否 | 启用 xhshow API 抓取（默认：`true`，已安装 xhshow 时自动生效） |
+| `XHS_PINIA_ENABLED` | 否 | xhshow 签名失败时自动通过 Pinia Store 注入兜底（默认：`true`） |
 | `XHS_API_DELAY` | 否 | API 请求间隔秒数（默认：`1.5`） |
 | `XHS_FETCH_COMMENTS` | 否 | 抓取笔记评论（默认：`false`） |
 | `XHS_MAX_COMMENTS` | 否 | 最大评论采集数（默认：`50`） |
@@ -674,9 +675,11 @@ feedgrab/
 │   │   ├── wechat_search.py   # 搜狗微信搜索（markdownify 富文本转换）
 │   │   ├── mpweixin_account.py # 公众号按账号批量（MP 后台 API + 断点续传）
 │   │   ├── mpweixin_album.py  # 公众号专辑批量（mpweixin-zhuanji + 断点续传）
-│   │   ├── xhs.py             # API (xhshow) → Jina → Playwright + Session 兜底
-│   │   ├── xhs_user_notes.py  # 小红书作者批量抓取（API 分页 + __INITIAL_STATE__ + XHR 拦截 + 滚动加载）
-│   │   ├── xhs_search_notes.py# 小红书搜索批量抓取（xhs-so API 搜索 + 搜索结果页滚动 + 逐篇深度抓取）
+│   │   ├── xhs.py             # API (xhshow) → Pinia Store 注入 → Jina → Playwright 四级兜底
+│   │   ├── xhs_api.py         # 小红书 API 客户端（xhshow 签名 + 评论 + xsec_token 缓存）
+│   │   ├── xhs_pinia.py       # 小红书 Pinia Store 注入（浏览器原生请求兜底，CDP 优先）
+│   │   ├── xhs_user_notes.py  # 小红书作者批量抓取（API → Pinia → 浏览器三层策略）
+│   │   ├── xhs_search_notes.py# 小红书搜索批量抓取（xhs-so API/Pinia 搜索 + 搜索结果页滚动）
 │   │   ├── feishu.py          # 飞书单篇（Open API → CDP 直连 → Playwright PageMain → Jina + Block→MD + 图片下载）
 │   │   └── feishu_wiki.py     # 飞书知识库批量（Open API 递归 + CDP/Playwright 兜底 + 断点续传）
 │   └── utils/

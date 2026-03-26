@@ -2,6 +2,68 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-27 · v0.13.3 · 小红书 Pinia Store 注入兜底层
+
+### 背景
+feedgrab 小红书抓取依赖 `xhshow` 签名库生成 `x-s`/`x-s-common`/`x-t` 反爬头。当小红书更新签名算法时，xhshow 会失效（461/471 验证码），需等待库更新。调研 bb-browser 发现更可靠方式：**Pinia Store 注入** — 在小红书页面上下文中直接调用 Vue Store Action，触发前端原生请求，签名/Cookie/TLS 全部天然真实。
+
+### 方案决策
+
+新增 Tier 0.5 Pinia 兜底层，插入 xhshow API 和 Jina 之间：
+
+```
+Tier 0    xhshow API 签名（纯 HTTP，最快，~0.5s）     ← 现有
+Tier 0.5  Pinia Store 注入（浏览器原生请求，~1-2s）   ← 新增
+Tier 1    Jina Reader                                  ← 现有
+Tier 2    Playwright DOM 解析                          ← 现有
+```
+
+核心技术（双通道模式，源自 bb-sites）：
+1. Monkey-patch `XMLHttpRequest.prototype.open/send` 设置拦截器
+2. 调用 Pinia Store Action（`noteStore.getNoteDetailByNoteId(id)`）触发前端原生 XHR
+3. 拦截器捕获原始 JSON 响应（避免 Vue Proxy 包装）
+4. `finally` 块恢复原始 XHR 方法
+
+Pinia 访问路径：`document.querySelector('#app').__vue_app__.config.globalProperties.$pinia._s.get('storeName')`
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/xhs_pinia.py` | 新增 | Pinia 核心模块（4 个 JS 片段 + CDP/Launch 浏览器管理 + 3 个公共 API） |
+| `feedgrab/fetchers/xhs.py` | 修改 | 单篇 Tier 0.5 插入（`pinia_feed_note` 兜底） |
+| `feedgrab/fetchers/xhs_search_notes.py` | 修改 | 搜索批量 Pinia 兜底 + `_process_pinia_search_results()` + `xhs-so` Pinia 兜底 |
+| `feedgrab/fetchers/xhs_user_notes.py` | 修改 | 用户笔记批量 Pinia 兜底 + `_process_pinia_user_results()` |
+| `feedgrab/config.py` | 新增 | `xhs_pinia_enabled()` 配置函数 |
+| `.env.example` | 修改 | Pinia 配置说明 |
+
+### 覆盖的入口
+
+- **单篇**（`fetch_xhs()`）：API 失败 → Pinia feed_note → Jina → Playwright
+- **搜索批量**（`fetch_search_notes()`）：API 搜索失败 → Pinia 搜索 → 浏览器模式
+- **用户笔记批量**（`fetch_user_notes()`）：API 列表失败 → Pinia 用户笔记 → 浏览器模式
+- **xhs-so 命令**（`search_xhs_keyword()`）：API 不可用 → Pinia 搜索 → 报错
+
+### 降级逻辑
+
+```
+XHS_PINIA_ENABLED=false → 跳过 Pinia
+无 sessions/xhs.json 且 CDP 不可用 → 跳过 Pinia
+CDP 连接失败 → 尝试 Launch
+Pinia 不可用（__vue_app__ 未就绪）→ 跳过 Pinia
+Store Action 执行失败 → 跳过 Pinia
+所有失败静默降级到下一 Tier
+```
+
+### 验证结果
+- 语法检查：4 个文件全部通过 ✅
+- 模块导入链：`xhs_pinia` → `xhs` → `xhs_search_notes` → `xhs_user_notes` 全部 OK ✅
+- 配置函数：`xhs_pinia_enabled()` 默认 true ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-27 · v0.13.2 · 飞书 CDP 直连（复用已打开的 Chrome 抓取飞书文档）
 
 ### 背景

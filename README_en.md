@@ -196,7 +196,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) / Album batch (`mpweixin-zhuanji`) | — |
 | GitHub | **REST API** (repo metadata + Chinese README priority (incl. subdirectory language link search) + relative image URL resolution + summary extraction) | — |
-| Xiaohongshu (小红书) | **API (xhshow)** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
+| Xiaohongshu (小红书) | **API (xhshow)** → **Pinia Store injection** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
 | Feishu/Lark (飞书) | **Open API** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
@@ -204,7 +204,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Apple Podcasts | — | via Claude Code skill |
 | Any web page | Jina fallback | — |
 
-> \*XHS supports **API fetching** (xhshow, no login required) and **browser fetching** (requires one-time login: `feedgrab login xhs`). Single note fetch prefers API (full metadata + comments), falls back to Jina → Playwright when unavailable. **Keyword search** (`feedgrab xhs-so`) uses API directly, no login needed. **Author profile batch** and **search result batch** use API pagination + Tier 0 initial page extraction + Tier 1 scroll loading + Tier 2 per-note deep fetch.
+> \*XHS supports **API fetching** (xhshow, no login required) and **browser fetching** (requires one-time login: `feedgrab login xhs`). Single note fetch prefers API (full metadata + comments), falls back to **Pinia Store injection** (browser-native requests, no third-party signing library needed) → Jina → Playwright when unavailable. **Keyword search** (`feedgrab xhs-so`), **author profile batch**, and **search result batch** also support Pinia fallback. `XHS_PINIA_ENABLED=true` (enabled by default).
 >
 > YouTube Whisper transcription requires `GROQ_API_KEY` — get a free key from [Groq](https://console.groq.com/keys)
 
@@ -587,9 +587,11 @@ feedgrab/
 │   │   ├── wechat.py          # Jina → Playwright WeChat JS extraction
 │   │   ├── mpweixin_account.py # WeChat account batch (MP backend API + resume)
 │   │   ├── mpweixin_album.py  # WeChat album batch (mpweixin-zhuanji + resume)
-│   │   ├── xhs.py             # API (xhshow) → Jina → Playwright + session fallback
-│   │   ├── xhs_user_notes.py  # XHS author batch fetch (__INITIAL_STATE__ + XHR intercept + scroll)
-│   │   ├── xhs_search_notes.py # XHS search batch fetch (xhs-so API search + search page scroll + per-note deep fetch)
+│   │   ├── xhs.py             # API (xhshow) → Pinia Store injection → Jina → Playwright 4-tier fallback
+│   │   ├── xhs_api.py         # XHS API client (xhshow signing + comments + xsec_token cache)
+│   │   ├── xhs_pinia.py       # XHS Pinia Store injection (browser-native fallback, CDP-first)
+│   │   ├── xhs_user_notes.py  # XHS author batch fetch (API → Pinia → browser 3-tier strategy)
+│   │   ├── xhs_search_notes.py # XHS search batch fetch (xhs-so API/Pinia search + scroll + deep fetch)
 │   │   ├── feishu.py          # Feishu single doc (Open API → Playwright PageMain → Jina + Block→MD + image download)
 │   │   └── feishu_wiki.py     # Feishu wiki batch (Open API recursive + Playwright fallback + resume)
 │   └── utils/

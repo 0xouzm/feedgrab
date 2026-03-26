@@ -391,11 +391,183 @@ async def fetch_user_notes(profile_url: str) -> dict:
     except Exception as e:
         logger.warning(f"[XHS-User] API 模式失败 ({e})，降级到浏览器模式")
 
+    # === Tier 0.5: Pinia Store user notes (browser-native fallback) ===
+    try:
+        from feedgrab.config import xhs_pinia_enabled
+
+        if xhs_pinia_enabled():
+            logger.info(f"[XHS-User] Tier 0.5 — Pinia Store 用户笔记: {xhs_user_id}")
+            from feedgrab.fetchers.xhs_pinia import pinia_user_notes as _pinia_user
+
+            pinia_items = await _pinia_user(xhs_user_id)
+            if pinia_items:
+                logger.info(f"[XHS-User] Pinia 获取 {len(pinia_items)} 篇笔记列表")
+                result = await _process_pinia_user_results(
+                    pinia_items, xhs_user_id, saved_ids, initial_count,
+                    since_date, delay, from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+                )
+                if result is not None:
+                    return result
+    except Exception as e:
+        logger.warning(f"[XHS-User] Pinia 用户笔记失败 ({e})，降级到浏览器模式")
+
     # === Browser fallback (original Tier 0/1/2) ===
     return await _fetch_user_notes_via_browser(
         profile_url, xhs_user_id, saved_ids, initial_count,
         since_date, delay, from_xiaohongshu, save_to_markdown, _parse_xhs_date,
     )
+
+
+async def _process_pinia_user_results(
+    pinia_items, xhs_user_id, saved_ids, initial_count,
+    since_date, delay, from_xiaohongshu, save_to_markdown, _parse_xhs_date,
+) -> dict | None:
+    """Process user note list from Pinia Store injection.
+
+    Pinia items are normalized (note_id, title, author, etc.).
+    Saves each note with list-level data. For full content, single-note
+    fetch via pinia_feed_note is too expensive per-item.
+
+    Returns result dict on success, None if no valid items.
+    """
+    total = len(pinia_items)
+
+    # Get author name from first item
+    author_name = ""
+    for item in pinia_items:
+        if item.get("author"):
+            author_name = item["author"]
+            break
+    if not author_name:
+        author_name = f"user_{xhs_user_id[:8]}"
+
+    safe_author = re.sub(r'[\\/:*?"<>|]', '_', author_name)
+    subfolder = f"notes_{safe_author}"
+
+    fetched = 0
+    skipped = 0
+    failed = 0
+    note_list = []
+    consecutive_old = 0
+    OLD_THRESHOLD = 3
+
+    for idx, data in enumerate(pinia_items):
+        note_url = data.get("url", "")
+        note_id = data.get("note_id", "")
+        if not note_url and note_id:
+            note_url = _build_note_url(note_id, "")
+        if not note_url:
+            continue
+
+        item_id = item_id_from_url(note_url.split("?")[0])
+
+        # Dedup check
+        if has_item(item_id, saved_ids):
+            skipped += 1
+            note_list.append({
+                "url": note_url, "item_id": item_id,
+                "title": data.get("title", ""),
+                "status": "skipped", "error": "已存在",
+            })
+            continue
+
+        try:
+            data["platform"] = "xhs"
+            if not data.get("url"):
+                data["url"] = note_url
+            if not data.get("date"):
+                data["date"] = datetime.now().strftime("%Y-%m-%d")
+
+            # Date filtering
+            note_date = _parse_xhs_date(data.get("date", ""))
+            if since_date and note_date:
+                if note_date < since_date:
+                    consecutive_old += 1
+                    skipped += 1
+                    note_list.append({
+                        "url": note_url, "item_id": item_id,
+                        "date": note_date,
+                        "title": data.get("title", ""),
+                        "status": "skipped",
+                        "error": f"日期过滤 ({note_date})",
+                    })
+                    if consecutive_old >= OLD_THRESHOLD:
+                        logger.info(
+                            f"[XHS-User] 连续 {OLD_THRESHOLD} 篇旧笔记，停止处理"
+                        )
+                        break
+                    continue
+                else:
+                    consecutive_old = 0
+
+            content = from_xiaohongshu(data)
+            content.category = subfolder
+            saved_path = save_to_markdown(content)
+
+            # Media download
+            if saved_path:
+                from feedgrab.config import xhs_download_media
+                if xhs_download_media():
+                    from feedgrab.utils.media import download_media
+                    download_media(
+                        saved_path,
+                        content.extra.get("images", []),
+                        content.extra.get("videos", []),
+                        content.id,
+                        platform="xhs",
+                    )
+
+            add_item(item_id, note_url.split("?")[0], saved_ids)
+            fetched += 1
+
+            note_title = data.get("title") or data.get("content", "")[:30]
+            note_list.append({
+                "url": note_url.split("?")[0], "item_id": item_id,
+                "author": data.get("author", ""),
+                "date": note_date,
+                "title": note_title[:80],
+                "status": "fetched", "error": "",
+            })
+
+            if (idx + 1) % 10 == 0 or idx + 1 == total:
+                logger.info(
+                    f"[XHS-User] Pinia 进度 [{idx+1}/{total}] "
+                    f"成功:{fetched} 跳过:{skipped} 失败:{failed}"
+                )
+
+        except Exception as e:
+            logger.warning(
+                f"[XHS-User] [{idx+1}/{total}] Pinia 保存失败: "
+                f"{data.get('title', '')[:30]} - {str(e)[:80]}"
+            )
+            failed += 1
+            note_list.append({
+                "url": note_url, "item_id": item_id,
+                "title": data.get("title", ""),
+                "status": "failed", "error": str(e)[:200],
+            })
+
+    if fetched == 0 and skipped == 0:
+        return None
+
+    # Persist index
+    save_index(saved_ids, platform="XHS")
+    logger.info(f"[XHS-User] 索引更新: {initial_count} -> {len(saved_ids)} 条")
+
+    list_path = _save_batch_record(note_list, author_name, since_date)
+
+    logger.info(
+        f"[XHS-User] Pinia 批量完成: "
+        f"总计 {total}, 成功 {fetched}, 跳过 {skipped}, 失败 {failed}"
+    )
+
+    return {
+        "total": total,
+        "fetched": fetched,
+        "skipped": skipped,
+        "failed": failed,
+        "list_path": str(list_path),
+    }
 
 
 async def _fetch_user_notes_via_api(
