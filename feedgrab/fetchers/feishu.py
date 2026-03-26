@@ -1359,18 +1359,19 @@ def _get_table_property(block) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Tier 1: Playwright + window.PageMain
+# Tier 2: Playwright + window.PageMain (CDP direct → launch fallback)
 # ---------------------------------------------------------------------------
 
 async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
-    """Tier 1 – Extract document content via browser editor memory."""
+    """Tier 2 – Extract document content via browser editor memory."""
     from feedgrab.fetchers.browser import (
         evaluate_feishu_doc,
         get_session_path,
     )
 
     session_path = get_session_path("feishu")
-    if not Path(session_path).exists():
+    from feedgrab.config import feishu_cdp_enabled
+    if not Path(session_path).exists() and not feishu_cdp_enabled():
         raise RuntimeError(
             "Feishu session not found. Run: feedgrab login feishu"
         )
@@ -1846,7 +1847,13 @@ def _download_images_via_cdn(
 # ---------------------------------------------------------------------------
 
 async def fetch_feishu(url: str) -> Dict[str, Any]:
-    """Fetch a Feishu document with three-tier fallback.
+    """Fetch a Feishu document with multi-tier fallback.
+
+    Tier 0: Open API (needs APP_ID + APP_SECRET)
+    Tier 1: CDP direct connect (needs Chrome --remote-debugging-port)
+    Tier 2: Launch new browser (needs sessions/feishu.json)
+    Tier 3: Internal export API (docx → Markdown)
+    Tier 4: Jina Reader (zero-config)
 
     Returns a dict suitable for ``schema.from_feishu()``.
     """
@@ -1862,25 +1869,29 @@ async def fetch_feishu(url: str) -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"[Feishu] Tier 0 failed ({e}), falling back")
 
-    # -- Tier 1: Playwright + window.PageMain -------------------------------
+    # -- Tier 1/2: Playwright (CDP direct → launch fallback) ---------------
+    from feedgrab.config import feishu_cdp_enabled
     session_path = str(Path(get_session_dir()) / "feishu.json")
-    if Path(session_path).exists():
+    has_session = Path(session_path).exists()
+    if has_session or feishu_cdp_enabled():
         try:
-            logger.info("[Feishu] Tier 1: Playwright + PageMain")
+            tier_label = "Tier 1: CDP direct" if feishu_cdp_enabled() else "Tier 2: Playwright"
+            logger.info(f"[Feishu] {tier_label} + PageMain")
             return await _fetch_via_playwright(url)
         except Exception as e:
-            logger.warning(f"[Feishu] Tier 1 failed ({e}), trying export API")
+            logger.warning(f"[Feishu] Playwright failed ({e}), trying export API")
 
-        # -- Tier 1.5: Internal export API (docx → Markdown) ---------------
-        try:
-            logger.info("[Feishu] Tier 1.5: Internal export API (docx)")
-            return await _fetch_via_export_api(url, session_path)
-        except Exception as e:
-            logger.warning(f"[Feishu] Tier 1.5 failed ({e}), falling back")
+        # -- Tier 3: Internal export API (docx → Markdown) -----------------
+        if has_session:
+            try:
+                logger.info("[Feishu] Tier 3: Internal export API (docx)")
+                return await _fetch_via_export_api(url, session_path)
+            except Exception as e:
+                logger.warning(f"[Feishu] Tier 3 failed ({e}), falling back")
 
-    # -- Tier 2: Jina Reader ------------------------------------------------
+    # -- Tier 4: Jina Reader -----------------------------------------------
     try:
-        logger.info("[Feishu] Tier 2: Jina Reader")
+        logger.info("[Feishu] Tier 4: Jina Reader")
         from feedgrab.fetchers.jina import fetch_via_jina
 
         data = fetch_via_jina(url)
@@ -1899,11 +1910,12 @@ async def fetch_feishu(url: str) -> Dict[str, Any]:
             "tags": [],
         }
     except Exception as e:
-        logger.warning(f"[Feishu] Tier 2 Jina failed ({e})")
+        logger.warning(f"[Feishu] Tier 4 Jina failed ({e})")
 
     raise RuntimeError(
         f"All methods failed for {url}. "
         "Options: 1) Set FEISHU_APP_ID + FEISHU_APP_SECRET for API access, "
-        "2) Run 'feedgrab login feishu' for browser access, "
-        "3) Ensure the document is publicly accessible for Jina fallback."
+        "2) Set FEISHU_CDP_ENABLED=true with Chrome --remote-debugging-port, "
+        "3) Run 'feedgrab login feishu' for browser access, "
+        "4) Ensure the document is publicly accessible for Jina fallback."
     )

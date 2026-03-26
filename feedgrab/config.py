@@ -729,6 +729,14 @@ def feishu_page_load_timeout() -> int:
         return 5000
 
 
+def feishu_cdp_enabled() -> bool:
+    """Connect to running Chrome via CDP for Feishu docs. Default false.
+
+    Requires Chrome launched with --remote-debugging-port (see CHROME_CDP_PORT).
+    """
+    return os.getenv("FEISHU_CDP_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
 # ── Media download ───────────────────────────────────────────
 
 def x_download_media() -> bool:

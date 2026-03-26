@@ -223,7 +223,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`）/ 专辑批量（`mpweixin-zhuanji`） | — |
 | GitHub | **REST API**（仓库元数据 + 中文 README 优先（含子目录语言链接搜索）+ 相对图片链接补全 + 摘要提取） | — |
 | 小红书 | **API (xhshow)** → Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量** + **关键词搜索 `xhs-so`**) | — |
-| 飞书/Lark | **Open API** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载） | — |
+| 飞书/Lark | **Open API** → **CDP 直连** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载） | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙播客 | — | 通过 Claude Code 技能 |
@@ -624,6 +624,7 @@ cp .env.example .env
 | `FEISHU_WIKI_SINCE` | 否 | 仅抓取此日期后修改的文档（`YYYY-MM-DD`，留空=全部） |
 | `FEISHU_CUSTOM_DOMAINS` | 否 | 私有化部署域名（逗号分隔，如 `feishu.mycompany.cn`） |
 | `FEISHU_PAGE_LOAD_TIMEOUT` | 否 | Playwright 页面元素等待超时毫秒（默认：`5000`） |
+| `FEISHU_CDP_ENABLED` | 否 | CDP 直连已打开的 Chrome 抓取飞书（需 `--remote-debugging-port=9222`，默认：`false`） |
 | `CHROME_CDP_LOGIN` | 否 | 启用 CDP Cookie 提取，`feedgrab login` 优先从运行中的 Chrome 提取（默认：`false`） |
 | `CHROME_CDP_PORT` | 否 | Chrome CDP 端口（默认：`9222`） |
 | `X_DOWNLOAD_MEDIA` | 否 | Twitter 图片/视频下载到本地 `attachments/` 子目录（默认：`false`） |
@@ -676,8 +677,8 @@ feedgrab/
 │   │   ├── xhs.py             # API (xhshow) → Jina → Playwright + Session 兜底
 │   │   ├── xhs_user_notes.py  # 小红书作者批量抓取（API 分页 + __INITIAL_STATE__ + XHR 拦截 + 滚动加载）
 │   │   ├── xhs_search_notes.py# 小红书搜索批量抓取（xhs-so API 搜索 + 搜索结果页滚动 + 逐篇深度抓取）
-│   │   ├── feishu.py          # 飞书单篇（Open API → Playwright PageMain → Jina + Block→MD + 图片下载）
-│   │   └── feishu_wiki.py     # 飞书知识库批量（Open API 递归 + Playwright 兜底 + 断点续传）
+│   │   ├── feishu.py          # 飞书单篇（Open API → CDP 直连 → Playwright PageMain → Jina + Block→MD + 图片下载）
+│   │   └── feishu_wiki.py     # 飞书知识库批量（Open API 递归 + CDP/Playwright 兜底 + 断点续传）
 │   └── utils/
 │       ├── storage.py         # 按平台分目录 Markdown + JSON 双重输出
 │       ├── dedup.py           # 全局去重索引（跨模式统一 item_id 追踪）

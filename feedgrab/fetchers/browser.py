@@ -1010,8 +1010,309 @@ FEISHU_DOC_JS_EVALUATE = r"""
 """
 
 
+async def _connect_feishu_cdp():
+    """Try CDP connection to a running Chrome with Feishu logged in.
+
+    Returns ``(pw, browser, page, True)`` on success, or
+    ``(None, None, None, False)`` on failure.  Caller must
+    ``page.close(); browser.close(); pw.stop()`` when done.
+    ``browser.close()`` only disconnects the CDP socket — it does
+    **not** kill the user's Chrome process.
+    """
+    from feedgrab.config import feishu_cdp_enabled, chrome_cdp_port
+
+    if not feishu_cdp_enabled():
+        return None, None, None, False
+
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return None, None, None, False
+
+    port = chrome_cdp_port()
+    pw = await async_playwright().start()
+    try:
+        ws_url = f"ws://127.0.0.1:{port}/devtools/browser"
+        browser = await pw.chromium.connect_over_cdp(ws_url)
+
+        # Find a context with Feishu cookies
+        feishu_domains = (".feishu.cn", ".larksuite.com", ".larkoffice.com")
+        target_ctx = None
+        for ctx in browser.contexts:
+            cookies = await ctx.cookies()
+            if any(
+                any(c.get("domain", "").endswith(d) for d in feishu_domains)
+                for c in cookies
+            ):
+                target_ctx = ctx
+                break
+
+        if not target_ctx:
+            logger.info("[Feishu CDP] No context with Feishu cookies found")
+            await browser.close()
+            await pw.stop()
+            return None, None, None, False
+
+        page = await target_ctx.new_page()
+        logger.info("[Feishu CDP] Connected to Chrome, new tab created")
+        return pw, browser, page, True
+
+    except Exception as e:
+        logger.info(f"[Feishu CDP] Connection failed: {e}")
+        await pw.stop()
+        return None, None, None, False
+
+
+async def _evaluate_feishu_doc_on_page(
+    url: str, page, *, skip_warmup: bool = False,
+) -> dict:
+    """Execute the full Feishu doc extraction on an already-created *page*.
+
+    Registers response interceptors, navigates, waits for PageMain,
+    runs JS evaluate, and handles sheet + image pre-download.
+
+    The caller is responsible for creating and closing the page.
+
+    *skip_warmup* — when True, skips the initial main-domain warmup
+    navigation (CDP mode already has the session established).
+    """
+    from urllib.parse import urlparse
+
+    # Intercept sheet client_vars responses for embedded spreadsheet data
+    sheet_cv_data: dict = {}
+    # Intercept image responses during page load (most reliable auth)
+    image_response_data: dict = {}  # token -> bytes
+
+    async def _capture_sheet_response(response):
+        try:
+            if "client_vars" in response.url and response.status == 200:
+                body = await response.json()
+                if (
+                    body.get("code") == 0
+                    and body.get("data", {}).get("snapshot")
+                ):
+                    token = body["data"].get("token", "")
+                    sheet_id = body["data"].get("sheetId", "")
+                    key = f"{token}_{sheet_id}" if sheet_id else token
+                    sheet_cv_data[key] = body["data"]
+                    logger.info(
+                        f"[Feishu] Intercepted sheet data: {key}"
+                    )
+        except Exception:
+            pass  # non-JSON or parsing error, skip
+
+    async def _capture_image_response(response):
+        try:
+            url_str = response.url
+            if "/stream/download/" not in url_str:
+                return
+            if response.status != 200:
+                return
+            content_type = response.headers.get("content-type", "")
+            if not content_type.startswith("image/"):
+                return
+            body = await response.body()
+            if len(body) < 100:
+                return
+            # Extract token: .../download/preview/{token}/?... or
+            #                 .../download/all/{token}/
+            parts = url_str.split("/")
+            for i, part in enumerate(parts):
+                if part in ("preview", "all") and i + 1 < len(parts):
+                    tk = parts[i + 1].split("?")[0]
+                    if tk and len(tk) > 5:
+                        image_response_data[tk] = body
+                        break
+        except Exception:
+            pass
+
+    page.on("response", _capture_sheet_response)
+    page.on("response", _capture_image_response)
+
+    # Disable copy restrictions (reference: 游侠飞书剪存)
+    await page.add_init_script("""
+        if (window.copyControl && window.copyControl.enable) {
+            window.copyControl.enable();
+        }
+    """)
+
+    # Warm up session: navigate to main domain first to set cookies,
+    # then redirect to the actual document.
+    if not skip_warmup:
+        parsed = urlparse(url)
+        main_url = f"{parsed.scheme}://{parsed.netloc}"
+        try:
+            await page.goto(main_url, wait_until="domcontentloaded", timeout=20000)
+            await page.wait_for_timeout(2000)
+        except Exception as e:
+            logger.warning(f"[Feishu] Main page warmup failed: {e}")
+
+    await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+    # Wait for editor to initialize (PageMain) or content to render
+    try:
+        await page.wait_for_function(
+            "() => window.PageMain?.blockManager?.rootBlockModel != null"
+            " || document.querySelector('div[role=\"document\"]') != null",
+            timeout=15000,
+        )
+    except Exception:
+        logger.warning("[Feishu] Timed out waiting for editor, trying anyway")
+
+    # Small delay for editor state to stabilize
+    await page.wait_for_timeout(1000)
+
+    # Wait for author info to render (lazy-loaded component)
+    try:
+        from feedgrab.config import feishu_page_load_timeout
+        await page.wait_for_selector(
+            ".docs-info-avatar-name-text, .docs-info-avatar-name",
+            timeout=feishu_page_load_timeout(),
+        )
+    except Exception:
+        pass  # author element may not exist on all pages
+
+    data = await page.evaluate(FEISHU_DOC_JS_EVALUATE)
+    result = data or {}
+
+    # If we intercepted sheet data during page load, attach it
+    if sheet_cv_data:
+        result["sheet_client_vars"] = sheet_cv_data
+
+    # If block tree has sheet embeds but no data was intercepted,
+    # try fetching via internal API from the page context
+    if not sheet_cv_data:
+        sheet_tokens = _find_sheet_tokens(result.get("blockTree"))
+        if sheet_tokens:
+            logger.info(
+                f"[Feishu] Fetching {len(sheet_tokens)} sheet(s) "
+                "via internal API"
+            )
+            fetched = await page.evaluate(
+                FEISHU_SHEET_FETCH_JS, list(sheet_tokens)
+            )
+            if fetched:
+                result["sheet_client_vars"] = fetched
+            else:
+                # API call failed — try scrolling to trigger lazy load,
+                # then wait for intercepted response
+                logger.info(
+                    "[Feishu] Direct API failed, scrolling to "
+                    "trigger sheet loading"
+                )
+                await page.evaluate(
+                    "window.scrollTo(0, document.body.scrollHeight)"
+                )
+                await page.wait_for_timeout(5000)
+                if sheet_cv_data:
+                    result["sheet_client_vars"] = sheet_cv_data
+
+    # Collect pre-downloaded images from interceptor + JS fetch fallback
+    try:
+        from feedgrab.config import feishu_download_images
+        if feishu_download_images():
+            img_tokens = _find_image_tokens_from_tree(
+                result.get("blockTree")
+            )
+            if img_tokens:
+                img_bytes: dict[str, bytes] = {}
+
+                # Phase 1: use images captured by response interceptor
+                for tk in img_tokens:
+                    if tk in image_response_data:
+                        img_bytes[tk] = image_response_data[tk]
+
+                intercepted = len(img_bytes)
+                missing = [
+                    tk for tk in img_tokens if tk not in img_bytes
+                ]
+
+                # Phase 2: scroll to trigger lazy-loaded images
+                if missing:
+                    await page.evaluate(
+                        "window.scrollTo(0, "
+                        "document.body.scrollHeight)"
+                    )
+                    await page.wait_for_timeout(3000)
+                    for tk in list(missing):
+                        if tk in image_response_data:
+                            img_bytes[tk] = image_response_data[tk]
+                            missing.remove(tk)
+
+                # Phase 3: discover real CDN domain from DOM, then
+                # JS fetch with correct URL pattern
+                if missing:
+                    cdn_info = await page.evaluate(
+                        _FEISHU_IMAGE_CDN_DISCOVER_JS
+                    )
+                    if cdn_info:
+                        logger.info(
+                            f"[Feishu] CDN: {cdn_info['cdn']}, "
+                            f"mount: "
+                            f"{cdn_info['mount_token'][:12]}..., "
+                            f"fetching {len(missing)} images"
+                        )
+                        batch_size = 10
+                        for s in range(0, len(missing), batch_size):
+                            batch = missing[s:s + batch_size]
+                            fetched = await page.evaluate(
+                                _FEISHU_IMAGE_FETCH_JS,
+                                {
+                                    "tokens": batch,
+                                    "cdn": cdn_info["cdn"],
+                                    "mount_token": cdn_info[
+                                        "mount_token"
+                                    ],
+                                },
+                            )
+                            if not fetched:
+                                continue
+                            # Log first batch
+                            if s == 0:
+                                for tk, v in list(
+                                    fetched.items()
+                                )[:3]:
+                                    p = (v[:40]
+                                         if isinstance(v, str)
+                                         else "bytes")
+                                    logger.info(
+                                        f"[Feishu] fetch "
+                                        f"{tk[:12]}... → {p}"
+                                    )
+                            import base64
+                            for tk, b64 in fetched.items():
+                                if (b64 and not b64.startswith(
+                                        "error:")):
+                                    try:
+                                        raw = base64.b64decode(b64)
+                                        if len(raw) > 100:
+                                            img_bytes[tk] = raw
+                                    except Exception:
+                                        pass
+                    else:
+                        logger.info(
+                            "[Feishu] No CDN info from DOM"
+                        )
+
+                if img_bytes:
+                    result["_image_bytes"] = img_bytes
+                    logger.info(
+                        f"[Feishu] Pre-downloaded "
+                        f"{len(img_bytes)}/{len(img_tokens)} "
+                        f"images ({intercepted} intercepted, "
+                        f"{len(img_bytes) - intercepted} fetched)"
+                    )
+    except Exception as e:
+        logger.debug(f"[Feishu] Image pre-download skipped: {e}")
+
+    return result
+
+
 async def evaluate_feishu_doc(url: str, session_path: str) -> dict:
-    """Launch browser, navigate to Feishu doc, extract content via JS.
+    """Extract Feishu document content via browser.
+
+    Tries CDP direct-connect first (zero startup, reuses Chrome login),
+    then falls back to launching a new browser instance.
 
     Uses headed mode with vanilla playwright (not patchright) because Feishu
     refuses connections from patchright's CDP-patched Chromium.
@@ -1019,8 +1320,32 @@ async def evaluate_feishu_doc(url: str, session_path: str) -> dict:
     Also intercepts sheet ``client_vars`` API responses for embedded
     spreadsheet data extraction (Protobuf cell blocks).
     """
-    from urllib.parse import urlparse
+    # ── Tier 0.5: CDP direct connect ─────────────────────────
+    pw_cdp, browser_cdp, page_cdp, via_cdp = await _connect_feishu_cdp()
+    if via_cdp:
+        try:
+            return await _evaluate_feishu_doc_on_page(
+                url, page_cdp, skip_warmup=True,
+            )
+        except Exception as e:
+            logger.warning(
+                f"[Feishu CDP] Extraction failed: {e}, falling back to launch"
+            )
+        finally:
+            try:
+                await page_cdp.close()
+            except Exception:
+                pass
+            try:
+                await browser_cdp.close()
+            except Exception:
+                pass
+            try:
+                await pw_cdp.stop()
+            except Exception:
+                pass
 
+    # ── Tier 1: Launch new browser ────────────────────────────
     # Use vanilla playwright for Feishu — patchright causes ERR_CONNECTION_CLOSED
     try:
         from playwright.async_api import async_playwright as _pw_factory
@@ -1042,233 +1367,7 @@ async def evaluate_feishu_doc(url: str, session_path: str) -> dict:
         # scripts are essential for window.PageMain to initialise.
         page = await context.new_page()
 
-        # Intercept sheet client_vars responses for embedded spreadsheet data
-        sheet_cv_data: dict = {}
-        # Intercept image responses during page load (most reliable auth)
-        image_response_data: dict = {}  # token -> bytes
-
-        async def _capture_sheet_response(response):
-            try:
-                if "client_vars" in response.url and response.status == 200:
-                    body = await response.json()
-                    if (
-                        body.get("code") == 0
-                        and body.get("data", {}).get("snapshot")
-                    ):
-                        token = body["data"].get("token", "")
-                        sheet_id = body["data"].get("sheetId", "")
-                        key = f"{token}_{sheet_id}" if sheet_id else token
-                        sheet_cv_data[key] = body["data"]
-                        logger.info(
-                            f"[Feishu] Intercepted sheet data: {key}"
-                        )
-            except Exception:
-                pass  # non-JSON or parsing error, skip
-
-        async def _capture_image_response(response):
-            try:
-                url_str = response.url
-                if "/stream/download/" not in url_str:
-                    return
-                if response.status != 200:
-                    return
-                content_type = response.headers.get("content-type", "")
-                if not content_type.startswith("image/"):
-                    return
-                body = await response.body()
-                if len(body) < 100:
-                    return
-                # Extract token: .../download/preview/{token}/?... or
-                #                 .../download/all/{token}/
-                parts = url_str.split("/")
-                for i, part in enumerate(parts):
-                    if part in ("preview", "all") and i + 1 < len(parts):
-                        tk = parts[i + 1].split("?")[0]
-                        if tk and len(tk) > 5:
-                            image_response_data[tk] = body
-                            break
-            except Exception:
-                pass
-
-        page.on("response", _capture_sheet_response)
-        page.on("response", _capture_image_response)
-
-        # Disable copy restrictions (reference: 游侠飞书剪存)
-        await page.add_init_script("""
-            if (window.copyControl && window.copyControl.enable) {
-                window.copyControl.enable();
-            }
-        """)
-
-        # Warm up session: navigate to main domain first to set cookies,
-        # then redirect to the actual document.
-        parsed = urlparse(url)
-        main_url = f"{parsed.scheme}://{parsed.netloc}"
-        try:
-            await page.goto(main_url, wait_until="domcontentloaded", timeout=20000)
-            await page.wait_for_timeout(2000)
-        except Exception as e:
-            logger.warning(f"[Feishu] Main page warmup failed: {e}")
-
-        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-
-        # Wait for editor to initialize (PageMain) or content to render
-        try:
-            await page.wait_for_function(
-                "() => window.PageMain?.blockManager?.rootBlockModel != null"
-                " || document.querySelector('div[role=\"document\"]') != null",
-                timeout=15000,
-            )
-        except Exception:
-            logger.warning("[Feishu] Timed out waiting for editor, trying anyway")
-
-        # Small delay for editor state to stabilize
-        await page.wait_for_timeout(1000)
-
-        # Wait for author info to render (lazy-loaded component)
-        try:
-            from feedgrab.config import feishu_page_load_timeout
-            await page.wait_for_selector(
-                ".docs-info-avatar-name-text, .docs-info-avatar-name",
-                timeout=feishu_page_load_timeout(),
-            )
-        except Exception:
-            pass  # author element may not exist on all pages
-
-        data = await page.evaluate(FEISHU_DOC_JS_EVALUATE)
-        result = data or {}
-
-        # If we intercepted sheet data during page load, attach it
-        if sheet_cv_data:
-            result["sheet_client_vars"] = sheet_cv_data
-
-        # If block tree has sheet embeds but no data was intercepted,
-        # try fetching via internal API from the page context
-        if not sheet_cv_data:
-            sheet_tokens = _find_sheet_tokens(result.get("blockTree"))
-            if sheet_tokens:
-                logger.info(
-                    f"[Feishu] Fetching {len(sheet_tokens)} sheet(s) "
-                    "via internal API"
-                )
-                fetched = await page.evaluate(
-                    FEISHU_SHEET_FETCH_JS, list(sheet_tokens)
-                )
-                if fetched:
-                    result["sheet_client_vars"] = fetched
-                else:
-                    # API call failed — try scrolling to trigger lazy load,
-                    # then wait for intercepted response
-                    logger.info(
-                        "[Feishu] Direct API failed, scrolling to "
-                        "trigger sheet loading"
-                    )
-                    await page.evaluate(
-                        "window.scrollTo(0, document.body.scrollHeight)"
-                    )
-                    await page.wait_for_timeout(5000)
-                    if sheet_cv_data:
-                        result["sheet_client_vars"] = sheet_cv_data
-
-        # Collect pre-downloaded images from interceptor + JS fetch fallback
-        try:
-            from feedgrab.config import feishu_download_images
-            if feishu_download_images():
-                img_tokens = _find_image_tokens_from_tree(
-                    result.get("blockTree")
-                )
-                if img_tokens:
-                    img_bytes: dict[str, bytes] = {}
-
-                    # Phase 1: use images captured by response interceptor
-                    for tk in img_tokens:
-                        if tk in image_response_data:
-                            img_bytes[tk] = image_response_data[tk]
-
-                    intercepted = len(img_bytes)
-                    missing = [
-                        tk for tk in img_tokens if tk not in img_bytes
-                    ]
-
-                    # Phase 2: scroll to trigger lazy-loaded images
-                    if missing:
-                        await page.evaluate(
-                            "window.scrollTo(0, "
-                            "document.body.scrollHeight)"
-                        )
-                        await page.wait_for_timeout(3000)
-                        for tk in list(missing):
-                            if tk in image_response_data:
-                                img_bytes[tk] = image_response_data[tk]
-                                missing.remove(tk)
-
-                    # Phase 3: discover real CDN domain from DOM, then
-                    # JS fetch with correct URL pattern
-                    if missing:
-                        cdn_info = await page.evaluate(
-                            _FEISHU_IMAGE_CDN_DISCOVER_JS
-                        )
-                        if cdn_info:
-                            logger.info(
-                                f"[Feishu] CDN: {cdn_info['cdn']}, "
-                                f"mount: "
-                                f"{cdn_info['mount_token'][:12]}..., "
-                                f"fetching {len(missing)} images"
-                            )
-                            batch_size = 10
-                            for s in range(0, len(missing), batch_size):
-                                batch = missing[s:s + batch_size]
-                                fetched = await page.evaluate(
-                                    _FEISHU_IMAGE_FETCH_JS,
-                                    {
-                                        "tokens": batch,
-                                        "cdn": cdn_info["cdn"],
-                                        "mount_token": cdn_info[
-                                            "mount_token"
-                                        ],
-                                    },
-                                )
-                                if not fetched:
-                                    continue
-                                # Log first batch
-                                if s == 0:
-                                    for tk, v in list(
-                                        fetched.items()
-                                    )[:3]:
-                                        p = (v[:40]
-                                             if isinstance(v, str)
-                                             else "bytes")
-                                        logger.info(
-                                            f"[Feishu] fetch "
-                                            f"{tk[:12]}... → {p}"
-                                        )
-                                import base64
-                                for tk, b64 in fetched.items():
-                                    if (b64 and not b64.startswith(
-                                            "error:")):
-                                        try:
-                                            raw = base64.b64decode(b64)
-                                            if len(raw) > 100:
-                                                img_bytes[tk] = raw
-                                        except Exception:
-                                            pass
-                        else:
-                            logger.info(
-                                "[Feishu] No CDN info from DOM"
-                            )
-
-                    if img_bytes:
-                        result["_image_bytes"] = img_bytes
-                        logger.info(
-                            f"[Feishu] Pre-downloaded "
-                            f"{len(img_bytes)}/{len(img_tokens)} "
-                            f"images ({intercepted} intercepted, "
-                            f"{len(img_bytes) - intercepted} fetched)"
-                        )
-        except Exception as e:
-            logger.debug(f"[Feishu] Image pre-download skipped: {e}")
-
-        return result
+        return await _evaluate_feishu_doc_on_page(url, page)
     finally:
         if browser:
             await browser.close()

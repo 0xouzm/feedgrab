@@ -317,32 +317,45 @@ async def _fetch_wiki_via_playwright(
     url: str,
     root_token: str,
 ) -> Dict[str, Any]:
-    """Tier 1 – Batch fetch wiki documents via Playwright sidebar scraping."""
+    """Tier 1/2 – Batch fetch wiki documents via Playwright sidebar scraping.
+
+    Tries CDP direct connect first (zero startup, reuses Chrome login),
+    then falls back to launching a new browser instance.
+    """
     from feedgrab.fetchers.browser import (
         evaluate_feishu_doc,
         get_session_path,
         get_stealth_context_options,
+        _connect_feishu_cdp,
         FEISHU_DOC_JS_EVALUATE,
         FEISHU_SHEET_FETCH_JS,
         _find_sheet_tokens,
     )
 
-    # Use vanilla playwright for Feishu — patchright causes ERR_CONNECTION_CLOSED
-    try:
-        from playwright.async_api import async_playwright as _pw_factory
-    except ImportError:
-        from feedgrab.fetchers.browser import get_async_playwright
-        _pw_factory = get_async_playwright()
+    # ── Try CDP direct connect first ─────────────────────────
+    pw_cdp, browser_cdp, page_cdp, via_cdp = await _connect_feishu_cdp()
+    if via_cdp:
+        pw = pw_cdp
+        browser = browser_cdp
+        page = page_cdp
+        skip_warmup = True
+        logger.info("[Feishu Wiki] Using CDP direct connect")
+    else:
+        # ── Fall back to launching new browser ───────────────
+        skip_warmup = False
 
-    session_path = get_session_path("feishu")
-    if not Path(session_path).exists():
-        raise RuntimeError("Feishu session not found. Run: feedgrab login feishu")
+        # Use vanilla playwright — patchright causes ERR_CONNECTION_CLOSED
+        try:
+            from playwright.async_api import async_playwright as _pw_factory
+        except ImportError:
+            from feedgrab.fetchers.browser import get_async_playwright
+            _pw_factory = get_async_playwright()
 
-    pw = await _pw_factory().start()
-    browser = None
+        session_path = get_session_path("feishu")
+        if not Path(session_path).exists():
+            raise RuntimeError("Feishu session not found. Run: feedgrab login feishu")
 
-    try:
-        # Headed mode + no resource blocking (Feishu internal JS/API needed)
+        pw = await _pw_factory().start()
         browser = await pw.chromium.launch(
             headless=False,
             channel="chrome",
@@ -351,6 +364,10 @@ async def _fetch_wiki_via_playwright(
         ctx_opts = get_stealth_context_options(storage_state=session_path)
         context = await browser.new_context(**ctx_opts)
         page = await context.new_page()
+
+    browser_launched = not via_cdp  # Track for cleanup
+
+    try:
 
         # Disable copy restrictions (same as evaluate_feishu_doc)
         await page.add_init_script("""
@@ -601,7 +618,17 @@ async def _fetch_wiki_via_playwright(
         }
 
     finally:
-        if browser:
+        if via_cdp:
+            # CDP: close tab only, don't kill user's Chrome
+            try:
+                await page.close()
+            except Exception:
+                pass
+            try:
+                await browser.close()
+            except Exception:
+                pass
+        elif browser:
             await browser.close()
         await pw.stop()
 

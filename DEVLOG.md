@@ -2,6 +2,59 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-27 · v0.13.2 · 飞书 CDP 直连（复用已打开的 Chrome 抓取飞书文档）
+
+### 背景
+feedgrab 飞书抓取的 Tier 2（Playwright Launch）每次调用 `evaluate_feishu_doc()` 都启动新 Chrome 实例，耗时数秒、内存 200-500MB。调研 bb-browser 和 opencli 后发现核心高价值点：CDP 直连用户已运行的 Chrome。feedgrab 已有 `login.py` 中的 CDP 连接能力（`connect_over_cdp`），扩展到飞书抓取成本很低。
+
+### 方案决策
+
+新增 Tier 1 CDP 直连，插入 Open API 和 Launch 之间：
+
+```
+Tier 0    Open API（需 APP_ID/SECRET）
+Tier 1    CDP 直连（需 Chrome --remote-debugging-port + 飞书已登录）  ← 新增
+Tier 2    Launch 新浏览器（需 sessions/feishu.json）
+Tier 3    内部导出 API
+Tier 4    Jina
+```
+
+核心设计决策：
+- **Context 复用**：复用用户已有 context（新建 page/tab），不创建新 context。用户 context 含完整 localStorage/sessionStorage，飞书 SPA 重度依赖
+- **代码重构**：抽取 `_evaluate_feishu_doc_on_page(url, page, skip_warmup)` 公共函数，CDP/launch 双路径共享同一套提取逻辑
+- **CDP 内嵌降级**：`evaluate_feishu_doc()` 内部先试 CDP 再 launch，`feishu.py` 几乎零改动
+- **配置**：新增 `FEISHU_CDP_ENABLED`（默认 false），复用 `CHROME_CDP_PORT`（默认 9222）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/config.py` | 新增 | `feishu_cdp_enabled()` 函数 |
+| `feedgrab/fetchers/browser.py` | 重构 | 新增 `_connect_feishu_cdp()` + 抽取 `_evaluate_feishu_doc_on_page()` + `evaluate_feishu_doc()` CDP→Launch 降级 |
+| `feedgrab/fetchers/feishu.py` | 修改 | Tier 路由更新（0→0, 0.5→1, 1→2, 1.5→3, 2→4）+ session 检查放宽（CDP 模式不强制要求 session） |
+| `feedgrab/fetchers/feishu_wiki.py` | 修改 | 批量模式 CDP 优先（`_connect_feishu_cdp` → launch 兜底）+ skip_warmup |
+| `.env.example` | 新增 | `FEISHU_CDP_ENABLED` 配置说明 |
+
+### 降级逻辑
+
+```
+FEISHU_CDP_ENABLED=false → 跳过 CDP
+Chrome 未开 debug port → ws 连接失败 → 回退 launch
+无飞书 cookie 的 context → 回退 launch
+JS evaluate 失败 → 回退 launch
+```
+
+### 验证结果
+- CDP 连接成功：84 个飞书 cookie 发现 ✅
+- 完整内容提取：3776 行输出（title/author/blockTree/sheet/images）✅
+- Chrome 新 tab 打开后自动关闭 ✅
+- 降级测试：错误端口 9999 → `ECONNREFUSED` → 无缝回退 launch ✅
+- 模块导入验证：全部 OK ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-27 · v0.13.1 · 飞书 Block→Markdown 三项修复（代码块嵌套 + 加粗保留 + 目录生成）
 
 ### 背景
