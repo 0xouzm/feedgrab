@@ -1587,6 +1587,9 @@ def _load_transaction_cache() -> Optional[dict]:
             return None
         if "home_html" not in data or "ondemand_text" not in data:
             return None
+        # Validate that ondemand_text is not empty (may happen if cached during failure)
+        if not data.get("ondemand_text"):
+            return None
         return data
     except Exception:
         return None
@@ -1703,13 +1706,19 @@ def _get_transaction_id(method: str, path: str) -> str:
 
                 home_soup = bs4.BeautifulSoup(home_html, "html.parser")
                 ondemand_url = get_ondemand_file_url(response=home_soup)
-                ondemand_resp = http_client.get(
-                    ondemand_url, headers={"user-agent": ua}, timeout=15,
-                )
-                ondemand_text = ondemand_resp.text
-
-                # Save to disk cache for next cold start
-                _save_transaction_cache(home_html, ondemand_text)
+                if ondemand_url:
+                    ondemand_resp = http_client.get(
+                        ondemand_url, headers={"user-agent": ua}, timeout=15,
+                    )
+                    ondemand_text = ondemand_resp.text
+                    # Save to disk cache for next cold start
+                    _save_transaction_cache(home_html, ondemand_text)
+                else:
+                    logger.warning(
+                        "[GraphQL] Could not find ondemand.s URL in x.com homepage. "
+                        "Transaction ID generation may be limited."
+                    )
+                    ondemand_text = ""
 
             # Also populate _cached_home_html for queryId JS bundle scan
             if not _cached_home_html and home_html:
@@ -1719,6 +1728,14 @@ def _get_transaction_id(method: str, path: str) -> str:
             _update_features_from_html(home_html)
 
             home_soup = bs4.BeautifulSoup(home_html, "html.parser")
+            # Skip initialization if ondemand_text is empty (transaction ID generation may be limited)
+            if not ondemand_text:
+                logger.warning(
+                    "[GraphQL] Skipping transaction generator init: ondemand.s not available. "
+                    "SearchTimeline may return 404."
+                )
+                _transaction_generator_timestamp = now  # Mark as initialized to avoid retry loop
+                return ""
             _transaction_generator = ClientTransaction(
                 home_page_response=home_soup,
                 ondemand_file_response=ondemand_text,
@@ -1743,6 +1760,109 @@ def _get_transaction_id(method: str, path: str) -> str:
     except Exception as e:
         logger.debug(f"[GraphQL] Failed to generate transaction id: {e}")
         return ""
+
+
+# Track last cookie refresh prompt to avoid spamming
+_last_cookie_prompt_time: float = 0
+_COOKIE_PROMPT_COOLDOWN: int = 60  # seconds
+
+
+def _prompt_cookie_refresh_via_cdp() -> bool:
+    """Prompt user to refresh Twitter cookies via CDP when GraphQL returns 401/403.
+
+    Returns True if cookies were successfully refreshed and should retry.
+    """
+    global _last_cookie_prompt_time
+
+    now = time.time()
+    if now - _last_cookie_prompt_time < _COOKIE_PROMPT_COOLDOWN:
+        logger.debug("Cookie refresh prompt cooldown, skipping...")
+        return False
+    _last_cookie_prompt_time = now
+
+    # Check if CDP is available
+    from feedgrab.config import chrome_cdp_port
+    port = chrome_cdp_port()
+
+    # Try to connect to CDP to check availability
+    cdp_available = False
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/json/version",
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            if resp.status == 200:
+                cdp_available = True
+    except Exception:
+        pass
+
+    if not cdp_available:
+        print("\n" + "=" * 60)
+        print("⚠️  Twitter/X Cookie 已过期或账号受限")
+        print("=" * 60)
+        print("\n检测到 GraphQL 401/403 错误，当前 Cookie 可能已失效。")
+        print("\n刷新 Cookie 的方法：")
+        print("1. 开启 Chrome 远程调试端口，然后使用 CDP 自动提取：")
+        print(f"   chrome.exe --remote-debugging-port={port}")
+        print("\n2. 然后运行：")
+        print("   feedgrab login twitter")
+        print("\n3. 或使用环境变量手动设置：")
+        print("   X_AUTH_TOKEN=xxx X_CT0=yyy feedgrab <url>")
+        print("\n" + "=" * 60)
+        return False
+
+    # CDP is available, prompt for auto-refresh
+    print("\n" + "=" * 60)
+    print("⚠️  Twitter/X Cookie 已过期或账号受限")
+    print("=" * 60)
+    print("\n检测到 GraphQL 401/403 错误，当前 Cookie 可能已失效。")
+    print(f"✓ Chrome 远程调试端口已检测到 (127.0.0.1:{port})")
+
+    try:
+        response = input("\n是否通过 CDP 自动获取新 Cookie? [Y/n]: ").strip().lower()
+        if response and response not in ("y", "yes", ""):
+            print("跳过自动刷新，将尝试使用其他方式抓取...")
+            return False
+    except (EOFError, KeyboardInterrupt):
+        print("\n跳过自动刷新...")
+        return False
+
+    # Perform CDP cookie extraction
+    print("\n正在通过 CDP 提取 Cookie...")
+    try:
+        from feedgrab.login import _login_via_cdp
+        import asyncio
+
+        session_path = Path(os.environ.get("FEEDGRAB_DATA_DIR", "sessions")) / "twitter.json"
+        ok = _login_via_cdp("twitter", session_path)
+
+        if ok:
+            print("✅ Cookie 刷新成功，将重试当前请求...")
+            return True
+        else:
+            print("❌ CDP Cookie 提取失败，请手动登录。")
+            return False
+
+    except Exception as e:
+        logger.warning(f"CDP cookie refresh failed: {e}")
+        print(f"❌ CDP Cookie 提取失败: {e}")
+        return False
+
+
+def _build_cookie_header(cookies: dict) -> str:
+    """Build Cookie header string from cookies dict."""
+    parts = []
+    if cookies.get("auth_token"):
+        parts.append(f"auth_token={cookies['auth_token']}")
+    if cookies.get("ct0"):
+        parts.append(f"ct0={cookies['ct0']}")
+    # Include other common Twitter cookies if present
+    for key in ["lang", "twid", "gt"]:
+        if cookies.get(key):
+            parts.append(f"{key}={cookies[key]}")
+    return "; ".join(parts)
 
 
 def _execute_graphql(
@@ -1781,6 +1901,24 @@ def _execute_graphql(
 
         if resp.status_code in (401, 403):
             logger.error(f"GraphQL {resp.status_code} — cookies may have expired or account restricted")
+            # Prompt user to refresh cookies via CDP
+            if _prompt_cookie_refresh_via_cdp():
+                # Retry the request with new cookies
+                from feedgrab.fetchers.twitter_cookies import load_twitter_cookies
+                new_cookies = load_twitter_cookies()
+                if new_cookies:
+                    # Update headers with new cookies
+                    headers["cookie"] = _build_cookie_header(new_cookies)
+                    # Retry the request
+                    resp = http_client.get(url, params=params, headers=headers, timeout=30)
+                    if resp.status_code not in (401, 403):
+                        # Retry succeeded, continue processing
+                        http_client.raise_for_status(resp)
+                        data = resp.json()
+                        if "errors" in data:
+                            for err in data["errors"]:
+                                logger.warning(f"GraphQL error: {err.get('message', 'unknown')}")
+                        return data
             return None
         if resp.status_code == 429:
             logger.error("GraphQL 429 Rate Limited — too many requests")

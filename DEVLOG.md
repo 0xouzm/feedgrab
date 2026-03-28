@@ -2,6 +2,42 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-03-28 · v0.13.4 · XClientTransaction 错误修复 + GraphQL 401 CDP 刷新引导
+
+### 背景
+用户报告两个问题：(1) XClientTransaction 生成 `x-client-transaction-id` 时 `get_ondemand_file_url` 返回 None 导致 `'NoneType' object has no attribute 'split'` 错误；(2) GraphQL 401 错误时缺乏引导，用户不知道需要通过 CDP 刷新 Cookie。
+
+### 修复内容
+
+**Bug 1 — XClientTransaction None 错误：**
+- 根因：`get_ondemand_file_url()` 当 X 网站结构变化时返回 None，直接作为 URL 传递给 `http_client.get()`
+- 修复：`_get_transaction_id()` 添加 None 检查，如果 ondemand_url 为 None 则跳过 ondemand.s 获取，使用空字符串初始化
+- 缓存：`_load_transaction_cache()` 增加空值检查，避免缓存无效的 ondemand_text
+- 优雅降级：当 ondemand_text 为空时，跳过 Transaction ID 生成（SearchTimeline 可能返回 404，但其他端点仍可工作）
+
+**Bug 2 — GraphQL 401 Cookie 刷新引导：**
+- 新增 `_prompt_cookie_refresh_via_cdp()` 函数，当检测到 401/403 错误时：
+  - 检测 CDP 是否可用（检查 127.0.0.1:{port}/json/version）
+  - CDP 不可用时：输出手动刷新 Cookie 的指引
+  - CDP 可用时：交互式询问是否自动获取新 Cookie
+  - 成功刷新后：自动重试当前请求
+- 新增 `_build_cookie_header()` 辅助函数，将 cookie dict 转换为 header 字符串
+- 冷却机制：`_COOKIE_PROMPT_COOLDOWN = 60` 秒，避免短时间内重复提示
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修复 | `_get_transaction_id()` None 检查；`_load_transaction_cache()` 空值过滤；新增 `_prompt_cookie_refresh_via_cdp()` + `_build_cookie_header()`；`_execute_graphql()` 401/403 时调用刷新引导 |
+
+### 验证结果
+- 语法检查通过 ✅
+- 模块导入验证通过 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-27 · v0.13.3 · 小红书 Pinia Store 注入兜底层
 
 ### 背景
