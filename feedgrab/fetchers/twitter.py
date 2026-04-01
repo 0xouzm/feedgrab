@@ -159,18 +159,19 @@ def _is_graphql_enabled() -> bool:
 # Tier 0: GraphQL API (new — ported from baoyu)
 # ---------------------------------------------------------------------------
 
-async def _fetch_via_graphql(url: str, tweet_id: str) -> Dict[str, Any]:
+async def _fetch_via_graphql(url: str, tweet_id: str, cookies: dict = None) -> Dict[str, Any]:
     """
     Fetch tweet/thread via X's private GraphQL API.
 
     Returns complete thread data with media, quoted tweets, etc.
-    Requires valid auth cookies (loaded automatically from 4 sources).
+    Requires valid auth cookies (passed in or loaded automatically).
     """
     from feedgrab.fetchers.twitter_cookies import load_twitter_cookies, has_required_cookies
     from feedgrab.fetchers.twitter_thread import fetch_tweet_thread
     from feedgrab.fetchers.twitter_graphql import fetch_tweet_detail, extract_tweet_data, parse_tweet_entries
 
-    cookies = load_twitter_cookies()
+    if cookies is None:
+        cookies = load_twitter_cookies()
     if not has_required_cookies(cookies):
         raise RuntimeError("No valid Twitter cookies for GraphQL")
 
@@ -577,7 +578,7 @@ async def fetch_twitter(url: str) -> Dict[str, Any]:
                 last_error = None
                 for attempt in range(4):  # 1 initial + 3 retries
                     try:
-                        data = await _fetch_via_graphql(url, tweet_id)
+                        data = await _fetch_via_graphql(url, tweet_id, cookies=cookies)
                         if data and data.get("text"):
                             break
                         last_error = "empty response"

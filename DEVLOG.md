@@ -2,6 +2,69 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-01 · v0.13.5 · GraphQL 初始化热路径优化 + 日志精简
+
+### 背景
+v0.13.4 中 `_get_transaction_id()` 存在缓存失效 bug：当 `ondemand.s` 解析失败时，`_transaction_generator` 保持 None，缓存条件 `is None or TTL过期` 中 `is None` 短路导致 TTL 保护失效。单篇推文抓取的 3 次 GraphQL 请求各自重新初始化（重新 HTTP 获取 x.com 首页），产生 33 行日志（6 条 WARNING + 25 条 DEBUG），给用户造成恐慌。
+
+### 修复内容
+
+**Bug 1 — 缓存条件逻辑错误（核心）：**
+- 根因：`_transaction_generator is None or TTL过期`，None 检查短路使 TTL 保护失效
+- 修复：条件改为 `_transaction_generator_timestamp == 0 or TTL过期`，以时间戳为主判断
+- 异常路径也设置时间戳，防止 `except Exception` 导致无限重试
+- 使用生成器前增加 None 保护（`if _transaction_generator is None: return ""`）
+
+**Bug 2 — Homepage 不共享缓存：**
+- 根因：`_get_transaction_id()` 直接 `http_client.get("https://x.com")` 而不使用 `_fetch_home_html()` 内存缓存
+- 修复：改用 `_fetch_home_html(ua)` 共享 `_cached_home_html`，同一进程只 HTTP 一次
+
+**Bug 3 — Feature flag 重复日志：**
+- 根因：7 个 feature dict 有大量重叠 key，同一 flag 在多个 dict 中各记一次 DEBUG
+- 修复：`unique_keys` 集合去重，逐条 DEBUG 全部删除，只保留一条 INFO 汇总
+
+**Bug 4 — 默认日志级别过低：**
+- 根因：loguru 默认 handler 级别 DEBUG（level=10），所有 DEBUG 日志直接输出到终端
+- 修复：CLI 入口设置默认级别 INFO，`FEEDGRAB_LOG_LEVEL=DEBUG` 可选开启
+
+**优化 — Cookie 重复加载：**
+- `fetch_twitter()` 加载 Cookie 后传递给 `_fetch_via_graphql()`，避免后者再次加载
+
+**优化 — WARNING 降级：**
+- `ondemand.s` 相关 WARNING 降为 DEBUG（TweetDetail 不需要 transaction-id）
+- 多条重复 DEBUG 合并为一条
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修复 | 缓存条件修复 + homepage 共享缓存 + feature flag 去重 + WARNING→DEBUG + 冗余日志删除 |
+| `feedgrab/fetchers/twitter.py` | 优化 | Cookie 传递避免重复加载（`_fetch_via_graphql` 新增 `cookies` 参数） |
+| `feedgrab/cli.py` | 新增 | 默认日志级别 INFO（`FEEDGRAB_LOG_LEVEL` 环境变量） |
+| `.env.example` | 新增 | `FEEDGRAB_LOG_LEVEL` 配置说明 |
+| `README.md` | 更新 | 配置表新增日志级别条目 |
+
+### 效果对比
+
+| 指标 | v0.13.4 | v0.13.5 |
+|------|---------|---------|
+| 总日志行数 | 33 行 | 8 行 |
+| WARNING | 6 条 | 0 条 |
+| DEBUG 噪音 | 25 条 | 0 条（INFO 级别不输出） |
+| Cookie 加载 | 2 次 | 1 次 |
+| Homepage HTTP | 3 次 | 1 次 |
+| Feature flag 明细 | 15-32 条 | 1 条汇总 |
+
+### 验证结果
+- 语法检查通过 ✅
+- 模块导入验证通过 ✅
+- 实际推文抓取测试通过（功能无影响）✅
+- 日志输出精简至 8 行关键节点 ✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-03-28 · v0.13.4 · XClientTransaction 错误修复 + GraphQL 401 CDP 刷新引导
 
 ### 背景

@@ -555,6 +555,7 @@ cp .env.example .env
 
 | 变量 | 必需 | 说明 |
 |------|------|------|
+| `FEEDGRAB_LOG_LEVEL` | 否 | 日志级别：`INFO`（默认）/ `DEBUG` / `WARNING` |
 | `X_AUTH_TOKEN` | 仅 X GraphQL | Twitter/X 认证 Cookie |
 | `X_CT0` | 仅 X GraphQL | Twitter/X CSRF 令牌 Cookie |
 | `X_GRAPHQL_ENABLED` | 否 | 启用/禁用 GraphQL 层（默认：`true`） |

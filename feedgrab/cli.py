@@ -22,8 +22,14 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+from loguru import logger
 from dotenv import load_dotenv
 load_dotenv()
+
+# Configure log level: default INFO, override with FEEDGRAB_LOG_LEVEL env var
+_log_level = os.getenv("FEEDGRAB_LOG_LEVEL", "INFO").upper()
+logger.remove()
+logger.add(sys.stderr, level=_log_level)
 
 from feedgrab.reader import UniversalReader
 

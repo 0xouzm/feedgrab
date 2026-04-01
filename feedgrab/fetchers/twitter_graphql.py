@@ -280,17 +280,15 @@ def _update_features_from_html(html: str) -> int:
             return 0
 
         changed = 0
+        unique_keys: set = set()
         for fdict in _ALL_FEATURES_DICTS:
             for key in fdict:
                 if key in live and fdict[key] != live[key]:
-                    logger.debug(
-                        "Feature flag updated: {} = {} → {}",
-                        key, fdict[key], live[key],
-                    )
+                    unique_keys.add(key)
                     fdict[key] = live[key]
                     changed += 1
-        if changed:
-            logger.info("Dynamic feature update: {} flags changed from x.com HTML", changed)
+        if unique_keys:
+            logger.info("Dynamic feature update: {} flags synced from x.com", len(unique_keys))
         return changed
     except Exception as exc:
         logger.debug("Feature extraction from HTML failed: %s", exc)
@@ -1680,8 +1678,8 @@ def _get_transaction_id(method: str, path: str) -> str:
 
     now = time.time()
 
-    # Re-initialize if expired or not yet created
-    if _transaction_generator is None or (now - _transaction_generator_timestamp) >= _TRANSACTION_TTL:
+    # Re-initialize if never attempted (timestamp=0) or TTL expired
+    if _transaction_generator_timestamp == 0 or (now - _transaction_generator_timestamp) >= _TRANSACTION_TTL:
         try:
             import bs4
             from x_client_transaction import ClientTransaction
@@ -1696,13 +1694,12 @@ def _get_transaction_id(method: str, path: str) -> str:
             if cached:
                 home_html = cached["home_html"]
                 ondemand_text = cached["ondemand_text"]
-                logger.debug("x-client-transaction-id: loaded from disk cache")
             else:
-                # Fetch from network
-                home_resp = http_client.get(
-                    "https://x.com", headers={"user-agent": ua}, timeout=15,
-                )
-                home_html = home_resp.text
+                # Fetch from network (share _cached_home_html with queryId resolver)
+                home_html = _fetch_home_html(ua)
+                if not home_html:
+                    _transaction_generator_timestamp = now
+                    return ""
 
                 home_soup = bs4.BeautifulSoup(home_html, "html.parser")
                 ondemand_url = get_ondemand_file_url(response=home_soup)
@@ -1711,31 +1708,18 @@ def _get_transaction_id(method: str, path: str) -> str:
                         ondemand_url, headers={"user-agent": ua}, timeout=15,
                     )
                     ondemand_text = ondemand_resp.text
-                    # Save to disk cache for next cold start
                     _save_transaction_cache(home_html, ondemand_text)
                 else:
-                    logger.warning(
-                        "[GraphQL] Could not find ondemand.s URL in x.com homepage. "
-                        "Transaction ID generation may be limited."
-                    )
                     ondemand_text = ""
-
-            # Also populate _cached_home_html for queryId JS bundle scan
-            if not _cached_home_html and home_html:
-                _cached_home_html = home_html
 
             # Dynamic feature flags update from x.com inline scripts
             _update_features_from_html(home_html)
 
-            home_soup = bs4.BeautifulSoup(home_html, "html.parser")
-            # Skip initialization if ondemand_text is empty (transaction ID generation may be limited)
             if not ondemand_text:
-                logger.warning(
-                    "[GraphQL] Skipping transaction generator init: ondemand.s not available. "
-                    "SearchTimeline may return 404."
-                )
-                _transaction_generator_timestamp = now  # Mark as initialized to avoid retry loop
+                logger.debug("[GraphQL] ondemand.s unavailable — transaction-id skipped (TweetDetail unaffected)")
+                _transaction_generator_timestamp = now
                 return ""
+            home_soup = bs4.BeautifulSoup(home_html, "html.parser")
             _transaction_generator = ClientTransaction(
                 home_page_response=home_soup,
                 ondemand_file_response=ondemand_text,
@@ -1751,8 +1735,11 @@ def _get_transaction_id(method: str, path: str) -> str:
             return ""
         except Exception as e:
             logger.warning(f"[GraphQL] Failed to init transaction generator: {e}")
+            _transaction_generator_timestamp = now
             return ""
 
+    if _transaction_generator is None:
+        return ""
     try:
         return _transaction_generator.generate_transaction_id(
             method=method, path=path,
@@ -1989,7 +1976,6 @@ def _fetch_home_html(user_agent: str) -> str:
         return _cached_home_html
 
     try:
-        logger.debug("Fetching x.com homepage for JS bundle discovery...")
         resp = http_client.get(
             "https://x.com",
             headers={"user-agent": user_agent},
