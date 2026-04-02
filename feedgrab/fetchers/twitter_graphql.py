@@ -2072,6 +2072,67 @@ def _parse_source_app(source_html: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _apply_article_inline(text: str, entity_ranges: list, entity_map: dict, block: dict) -> str:
+    """Apply LINK entities and inline styles (Bold/Italic) to block text.
+
+    Process from end to start to preserve character offsets.
+    Links first, then styles — so styles can wrap around link syntax.
+    """
+    # Collect all entities that carry a URL (LINK, MENTION, etc.)
+    link_ops = []
+    for er in entity_ranges:
+        ent_key = str(er.get("key", ""))
+        ent = entity_map.get(ent_key, {})
+        ent_data = ent.get("data", {})
+        # Extract URL from any entity type — url / href / value
+        url = ent_data.get("url") or ent_data.get("href") or ent_data.get("value") or ""
+        if url:
+            offset = er.get("offset", 0)
+            length = er.get("length", 0)
+            link_ops.append((offset, length, url))
+
+    # Apply links from end to start
+    for offset, length, url in sorted(link_ops, key=lambda x: x[0], reverse=True):
+        end = offset + length
+        anchor = text[offset:end]
+        text = text[:offset] + f"[{anchor}]({url})" + text[end:]
+
+    # Apply inline styles (Bold/Italic) from end to start
+    styles = block.get("inlineStyleRanges", [])
+    if styles:
+        # After link insertion, original offsets are invalid for styles.
+        # Re-map style offsets by tracking how link insertions shifted positions.
+        # Build shift map from original link_ops (sorted ascending by offset).
+        shifts = []  # (original_offset, chars_added)
+        for offset, length, url in sorted(link_ops, key=lambda x: x[0]):
+            # [anchor](url) adds len("[") + len("](") + len(url) + len(")") = 4 + len(url)
+            added = 4 + len(url)
+            shifts.append((offset, added))
+
+        def adjusted_offset(orig_off):
+            """Shift an original offset to account for link insertions before it."""
+            adj = orig_off
+            for lk_off, added in shifts:
+                if lk_off < orig_off:
+                    adj += added
+                elif lk_off == orig_off:
+                    adj += added
+            return adj
+
+        for style in sorted(styles, key=lambda s: s.get("offset", 0), reverse=True):
+            orig_off = style.get("offset", 0)
+            length = style.get("length", 0)
+            stype = style.get("style", "")
+            off = adjusted_offset(orig_off)
+            end = adjusted_offset(orig_off + length)
+            if stype == "Bold":
+                text = text[:off] + "**" + text[off:end] + "**" + text[end:]
+            elif stype == "Italic":
+                text = text[:off] + "*" + text[off:end] + "*" + text[end:]
+
+    return text
+
+
 def _render_article_body(article: dict) -> str:
     """Render Twitter Article content_state (Draft.js format) to Markdown.
 
@@ -2154,6 +2215,9 @@ def _render_article_body(article: dict) -> str:
             parts.append("")
             list_counter = 0
             continue
+
+        # Apply inline LINK entities and styles (from end to avoid offset shift)
+        text = _apply_article_inline(text, entity_ranges, entity_map, block)
 
         # Format text based on block type
         if btype == "header-one":

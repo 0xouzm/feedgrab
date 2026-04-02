@@ -2,6 +2,40 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-03 · v0.13.6 · Article 长文超链接完整保存
+
+### 背景
+Twitter Article 长文使用 Draft.js `content_state` 格式存储。`_render_article_body()` 只处理了 atomic 块中的 MEDIA/MARKDOWN 实体，非 atomic 块（段落、标题、列表等）的 `entityRanges` 完全被跳过，导致正文中的超链接（网站链接、@mention 链接等）丢失。
+
+### 修复内容
+
+**GraphQL 版 `_render_article_body()`（`twitter_graphql.py`）：**
+- 新增 `_apply_article_inline()` 函数，处理非 atomic 块的 entityRanges + inlineStyleRanges
+- 不区分实体类型（LINK/MENTION/等），从 `data` 中提取 `url`/`href`/`value`，有 URL 就渲染为 `[text](url)`
+- 同时补充了 inlineStyleRanges 处理（Bold/Italic），此前 GraphQL 版缺失
+- 偏移量修正：链接插入后重新计算 style 偏移位置，避免错位
+
+**FxTwitter 版 `_render_article_body()`（`twitter_fxtwitter.py`）：**
+- 新增 `_apply_fxtwitter_inline()` 函数，逻辑与 GraphQL 版对齐
+- 补充 entityMap 构建（从 `content.entityMap` 读取）
+- atomic 块也支持 LINK 实体渲染
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修复 | 新增 `_apply_article_inline()`，非 atomic 块调用处理 entityRanges + inlineStyleRanges |
+| `feedgrab/fetchers/twitter_fxtwitter.py` | 修复 | 新增 `_apply_fxtwitter_inline()` + entityMap 构建 + atomic LINK 渲染 |
+
+### 验证结果
+- 语法检查通过 ✅
+- 模块导入验证通过 ✅
+- 实际推文抓取测试通过（Article 长文 6 个超链接全部正确渲染）✅
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-04-01 · v0.13.5 · GraphQL 初始化热路径优化 + 日志精简
 
 ### 背景

@@ -76,26 +76,41 @@ def _render_article_body(article: dict) -> str:
     if not blocks:
         return ""
 
+    # Build entityMap lookup (FxTwitter may include it in content)
+    raw_em = content.get("entityMap", {})
+    if isinstance(raw_em, list):
+        entity_map = {str(item["key"]): item["value"] for item in raw_em if "key" in item}
+    elif isinstance(raw_em, dict):
+        entity_map = raw_em
+    else:
+        entity_map = {}
+
     parts = []
     for block in blocks:
         btype = block.get("type", "unstyled")
         text = block.get("text", "")
+        entity_ranges = block.get("entityRanges", [])
+
+        if btype == "atomic":
+            # Image or embed — check entityRanges
+            if entity_ranges and entity_map:
+                for er in entity_ranges:
+                    ent_key = str(er.get("key", ""))
+                    ent = entity_map.get(ent_key, {})
+                    ent_type = ent.get("type", "")
+                    if ent_type == "LINK":
+                        url = ent.get("data", {}).get("url", "")
+                        if url and text:
+                            parts.append(f"[{text}]({url})")
+            elif text:
+                parts.append(text)
+            continue
+
         if not text:
             continue
 
-        # Apply inline styles (Bold/Italic)
-        styles = block.get("inlineStyleRanges", [])
-        if styles:
-            # Sort by offset descending to insert from end
-            for style in sorted(styles, key=lambda s: s.get("offset", 0), reverse=True):
-                offset = style.get("offset", 0)
-                length = style.get("length", 0)
-                stype = style.get("style", "")
-                end = offset + length
-                if stype == "Bold":
-                    text = text[:offset] + "**" + text[offset:end] + "**" + text[end:]
-                elif stype == "Italic":
-                    text = text[:offset] + "*" + text[offset:end] + "*" + text[end:]
+        # Apply LINK entities then inline styles
+        text = _apply_fxtwitter_inline(text, entity_ranges, entity_map, block)
 
         if btype == "header-two":
             parts.append(f"## {text}")
@@ -110,19 +125,59 @@ def _render_article_body(article: dict) -> str:
             parts.append(f"- {text}")
         elif btype == "code-block":
             parts.append(f"```\n{text}\n```")
-        elif btype == "atomic":
-            # Image or embed — check entityRanges
-            entity_ranges = block.get("entityRanges", [])
-            if entity_ranges:
-                # We don't have the entityMap here easily, skip atomic for now
-                pass
-            else:
-                parts.append(text)
         else:
             # unstyled = normal paragraph
             parts.append(text)
 
     return "\n\n".join(parts)
+
+
+def _apply_fxtwitter_inline(text: str, entity_ranges: list, entity_map: dict, block: dict) -> str:
+    """Apply LINK entities and inline styles for FxTwitter article blocks."""
+    # Collect all entities that carry a URL (LINK, MENTION, etc.)
+    link_ops = []
+    for er in entity_ranges:
+        ent_key = str(er.get("key", ""))
+        ent = entity_map.get(ent_key, {})
+        ent_data = ent.get("data", {})
+        url = ent_data.get("url") or ent_data.get("href") or ent_data.get("value") or ""
+        if url:
+            offset = er.get("offset", 0)
+            length = er.get("length", 0)
+            link_ops.append((offset, length, url))
+
+    # Apply links from end to start
+    for offset, length, url in sorted(link_ops, key=lambda x: x[0], reverse=True):
+        end = offset + length
+        anchor = text[offset:end]
+        text = text[:offset] + f"[{anchor}]({url})" + text[end:]
+
+    # Apply inline styles (Bold/Italic) with offset adjustment for inserted links
+    styles = block.get("inlineStyleRanges", [])
+    if styles:
+        shifts = []
+        for offset, length, url in sorted(link_ops, key=lambda x: x[0]):
+            shifts.append((offset, 4 + len(url)))
+
+        def adjusted_offset(orig_off):
+            adj = orig_off
+            for lk_off, added in shifts:
+                if lk_off <= orig_off:
+                    adj += added
+            return adj
+
+        for style in sorted(styles, key=lambda s: s.get("offset", 0), reverse=True):
+            orig_off = style.get("offset", 0)
+            length = style.get("length", 0)
+            stype = style.get("style", "")
+            off = adjusted_offset(orig_off)
+            end = adjusted_offset(orig_off + length)
+            if stype == "Bold":
+                text = text[:off] + "**" + text[off:end] + "**" + text[end:]
+            elif stype == "Italic":
+                text = text[:off] + "*" + text[off:end] + "*" + text[end:]
+
+    return text
 
 
 def fetch_via_fxtwitter(url: str, tweet_id: str) -> Dict[str, Any]:
