@@ -2,7 +2,7 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
-## 2026-04-05 · v0.13.7 · x-so 搜索三级兜底 + ondemand.s 容错增强
+## 2026-04-05 · v0.13.7 · x-so 搜索三级兜底 + SearchTimeline POST 迁移 + ondemand.s 容错增强
 
 ### 背景
 Twitter 前端频繁变更 `ondemand.s` 文件路径，`xclienttransaction` 库 1.0.1 的正则无法匹配新路径，导致 `x-client-transaction-id` 生成失败，SearchTimeline GraphQL 返回 404。升级到 1.0.2 修复了当前问题，但需要防御未来再次破裂。
@@ -22,7 +22,14 @@ Twitter 前端频繁变更 `ondemand.s` 文件路径，`xclienttransaction` 库 
 - 复用 `SearchResponseCollector` + `_scroll_and_collect_search`（来自 `twitter_search_tweets.py`）
 - CDP 连接模式仿 `_connect_feishu_cdp()`，Cookie 域名匹配 `.x.com`/`.twitter.com`
 
-**3. 配置项：**
+**3. SearchTimeline GET → POST 迁移（`twitter_graphql.py`）：**
+- Twitter 已将 SearchTimeline 端点从 GET 迁移到 POST（参考 twitter-cli 实现）
+- `_execute_graphql()` 新增 `use_post` 参数，POST 时参数移到 JSON body
+- POST body 额外包含 `queryId` 字段，features 完整传递（无需紧凑编码）
+- `x-client-transaction-id` 签名传入 `method="POST"`
+- 其他端点（TweetDetail/UserTweets 等）保持 GET 不变
+
+**4. 配置项：**
 - `X_SEARCH_BROWSER_FALLBACK`（默认 true）— 控制是否启用浏览器兜底
 
 ### 改动范围

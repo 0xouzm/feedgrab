@@ -1010,6 +1010,7 @@ def fetch_search_timeline_page(
         features=dict(SEARCH_TIMELINE_FEATURES),
         field_toggles=dict(SEARCH_TIMELINE_FIELD_TOGGLES),
         headers=headers,
+        use_post=True,
     )
 
 
@@ -1872,32 +1873,49 @@ def _execute_graphql(
     features: dict,
     field_toggles: dict,
     headers: dict,
+    use_post: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    """Execute a GraphQL GET request against X's API."""
+    """Execute a GraphQL request against X's API.
+
+    use_post=True sends a POST request (required for SearchTimeline after
+    Twitter's migration).  Other endpoints keep using GET by default.
+    """
     # Always inject this feature (matches baoyu http.ts buildFeatureMap)
     features["responsive_web_graphql_exclude_directive_enabled"] = True
 
-    # Compact encoding: only send True-valued features (Twitter ignores
-    # absent keys, treating them as false).  This reduces URL length by
-    # ~30%, avoiding potential HTTP 414 URI Too Long errors.
-    compact_features = {k: v for k, v in features.items() if v}
-
-    params = {
-        "variables": json.dumps(variables, separators=(",", ":")),
-        "features": json.dumps(compact_features, separators=(",", ":")),
-        "fieldToggles": json.dumps(field_toggles, separators=(",", ":")),
-    }
-
     url = f"{GRAPHQL_BASE}/{query_id}/{operation_name}"
+    path = f"/i/api/graphql/{query_id}/{operation_name}"
+    method = "POST" if use_post else "GET"
 
     # Inject x-client-transaction-id (required by SearchTimeline etc.)
-    path = f"/i/api/graphql/{query_id}/{operation_name}"
-    tid = _get_transaction_id("GET", path)
+    tid = _get_transaction_id(method, path)
     if tid:
         headers["x-client-transaction-id"] = tid
 
+    if use_post:
+        # POST: parameters go in JSON body, features sent in full
+        body = {
+            "variables": variables,
+            "queryId": query_id,
+            "features": features,
+        }
+        if field_toggles:
+            body["fieldToggles"] = field_toggles
+        headers["Referer"] = "https://x.com/compose/post"
+    else:
+        # GET: parameters go in URL query string, compact features
+        compact_features = {k: v for k, v in features.items() if v}
+        params = {
+            "variables": json.dumps(variables, separators=(",", ":")),
+            "features": json.dumps(compact_features, separators=(",", ":")),
+            "fieldToggles": json.dumps(field_toggles, separators=(",", ":")),
+        }
+
     try:
-        resp = http_client.get(url, params=params, headers=headers, timeout=30)
+        if use_post:
+            resp = http_client.post(url, json=body, headers=headers, timeout=30)
+        else:
+            resp = http_client.get(url, params=params, headers=headers, timeout=30)
 
         if resp.status_code in (401, 403):
             logger.error(f"GraphQL {resp.status_code} — cookies may have expired or account restricted")
@@ -1910,7 +1928,10 @@ def _execute_graphql(
                     # Update headers with new cookies
                     headers["cookie"] = _build_cookie_header(new_cookies)
                     # Retry the request
-                    resp = http_client.get(url, params=params, headers=headers, timeout=30)
+                    if use_post:
+                        resp = http_client.post(url, json=body, headers=headers, timeout=30)
+                    else:
+                        resp = http_client.get(url, params=params, headers=headers, timeout=30)
                     if resp.status_code not in (401, 403):
                         # Retry succeeded, continue processing
                         http_client.raise_for_status(resp)
