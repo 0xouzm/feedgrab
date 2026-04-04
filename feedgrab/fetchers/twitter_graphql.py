@@ -1704,19 +1704,32 @@ def _get_transaction_id(method: str, path: str) -> str:
                 home_soup = bs4.BeautifulSoup(home_html, "html.parser")
                 ondemand_url = get_ondemand_file_url(response=home_soup)
                 if ondemand_url:
-                    ondemand_resp = http_client.get(
-                        ondemand_url, headers={"user-agent": ua}, timeout=15,
-                    )
-                    ondemand_text = ondemand_resp.text
-                    _save_transaction_cache(home_html, ondemand_text)
+                    try:
+                        ondemand_resp = http_client.get(
+                            ondemand_url, headers={"user-agent": ua}, timeout=15,
+                        )
+                        ondemand_text = ondemand_resp.text
+                    except Exception as e:
+                        logger.warning(f"[GraphQL] Failed to fetch ondemand.s: {e}")
+                        ondemand_text = ""
+                    # Only cache when ondemand_text is non-empty (avoid polluting cache)
+                    if ondemand_text:
+                        _save_transaction_cache(home_html, ondemand_text)
                 else:
                     ondemand_text = ""
+                    logger.warning(
+                        "[GraphQL] ondemand.s URL not found in x.com HTML — "
+                        "try: pip install xclienttransaction --upgrade"
+                    )
 
             # Dynamic feature flags update from x.com inline scripts
             _update_features_from_html(home_html)
 
             if not ondemand_text:
-                logger.debug("[GraphQL] ondemand.s unavailable — transaction-id skipped (TweetDetail unaffected)")
+                logger.warning(
+                    "[GraphQL] ondemand.s unavailable — transaction-id skipped. "
+                    "SearchTimeline may return 404. Try: pip install xclienttransaction --upgrade"
+                )
                 _transaction_generator_timestamp = now
                 return ""
             home_soup = bs4.BeautifulSoup(home_html, "html.parser")

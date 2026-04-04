@@ -1381,7 +1381,7 @@ def cmd_twitter_search(args: list):
             print(f"{'='*50}")
 
         try:
-            result = search_twitter_keyword(
+            result = asyncio.run(search_twitter_keyword(
                 keyword=keyword,
                 lang=lang,
                 days=days,
@@ -1394,7 +1394,7 @@ def cmd_twitter_search(args: list):
                 save_tweets=save_tweets,
                 raw=raw,
                 skip_summary=merge,
-            )
+            ))
             print(f"\n\u2705 X search complete: '{keyword}'")
             print(f"   Query: {result['query']}")
             print(f"   Total tweets: {result['total']}")

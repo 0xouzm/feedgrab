@@ -376,6 +376,11 @@ def x_search_merge_keywords() -> bool:
     return os.getenv("X_SEARCH_MERGE_KEYWORDS", "false").lower() in ("true", "1", "yes")
 
 
+def x_search_browser_fallback() -> bool:
+    """Whether to fall back to browser search when GraphQL fails (default true)."""
+    return os.getenv("X_SEARCH_BROWSER_FALLBACK", "true").lower() in ("true", "1", "yes")
+
+
 # ---------------------------------------------------------------------------
 # TwitterAPI.io paid API (supplementary / standalone)
 # ---------------------------------------------------------------------------

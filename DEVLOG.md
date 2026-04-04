@@ -2,6 +2,44 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-05 · v0.13.7 · x-so 搜索三级兜底 + ondemand.s 容错增强
+
+### 背景
+Twitter 前端频繁变更 `ondemand.s` 文件路径，`xclienttransaction` 库 1.0.1 的正则无法匹配新路径，导致 `x-client-transaction-id` 生成失败，SearchTimeline GraphQL 返回 404。升级到 1.0.2 修复了当前问题，但需要防御未来再次破裂。
+
+### 修复内容
+
+**1. ondemand.s 容错增强（`twitter_graphql.py`）：**
+- ondemand.s HTTP 请求添加 try/except（此前超时直接崩溃）
+- 空 ondemand_text 不写入磁盘缓存（防止缓存污染 1 小时）
+- 日志从 DEBUG 提升为 WARNING，提示用户升级库
+
+**2. x-so 浏览器搜索三级兜底（`twitter_keyword_search.py`）：**
+- Tier 0: GraphQL SearchTimeline（现有方案，<2s/页）
+- Tier 1: CDP 直连（复用已打开 Chrome，秒级启动，零浏览器开销）
+- Tier 2: Playwright launch（隐身浏览器 + session 预热）
+- GraphQL 失败时自动降级，数据格式完全兼容（同一 `extract_tweet_data()`）
+- 复用 `SearchResponseCollector` + `_scroll_and_collect_search`（来自 `twitter_search_tweets.py`）
+- CDP 连接模式仿 `_connect_feishu_cdp()`，Cookie 域名匹配 `.x.com`/`.twitter.com`
+
+**3. 配置项：**
+- `X_SEARCH_BROWSER_FALLBACK`（默认 true）— 控制是否启用浏览器兜底
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/twitter_graphql.py` | 修复 | ondemand.s 异常处理 + 缓存污染防护 + WARNING 日志 |
+| `feedgrab/fetchers/twitter_keyword_search.py` | 功能 | 新增 `_connect_twitter_cdp_for_search()` + `_launch_browser_for_search()` + `_search_via_browser()` + `search_twitter_keyword()` 改为 async |
+| `feedgrab/config.py` | 功能 | 新增 `x_search_browser_fallback()` |
+| `feedgrab/cli.py` | 适配 | `asyncio.run()` 包装 async 调用 |
+| `.env.example` | 文档 | 新增 `X_SEARCH_BROWSER_FALLBACK` 说明 |
+
+### 验证结果
+- GraphQL 正常路径：`feedgrab x-so openclaw --days 2` → 20 条推文，不触发浏览器
+- 模拟 GraphQL 失败：monkey-patch 返回 None → 自动降级 CDP → 10 条推文
+- CDP 直连：Chrome 开启 `--remote-debugging-port=9222` → 拦截 SearchTimeline 响应成功
+
 ## 2026-04-03 · v0.13.6 · Article 长文超链接完整保存
 
 ### 背景

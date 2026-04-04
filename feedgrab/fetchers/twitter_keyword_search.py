@@ -9,10 +9,11 @@ Usage:
 
 Architecture:
     1. Build Twitter search query from keyword + config defaults + CLI overrides
-    2. Call SearchTimeline GraphQL endpoint directly (no browser needed)
-    3. Paginate via cursor until max_results reached
-    4. extract_tweet_data() on each entry → views-ranked summary table
-    5. Optionally save individual tweet .md files (X_SEARCH_SAVE_TWEETS=true)
+    2. Tier 0: SearchTimeline GraphQL endpoint (no browser needed)
+    3. Tier 1: CDP direct connect (reuse running Chrome with Twitter session)
+    4. Tier 2: Playwright launch (stealth browser with saved session)
+    5. extract_tweet_data() on each entry → views-ranked summary table
+    6. Optionally save individual tweet .md files (X_SEARCH_SAVE_TWEETS=true)
 
 Output:
     X/search/{days}day_{sort_label}/{keyword}_{date}.md    ← summary table (always)
@@ -20,18 +21,23 @@ Output:
     X/search/{days}day_{sort_label}/{keyword}/{tweet}.md   ← individual tweets (optional)
 """
 
+import asyncio
 import csv
 import os
+import random
 import re
 import time
 import urllib.parse
 from datetime import date, timedelta, datetime
 from pathlib import Path
 from loguru import logger
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple, Callable, Awaitable
 
 from feedgrab.config import (
     parse_twitter_date_local,
+    get_session_dir,
+    chrome_cdp_port,
+    x_search_browser_fallback,
 )
 from feedgrab.fetchers.twitter_graphql import (
     extract_tweet_data,
@@ -96,6 +102,195 @@ def build_search_url(query: str, sort: str = "live") -> str:
     if sort == "live":
         url += "&f=live"
     return url
+
+
+# ---------------------------------------------------------------------------
+# Browser fallback: CDP direct connect → Playwright launch
+# ---------------------------------------------------------------------------
+
+async def _connect_twitter_cdp_for_search() -> Tuple[Any, Optional[Callable[[], Awaitable[None]]]]:
+    """Try CDP connection to a running Chrome with Twitter logged in.
+
+    Returns (page, cleanup_fn) on success, or (None, None) on failure.
+    cleanup_fn disconnects CDP without killing the user's Chrome.
+    """
+    port = chrome_cdp_port()
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return None, None
+
+    pw = await async_playwright().start()
+    try:
+        ws_url = f"ws://127.0.0.1:{port}/devtools/browser"
+        browser = await pw.chromium.connect_over_cdp(ws_url)
+
+        twitter_domains = (".x.com", ".twitter.com")
+        target_ctx = None
+        for ctx in browser.contexts:
+            cookies = await ctx.cookies()
+            if any(
+                any(c.get("domain", "").endswith(d) for d in twitter_domains)
+                for c in cookies
+            ):
+                target_ctx = ctx
+                break
+
+        if not target_ctx:
+            logger.info("[X-SO CDP] No context with Twitter cookies found")
+            await browser.close()
+            await pw.stop()
+            return None, None
+
+        page = await target_ctx.new_page()
+        logger.info("[X-SO CDP] Connected to Chrome, new tab created")
+
+        async def _cleanup():
+            try:
+                await page.close()
+            except Exception:
+                pass
+            try:
+                await browser.close()
+            except Exception:
+                pass
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+
+        return page, _cleanup
+
+    except Exception as e:
+        logger.info(f"[X-SO CDP] Connection failed: {e}")
+        try:
+            await pw.stop()
+        except Exception:
+            pass
+        return None, None
+
+
+async def _launch_browser_for_search(
+    session_path: str,
+) -> Tuple[Any, Optional[Callable[[], Awaitable[None]]]]:
+    """Launch a stealth browser with saved Twitter session.
+
+    Returns (page, cleanup_fn) on success, or (None, None) on failure.
+    """
+    if not Path(session_path).exists():
+        logger.warning(f"[X-SO Browser] Session not found: {session_path}")
+        return None, None
+
+    try:
+        from feedgrab.fetchers.browser import (
+            get_async_playwright,
+            stealth_launch,
+            get_stealth_context_options,
+            setup_resource_blocking,
+        )
+    except ImportError:
+        return None, None
+
+    try:
+        _pw_cm = get_async_playwright()
+        pw = await _pw_cm.__aenter__()
+        browser = await stealth_launch(pw, headless=False)
+        ctx_opts = get_stealth_context_options(storage_state=session_path)
+        context = await browser.new_context(**ctx_opts)
+        await setup_resource_blocking(context)
+        page = await context.new_page()
+
+        # Warm up session (activate cookies)
+        logger.info("[X-SO Browser] Warming up session...")
+        await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=20000)
+        await asyncio.sleep(3)
+        logger.info("[X-SO Browser] Session ready")
+
+        async def _cleanup():
+            try:
+                await page.close()
+            except Exception:
+                pass
+            try:
+                await context.close()
+            except Exception:
+                pass
+            try:
+                await browser.close()
+            except Exception:
+                pass
+            try:
+                await _pw_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
+
+        return page, _cleanup
+
+    except Exception as e:
+        logger.warning(f"[X-SO Browser] Launch failed: {e}")
+        return None, None
+
+
+async def _search_via_browser(
+    query: str, sort: str, max_results: int, session_path: str,
+) -> List[dict]:
+    """Browser-based search fallback: Tier 1 CDP → Tier 2 Playwright launch.
+
+    Reuses SearchResponseCollector + _scroll_and_collect_search from
+    twitter_search_tweets.py. Data format is fully compatible (same
+    extract_tweet_data on same GraphQL response structure).
+    """
+    from feedgrab.fetchers.twitter_search_tweets import (
+        SearchResponseCollector, _scroll_and_collect_search,
+    )
+
+    search_url = build_search_url(query, sort=sort)
+
+    # Tier 1: CDP direct connect
+    page, cleanup = await _connect_twitter_cdp_for_search()
+    tier = "CDP"
+
+    if not page:
+        # Tier 2: Playwright launch
+        page, cleanup = await _launch_browser_for_search(session_path)
+        tier = "Browser"
+
+    if not page:
+        logger.warning("[X-SO] All browser fallback tiers failed")
+        return []
+
+    collector = SearchResponseCollector()
+    try:
+        page.on("response", collector.handle_response)
+        logger.info(f"[X-SO {tier}] Navigating to search page...")
+        await page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
+        await asyncio.sleep(3)  # Wait for initial GraphQL responses
+
+        max_scrolls = min(max_results // 3 + 10, 60)
+        await _scroll_and_collect_search(
+            page, collector, max_scrolls=max_scrolls,
+            scroll_delay_min=1.5, scroll_delay_max=3.0,
+        )
+
+        logger.info(f"[X-SO {tier}] Collected {len(collector.entries)} raw entries")
+
+        # Parse entries (same extract_tweet_data, fully compatible)
+        tweets: List[dict] = []
+        seen: set = set()
+        for entry in collector.entries:
+            td = extract_tweet_data(entry)
+            if td and td.get("id") not in seen:
+                seen.add(td["id"])
+                tweets.append(td)
+
+        return tweets[:max_results]
+
+    except Exception as e:
+        logger.warning(f"[X-SO {tier}] Search failed: {e}")
+        return []
+    finally:
+        if cleanup:
+            await cleanup()
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +469,7 @@ def _generate_summary_table(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def search_twitter_keyword(
+async def search_twitter_keyword(
     keyword: str,
     lang: str = "",
     days: int = 1,
@@ -290,7 +485,9 @@ def search_twitter_keyword(
 ) -> dict:
     """Search Twitter for tweets matching a keyword and generate engagement-ranked output.
 
-    Uses SearchTimeline GraphQL endpoint directly (no browser needed).
+    Tier 0: SearchTimeline GraphQL (fastest, <2s/page)
+    Tier 1: CDP direct connect (reuse running Chrome)
+    Tier 2: Playwright launch (stealth browser with saved session)
 
     Returns:
         dict with: total, saved, query, output_path
@@ -322,15 +519,19 @@ def search_twitter_keyword(
     summary_dir = base_dir / "X" / subdir
     summary_path = summary_dir / f"{safe_keyword}_{date_str}.md"
 
+    # Session path for browser fallback
+    session_path = str(get_session_dir() / "twitter.json")
+
     # Map sort to GraphQL product parameter
     product = "Latest" if sort == "live" else "Top"
 
-    # GraphQL pagination loop
+    # --- Tier 0: GraphQL pagination loop ---
     all_entries = []
     cursor = None
     max_pages = max_results // 20 + 5  # ~20 entries per page
+    graphql_failed = False
 
-    for page in range(max_pages):
+    for page_num in range(max_pages):
         response = fetch_search_timeline_page(
             raw_query=query,
             cookies=cookies,
@@ -344,6 +545,7 @@ def search_twitter_keyword(
             cookies = load_twitter_cookies()
             if not cookies:
                 logger.warning("[X-SO] No available cookies after retry")
+                graphql_failed = True
                 break
             time.sleep(3)
             response = fetch_search_timeline_page(
@@ -352,16 +554,17 @@ def search_twitter_keyword(
             )
             if not response:
                 logger.warning("[X-SO] GraphQL request failed after retry, stopping")
+                graphql_failed = True
                 break
 
         entries, cursors = parse_search_entries(response)
         if not entries:
-            logger.info(f"[X-SO] No more entries at page {page + 1}")
+            logger.info(f"[X-SO] No more entries at page {page_num + 1}")
             break
 
         all_entries.extend(entries)
         logger.info(
-            f"[X-SO] Page {page + 1}: +{len(entries)} entries "
+            f"[X-SO] Page {page_num + 1}: +{len(entries)} entries "
             f"(total: {len(all_entries)})"
         )
 
@@ -374,18 +577,25 @@ def search_twitter_keyword(
 
     logger.info(f"[X-SO] Total collected: {len(all_entries)} raw entries")
 
-    # Process entries (dedup by tweet id)
+    # --- Browser fallback when GraphQL returns nothing ---
     tweets = []
-    seen_ids: set[str] = set()
-    for entry in all_entries:
-        td = extract_tweet_data(entry)
-        if not td:
-            continue
-        tid = td.get("id", "")
-        if not tid or tid in seen_ids:
-            continue
-        seen_ids.add(tid)
-        tweets.append(td)
+    if not all_entries and graphql_failed and x_search_browser_fallback():
+        logger.info("[X-SO] GraphQL failed, trying browser fallback...")
+        tweets = await _search_via_browser(query, sort, max_results, session_path)
+        if tweets:
+            logger.info(f"[X-SO] Browser fallback: {len(tweets)} tweets")
+    else:
+        # Process GraphQL entries (dedup by tweet id)
+        seen_ids: set[str] = set()
+        for entry in all_entries:
+            td = extract_tweet_data(entry)
+            if not td:
+                continue
+            tid = td.get("id", "")
+            if not tid or tid in seen_ids:
+                continue
+            seen_ids.add(tid)
+            tweets.append(td)
 
     # Truncate to max_results
     tweets = tweets[:max_results]
