@@ -1953,7 +1953,21 @@ def _execute_graphql(
 
         if "errors" in data:
             for err in data["errors"]:
-                logger.warning(f"GraphQL error: {err.get('message', 'unknown')}")
+                msg = err.get("message", "")
+                logger.warning(f"GraphQL error: {msg}")
+            # Detect account-level restrictions (locked, suspended, etc.)
+            # Twitter returns HTTP 200 + errors for these — not 401/403/429
+            error_msgs = " ".join(
+                e.get("message", "") for e in data.get("errors", [])
+            ).lower()
+            if any(kw in error_msgs for kw in (
+                "temporarily locked", "suspended", "access control",
+                "account is locked",
+            )):
+                logger.warning("[GraphQL] Account restricted — rotating to next cookie")
+                from feedgrab.fetchers.twitter_cookies import mark_cookie_rate_limited
+                mark_cookie_rate_limited()
+                return None
 
         return data
 
