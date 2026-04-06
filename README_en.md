@@ -111,6 +111,12 @@ feedgrab login xhs
 # Prerequisite: enable Remote Debugging in Chrome (chrome://inspect/#remote-debugging)
 CHROME_CDP_LOGIN=true feedgrab login twitter
 CHROME_CDP_LOGIN=true feedgrab login xhs
+CHROME_CDP_LOGIN=true feedgrab login kdocs
+
+# Fetch KDocs (WPS) documents (public docs work directly, auth-required docs need CDP)
+feedgrab https://www.kdocs.cn/l/xxxxx                              # Public document
+KDOCS_CDP_ENABLED=true feedgrab https://www.kdocs.cn/l/xxxxx       # CDP mode (auth-required)
+KDOCS_DOWNLOAD_IMAGES=true feedgrab https://www.kdocs.cn/l/xxxxx   # Download images locally
 
 # Download tweet images/videos to local (saved to attachments/{item_id}/ subdirectory)
 X_DOWNLOAD_MEDIA=true feedgrab https://x.com/user/status/123
@@ -198,6 +204,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | GitHub | **REST API** (repo metadata + Chinese README priority (incl. subdirectory language link search) + relative image URL resolution + summary extraction) | — |
 | Xiaohongshu (小红书) | **API (xhshow)** → **Pinia Store injection** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
 | Feishu/Lark (飞书) | **Open API** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
+| KDocs (金山文档) | **Playwright ProseMirror DOM** extraction (virtual scroll + code blocks + image shapes API + CDP direct connect) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
@@ -593,7 +600,8 @@ feedgrab/
 │   │   ├── xhs_user_notes.py  # XHS author batch fetch (API → Pinia → browser 3-tier strategy)
 │   │   ├── xhs_search_notes.py # XHS search batch fetch (xhs-so API/Pinia search + scroll + deep fetch)
 │   │   ├── feishu.py          # Feishu single doc (Open API → Playwright PageMain → Jina + Block→MD + image download)
-│   │   └── feishu_wiki.py     # Feishu wiki batch (Open API recursive + Playwright fallback + resume)
+│   │   ├── feishu_wiki.py     # Feishu wiki batch (Open API recursive + Playwright fallback + resume)
+│   │   └── kdocs.py           # KDocs (WPS) single doc (Playwright ProseMirror DOM + virtual scroll + CDP)
 │   └── utils/
 │       ├── storage.py         # Per-platform Markdown + JSON dual output
 │       ├── dedup.py           # Global dedup index (cross-mode unified tracking)

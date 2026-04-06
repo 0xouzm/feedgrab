@@ -33,6 +33,7 @@ class SourceType(str, Enum):
     YOUTUBE = "youtube"
     GITHUB = "github"
     FEISHU = "feishu"
+    KDOCS = "kdocs"
     MANUAL = "manual"
 
 
@@ -463,6 +464,27 @@ def from_feishu(data: dict) -> UnifiedContent:
             "edit_time": data.get("edit_time", ""),
             "cover_image": data.get("cover_image", ""),
             "images": data.get("images", []),
+            "images_info": data.get("images_info", []),
+            "img_subdir": data.get("img_subdir", ""),
+        },
+    )
+
+
+def from_kdocs(data: dict) -> UnifiedContent:
+    """Convert KDocs (WPS) data dict to UnifiedContent."""
+    return UnifiedContent(
+        source_type=SourceType.KDOCS,
+        source_name=data.get("author", ""),
+        title=data.get("title", ""),
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "doc_token": data.get("doc_token", ""),
+            "word_count": data.get("word_count", 0),
+            "create_time": data.get("create_time", ""),
+            "edit_time": data.get("edit_time", ""),
+            "creator_id": data.get("creator_id", ""),
             "images_info": data.get("images_info", []),
             "img_subdir": data.get("img_subdir", ""),
         },

@@ -15,7 +15,7 @@ from feedgrab.schema import (
     UnifiedContent, SourceType,
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
-    from_github, from_feishu,
+    from_github, from_feishu, from_kdocs,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.utils.url_validator import validate_url
@@ -77,6 +77,9 @@ class UniversalReader:
             return "telegram"
         if "github.com" in domain:
             return "github"
+        # KDocs (WPS 金山文档)
+        if "kdocs.cn" in domain:
+            return "kdocs"
         # Feishu / Lark
         from feedgrab.fetchers.feishu import is_feishu_url
         if is_feishu_url(url):
@@ -163,6 +166,19 @@ class UniversalReader:
                         saved_path,
                         content.extra["images_info"],
                         content.url,
+                        img_subdir=content.extra.get("img_subdir", ""),
+                    )
+
+            # KDocs: download images to {md_dir}/attachments/{subdir}/ after saving
+            if (saved_path
+                    and content.source_type == SourceType.KDOCS
+                    and content.extra.get("images_info")):
+                from feedgrab.config import kdocs_download_images
+                if kdocs_download_images():
+                    from feedgrab.fetchers.kdocs import download_kdocs_images
+                    download_kdocs_images(
+                        saved_path,
+                        content.extra["images_info"],
                         img_subdir=content.extra.get("img_subdir", ""),
                     )
 
@@ -273,6 +289,11 @@ class UniversalReader:
             from feedgrab.fetchers.feishu import fetch_feishu
             data = await fetch_feishu(url)
             return from_feishu(data)
+
+        if platform == "kdocs":
+            from feedgrab.fetchers.kdocs import fetch_kdocs
+            data = await fetch_kdocs(url)
+            return from_kdocs(data)
 
         if platform == "rss":
             from feedgrab.fetchers.rss import fetch_rss

@@ -2,6 +2,53 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-07 · v0.14.0 · 金山文档 (KDocs) 平台支持
+
+### 背景
+
+新增金山文档（kdocs.cn）平台抓取支持。金山文档基于 WPS WebOffice SPA + ProseMirror 编辑器，采用虚拟滚动渲染，图片使用 blob: URL，需要针对性解决内容完整提取、图片 URL 解析、代码块识别三个技术难点。
+
+### 功能内容
+
+1. **Playwright ProseMirror DOM 提取**（Tier 0）：滚动 `.otl-scroll-container` 逐屏提取 `.block_tile` 内容，自动去重，支持标题/段落/列表/待办/分割线/代码块/图片 7 种块类型
+2. **虚拟滚动对抗**：每次滚动 600px + 200ms 等待 + 提取可见 DOM，去重 key 基于块类型+文本前 80 字符，hr 用序号去重防止坍缩
+3. **图片 shapes API 解析**：拦截 `attachment/shapes` 网络响应，获取 `sourcekey → CDN URL` 映射，结合 DOM `<img sourcekey>` 属性将 blob: URL 替换为真实 CDN URL
+4. **代码块提取**：识别 `<nodeview data-node-type="code_block">` → `<pre lang>` → `<code class="code-block-content">` 结构，保留语言标记
+5. **CDP 直连模式**：`KDOCS_CDP_ENABLED=true` 复用已打开的 Chrome 抓取需要登录的金山文档（匹配 `.kdocs.cn`/`.wps.cn` cookie），失败自动降级到 Launch 模式
+6. **图片下载开关**：`KDOCS_DOWNLOAD_IMAGES=true` 将图片下载到 `attachments/{item_id}/` 子目录，Markdown 使用相对路径（默认关闭，保留 CDN 链接）
+7. **Jina Reader 兜底**（Tier 1）：Playwright 失败时自动降级
+8. **登录支持**：`feedgrab login kdocs` 保存 session 到 `sessions/kdocs.json`
+9. **重复分割线修复**：虚拟滚动提取时空 block_tile 会产生大量重复 `---`，正则合并 + 清理多余空行
+10. **CDP 模式 viewport 修复**：CDP 页面强制设置 1920x1080 viewport + 滚动前先 scrollTop=0 + 滚动容器就绪检查，确保与 Launch 模式一致的 347 blocks 提取量
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/kdocs.py` | 新增 | 核心 fetcher（660 行），ProseMirror DOM 提取 + shapes API 图片解析 + CDP 直连 + 图片下载 |
+| `feedgrab/schema.py` | 修改 | `SourceType.KDOCS` 枚举 + `from_kdocs()` 转换函数（含 `images_info`/`img_subdir`） |
+| `feedgrab/reader.py` | 修改 | `_detect_platform()` kdocs 路由 + `_fetch()` kdocs 分支 + 图片下载触发 |
+| `feedgrab/config.py` | 修改 | `kdocs_cdp_enabled()` + `kdocs_page_load_timeout()` + `kdocs_download_images()` |
+| `feedgrab/login.py` | 修改 | kdocs 平台 URL + CDP cookie 域名配置 |
+| `feedgrab/utils/storage.py` | 修改 | `SourceType.KDOCS: "KDocs"` 目录映射 |
+| `.env.example` | 修改 | 金山文档配置说明（CDP/超时/图片下载） |
+
+### 验证结果
+
+- ✅ 公开文档 `https://www.kdocs.cn/l/cagyDv2WRhvP` 提取 347 blocks（标题/段落/列表/代码块/分割线/图片完整）
+- ✅ 4 张图片通过 shapes API 正确解析为 CDN URL（`weboffice-temporary.ks3-cn-beijing.wpscdn.cn`）
+- ✅ 代码块正确提取（含语言标记如 JSON）
+- ✅ 重复分割线已合并（24 个合理分割线，无重复）
+- ✅ CDP 模式提取与 Launch 模式一致（347 blocks）
+- ✅ `KDOCS_DOWNLOAD_IMAGES=true` 图片信息正确收集（4 张，相对路径 `attachments/{item_id}/xxx`）
+- ✅ `__WPSENV__` 元数据正确提取（标题/作者/创建时间/修改时间）
+
+### 状态
+
+已完成 ✅
+
+---
+
 ## 2026-04-05 · v0.13.7 · x-so 搜索三级兜底 + SearchTimeline POST 迁移 + ondemand.s 容错增强
 
 ### 背景

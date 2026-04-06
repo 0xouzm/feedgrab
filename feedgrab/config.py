@@ -751,6 +751,28 @@ def feishu_cdp_enabled() -> bool:
     return os.getenv("FEISHU_CDP_ENABLED", "false").lower() in ("true", "1", "yes")
 
 
+# ---------------------------------------------------------------------------
+# KDocs (WPS 金山文档)
+# ---------------------------------------------------------------------------
+
+def kdocs_cdp_enabled() -> bool:
+    """Connect to running Chrome via CDP for KDocs. Default false."""
+    return os.getenv("KDOCS_CDP_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def kdocs_page_load_timeout() -> int:
+    """Playwright page element wait timeout in ms. Default 10000."""
+    try:
+        return int(os.getenv("KDOCS_PAGE_LOAD_TIMEOUT", "10000"))
+    except ValueError:
+        return 10000
+
+
+def kdocs_download_images() -> bool:
+    """Download KDocs images locally instead of linking to CDN. Default false."""
+    return os.getenv("KDOCS_DOWNLOAD_IMAGES", "false").lower() in ("true", "1", "yes")
+
+
 # ── Media download ───────────────────────────────────────────
 
 def x_download_media() -> bool:

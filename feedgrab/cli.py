@@ -21,6 +21,10 @@ from pathlib import Path
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    # Suppress noisy asyncio ProactorEventLoop pipe warnings on Windows
+    # (harmless ResourceWarning from Playwright browser process cleanup)
+    import warnings
+    warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed transport.*")
 
 from loguru import logger
 from dotenv import load_dotenv
