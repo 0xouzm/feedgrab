@@ -21,10 +21,17 @@ from pathlib import Path
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    # Suppress noisy asyncio ProactorEventLoop pipe warnings on Windows
-    # (harmless ResourceWarning from Playwright browser process cleanup)
+    # Suppress noisy asyncio ProactorEventLoop "Exception ignored in __del__"
+    # messages on Windows (harmless pipe cleanup from Playwright subprocess).
+    # These bypass warnings module — must intercept via sys.unraisablehook.
     import warnings
-    warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed transport.*")
+    warnings.filterwarnings("ignore", category=ResourceWarning)
+    _original_unraisablehook = sys.unraisablehook
+    def _quiet_unraisablehook(unraisable):
+        if isinstance(unraisable.exc_value, (OSError, ValueError)):
+            return  # silence pipe/transport cleanup noise
+        _original_unraisablehook(unraisable)
+    sys.unraisablehook = _quiet_unraisablehook
 
 from loguru import logger
 from dotenv import load_dotenv
