@@ -113,9 +113,9 @@ CHROME_CDP_LOGIN=true feedgrab login twitter
 CHROME_CDP_LOGIN=true feedgrab login xhs
 CHROME_CDP_LOGIN=true feedgrab login kdocs
 
-# Fetch KDocs (WPS) documents (public docs work directly, auth-required docs need CDP)
-feedgrab https://www.kdocs.cn/l/xxxxx                              # Public document
-KDOCS_CDP_ENABLED=true feedgrab https://www.kdocs.cn/l/xxxxx       # CDP mode (auth-required)
+# Fetch KDocs (WPS) documents (CDP by default, reuses Chrome login session)
+feedgrab https://www.kdocs.cn/l/xxxxx                              # Auto CDP → Launch fallback
+KDOCS_CDP_ENABLED=false feedgrab https://www.kdocs.cn/l/xxxxx      # Force Launch mode
 KDOCS_DOWNLOAD_IMAGES=true feedgrab https://www.kdocs.cn/l/xxxxx   # Download images locally
 
 # Download tweet images/videos to local (saved to attachments/{item_id}/ subdirectory)

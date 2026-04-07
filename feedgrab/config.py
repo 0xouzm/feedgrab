@@ -756,8 +756,13 @@ def feishu_cdp_enabled() -> bool:
 # ---------------------------------------------------------------------------
 
 def kdocs_cdp_enabled() -> bool:
-    """Connect to running Chrome via CDP for KDocs. Default false."""
-    return os.getenv("KDOCS_CDP_ENABLED", "false").lower() in ("true", "1", "yes")
+    """Connect to running Chrome via CDP for KDocs. Default true.
+
+    KDocs documents often require login. CDP reuses the running Chrome's
+    session cookies automatically, falling back to launch mode if CDP
+    is unavailable.
+    """
+    return os.getenv("KDOCS_CDP_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
 def kdocs_page_load_timeout() -> int:
