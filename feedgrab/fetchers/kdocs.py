@@ -163,8 +163,9 @@ async def _connect_kdocs_cdp() -> Optional[tuple]:
     """Connect to running Chrome via CDP, find a context with KDocs cookies.
 
     Returns (browser, context, page) or None.
+    Also saves cookies to sessions/kdocs.json for future Launch-mode reuse.
     """
-    from feedgrab.config import chrome_cdp_port
+    from feedgrab.config import chrome_cdp_port, get_session_dir
 
     port = chrome_cdp_port()
     ws_url = f"ws://127.0.0.1:{port}/devtools/browser"
@@ -182,6 +183,30 @@ async def _connect_kdocs_cdp() -> Optional[tuple]:
             for c in cookies:
                 domain = c.get("domain", "")
                 if any(domain.endswith(d) for d in target_domains):
+                    # Save KDocs-relevant cookies as Playwright storage_state
+                    try:
+                        session_path = get_session_dir() / "kdocs.json"
+                        session_path.parent.mkdir(parents=True, exist_ok=True)
+                        # Only keep KDocs/WPS cookies (not entire Chrome profile)
+                        kdocs_domains = (".kdocs.cn", ".wps.cn", ".wps.com")
+                        kdocs_cookies = [
+                            c for c in cookies
+                            if any(c.get("domain", "").endswith(d) for d in kdocs_domains)
+                        ]
+                        # Playwright storage_state format
+                        storage = {
+                            "cookies": kdocs_cookies,
+                            "origins": [],
+                        }
+                        import json
+                        session_path.write_text(
+                            json.dumps(storage, ensure_ascii=False, indent=2),
+                            encoding="utf-8",
+                        )
+                        logger.info(f"[kdocs] CDP: saved {len(kdocs_cookies)} cookies to {session_path}")
+                    except Exception as e:
+                        logger.debug(f"[kdocs] CDP: cookie save failed: {e}")
+
                     page = await ctx.new_page()
                     logger.info("[kdocs] CDP: reusing context with KDocs cookies")
                     return (browser, ctx, page)
@@ -465,22 +490,32 @@ async def _resolve_image_urls(page, blocks: list, shapes_map: dict) -> None:
 
 
 async def _extract_via_playwright(url: str) -> Optional[Dict[str, Any]]:
-    """Tier 0: Extract KDocs content via Playwright JS evaluate."""
-    from feedgrab.config import kdocs_cdp_enabled, kdocs_page_load_timeout
+    """Tier 0: Extract KDocs content via Playwright JS evaluate.
+
+    Priority: saved session (Launch) > CDP auto-cookie > Launch (no session).
+    CDP only triggers when no session file exists, and auto-saves cookies
+    so subsequent fetches skip CDP entirely.
+    """
+    from feedgrab.config import kdocs_cdp_enabled, kdocs_page_load_timeout, get_session_dir
 
     timeout = kdocs_page_load_timeout()
     cdp_conn = None
     pw_instance = None
+    session_path = get_session_dir() / "kdocs.json"
 
     try:
-        # CDP direct connect (auth-required docs)
-        if kdocs_cdp_enabled():
+        if session_path.exists():
+            # Has saved session → Launch mode, no CDP needed
+            pw_instance, browser, _ctx, page = await _launch_browser_for_kdocs(url)
+        elif kdocs_cdp_enabled():
+            # No session → try CDP to auto-extract cookies
             cdp_conn = await _connect_kdocs_cdp()
-
-        if cdp_conn:
-            browser, _ctx, page = cdp_conn
-            # CDP page inherits Chrome's viewport — force consistent size
-            await page.set_viewport_size({"width": 1920, "height": 1080})
+            if cdp_conn:
+                browser, _ctx, page = cdp_conn
+                await page.set_viewport_size({"width": 1920, "height": 1080})
+            else:
+                # CDP failed → Launch without session (public docs)
+                pw_instance, browser, _ctx, page = await _launch_browser_for_kdocs(url)
         else:
             pw_instance, browser, _ctx, page = await _launch_browser_for_kdocs(url)
 
@@ -492,18 +527,34 @@ async def _extract_via_playwright(url: str) -> Optional[Dict[str, Any]]:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
         # Wait for ProseMirror editor to appear
+        editor_found = False
         try:
             await page.wait_for_selector(
                 ".ProseMirror.otl-main-editor",
                 timeout=timeout,
             )
+            editor_found = True
         except Exception:
             # SSO redirect may happen — wait longer
             logger.debug("[kdocs] Waiting for SSO redirect...")
-            await page.wait_for_selector(
-                ".ProseMirror.otl-main-editor",
-                timeout=timeout * 2,
-            )
+            try:
+                await page.wait_for_selector(
+                    ".ProseMirror.otl-main-editor",
+                    timeout=timeout * 2,
+                )
+                editor_found = True
+            except Exception:
+                pass
+
+        if not editor_found:
+            # Session might be expired — prompt user
+            if session_path.exists() and not cdp_conn:
+                logger.warning(
+                    "[kdocs] Cookie 可能已失效，页面未正常加载。"
+                    "请删除 sessions/kdocs.json 后重试（将自动通过 CDP 刷新 Cookie），"
+                    "或运行: feedgrab login kdocs"
+                )
+            raise Exception("ProseMirror editor not found — page did not load")
 
         # Wait for scroll container to be ready (virtual scroll needs init time)
         try:
