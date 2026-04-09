@@ -15,7 +15,7 @@ from feedgrab.schema import (
     UnifiedContent, SourceType,
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
-    from_github, from_feishu, from_kdocs,
+    from_github, from_feishu, from_kdocs, from_youdao,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.utils.url_validator import validate_url
@@ -80,6 +80,9 @@ class UniversalReader:
         # KDocs (WPS 金山文档)
         if "kdocs.cn" in domain:
             return "kdocs"
+        # Youdao Note (有道云笔记)
+        if "note.youdao.com" in domain:
+            return "youdao"
         # Feishu / Lark
         from feedgrab.fetchers.feishu import is_feishu_url
         if is_feishu_url(url):
@@ -123,6 +126,11 @@ class UniversalReader:
         # WeChat URL normalization: keep only essential params
         if platform == "wechat":
             url = self._normalize_wechat_url(url)
+
+        # Youdao Note URL cleanup: keep only id param
+        if platform == "youdao":
+            from feedgrab.fetchers.youdao import clean_youdao_url
+            url = clean_youdao_url(url)
 
         logger.info(f"[{platform}] {url[:60]}...")
 
@@ -177,6 +185,19 @@ class UniversalReader:
                 if kdocs_download_images():
                     from feedgrab.fetchers.kdocs import download_kdocs_images
                     download_kdocs_images(
+                        saved_path,
+                        content.extra["images_info"],
+                        img_subdir=content.extra.get("img_subdir", ""),
+                    )
+
+            # Youdao Note: download images to {md_dir}/attachments/{subdir}/
+            if (saved_path
+                    and content.source_type == SourceType.YOUDAO
+                    and content.extra.get("images_info")):
+                from feedgrab.config import youdao_download_images
+                if youdao_download_images():
+                    from feedgrab.fetchers.youdao import download_youdao_images
+                    download_youdao_images(
                         saved_path,
                         content.extra["images_info"],
                         img_subdir=content.extra.get("img_subdir", ""),
@@ -237,6 +258,7 @@ class UniversalReader:
                     SourceType.WECHAT: "mpweixin",
                     SourceType.BILIBILI: "Bilibili",
                     SourceType.FEISHU: "Feishu",
+                    SourceType.YOUDAO: "NoteYouDao",
                 }
                 plat = _dedup_plat_map.get(content.source_type, "X")
                 index = load_index(platform=plat)
@@ -294,6 +316,11 @@ class UniversalReader:
             from feedgrab.fetchers.kdocs import fetch_kdocs
             data = await fetch_kdocs(url)
             return from_kdocs(data)
+
+        if platform == "youdao":
+            from feedgrab.fetchers.youdao import fetch_youdao
+            data = await fetch_youdao(url)
+            return from_youdao(data)
 
         if platform == "rss":
             from feedgrab.fetchers.rss import fetch_rss

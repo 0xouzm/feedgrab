@@ -34,6 +34,7 @@ class SourceType(str, Enum):
     GITHUB = "github"
     FEISHU = "feishu"
     KDOCS = "kdocs"
+    YOUDAO = "youdao"
     MANUAL = "manual"
 
 
@@ -485,6 +486,26 @@ def from_kdocs(data: dict) -> UnifiedContent:
             "create_time": data.get("create_time", ""),
             "edit_time": data.get("edit_time", ""),
             "creator_id": data.get("creator_id", ""),
+            "images_info": data.get("images_info", []),
+            "img_subdir": data.get("img_subdir", ""),
+        },
+    )
+
+
+def from_youdao(data: dict) -> UnifiedContent:
+    """Convert Youdao Note data dict to UnifiedContent."""
+    return UnifiedContent(
+        source_type=SourceType.YOUDAO,
+        source_name=data.get("author", ""),
+        title=data.get("title", ""),
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "share_key": data.get("share_key", ""),
+            "page_views": data.get("page_views", 0),
+            "create_time": data.get("create_time", ""),
+            "edit_time": data.get("edit_time", ""),
             "images_info": data.get("images_info", []),
             "img_subdir": data.get("img_subdir", ""),
         },

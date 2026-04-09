@@ -2,6 +2,55 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-09 · v0.14.1 · 有道云笔记 (Youdao Note) 平台支持
+
+### 背景
+
+新增有道云笔记（note.youdao.com）分享页面抓取支持。有道云笔记有直接的 JSON API（无需登录），图片使用直接 CDN URL（非 blob:），无虚拟滚动，实现复杂度低于 KDocs/飞书。
+
+### 功能内容
+
+1. **JSON API 直接获取**（Tier 0）：`/yws/api/note/{shareKey}` 零依赖获取笔记内容（<300ms），解析压缩 JSON 格式（数字键编码：`"5"` 子块、`"6"` 特殊标记、`"7"` 内联元素、`"8"` 文本、`"9"` 样式）
+2. **Playwright iframe DOM 提取**（Tier 1）：API 失败时从 `iframe#content-body` 内 `.bulb-editor` 容器提取内容
+3. **Jina Reader 兜底**（Tier 2）：最终兜底
+4. **URL 参数自动清理**：`clean_youdao_url()` 只保留 `id` 参数，去掉 `type`/`_time` 等无用尾巴
+5. **标题智能检测**：通过 font-size 样式推断标题级别（≥24=H1, ≥20=H2, ≥16=H3）+ bold 样式确认
+6. **链接完整提取**：type=3 链接块的 `hf` 属性渲染为 `[text](url)` Markdown 链接
+7. **列表支持**：有序/无序列表 + 嵌套级别（`lt`=列表类型, `ll`=列表级别）
+8. **图片下载开关**：`YOUDAO_DOWNLOAD_IMAGES=true` 将图片下载到 `attachments/{item_id}/` 子目录
+9. **代码块 4 反引号**：最外层用 4 个反引号包裹（防嵌套），内容含 4+ 个连续反引号时 fence+1
+10. **内联样式**：bold/italic/strikethrough/underline → Markdown 标记
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/youdao.py` | 新增 | 核心 fetcher（~430 行），JSON API 解析 + Playwright 兜底 + 图片下载 |
+| `feedgrab/schema.py` | 修改 | `SourceType.YOUDAO` 枚举 + `from_youdao()` 转换函数 |
+| `feedgrab/reader.py` | 修改 | 平台检测 + URL 清理 + 路由 + 图片下载触发 + 去重映射 |
+| `feedgrab/config.py` | 修改 | `youdao_download_images()` 配置函数 |
+| `feedgrab/utils/storage.py` | 修改 | `NoteYouDao` 目录映射 + front matter + 标题去重 |
+| `.env` / `.env.example` | 修改 | `YOUDAO_DOWNLOAD_IMAGES` 配置项 |
+| `CLAUDE.md` | 修改 | 平台表格 + 架构文件树 + 设计决策 + 迭代历史 |
+| `README.md` / `README_EN.md` | 修改 | 平台数量 8+ → 11 + 有道云笔记平台行 |
+
+### 验证结果
+
+- ✅ URL 参数自动清理（`type`/`_time` 去除，只保留 `id`）
+- ✅ API Tier 0 命中（<300ms），标题/正文/图片完整
+- ✅ 输出到 `{OUTPUT_DIR}/NoteYouDao/` 目录
+- ✅ 9 张图片 CDN URL 正确提取
+- ✅ 14 个链接完整渲染
+- ✅ 6 个 H1 标题 + 23 个 H3 标题正确检测
+- ✅ 26 个列表项（含 8 个嵌套）正确渲染
+- ✅ front matter 包含 share_key/page_views/edit_time
+
+### 状态
+
+已完成 ✅
+
+---
+
 ## 2026-04-07 · v0.14.0 · 金山文档 (KDocs) 平台支持
 
 ### 背景
@@ -424,7 +473,7 @@ Tier 3   API description / Jina 兜底                       ← 不变
 
 | 技能 | 命令 | 说明 |
 |------|------|------|
-| `feedgrab` | `/feedgrab <URL>` | 核心抓取 — 给 URL 返回结构化 Markdown，支持 8+ 平台 |
+| `feedgrab` | `/feedgrab <URL>` | 核心抓取 — 给 URL 返回结构化 Markdown，支持 11 平台 |
 | `feedgrab-batch` | `/feedgrab-batch` | 批量抓取 — 书签、用户推文、搜索、微信批量、飞书知识库等 |
 | `feedgrab-setup` | `/feedgrab-setup` | 安装引导 — pip install + setup + Cookie 配置 + doctor 诊断 |
 | `analyzer` | `/analyze <URL>` | 内容分析 — 多维度结构化分析报告 |

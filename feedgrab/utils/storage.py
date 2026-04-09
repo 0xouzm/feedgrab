@@ -146,6 +146,7 @@ PLATFORM_FOLDER_MAP = {
     SourceType.GITHUB: "GitHub",
     SourceType.FEISHU: "Feishu",
     SourceType.KDOCS: "KDocs",
+    SourceType.YOUDAO: "NoteYouDao",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",
     SourceType.MANUAL: "Manual",
@@ -321,7 +322,7 @@ def _format_markdown(item: UnifiedContent) -> str:
         published = _parse_xhs_date(extra["date"])
     elif is_wechat and extra.get("publish_date"):
         published = extra["publish_date"]
-    elif extra.get("create_time") and item.source_type in (SourceType.FEISHU, SourceType.KDOCS):
+    elif extra.get("create_time") and item.source_type in (SourceType.FEISHU, SourceType.KDOCS, SourceType.YOUDAO):
         published = extra["create_time"][:10]  # YYYY-MM-DD
     fetched_date = item.fetched_at[:10] if item.fetched_at else ""
 
@@ -474,6 +475,16 @@ def _format_markdown(item: UnifiedContent) -> str:
         if extra.get("edit_time"):
             fm_lines.append(f'edit_time: "{extra["edit_time"]}"')
 
+    # Youdao Note extras
+    is_youdao = item.source_type == SourceType.YOUDAO
+    if is_youdao:
+        if extra.get("share_key"):
+            fm_lines.append(f'share_key: "{extra["share_key"]}"')
+        if extra.get("page_views"):
+            fm_lines.append(f"page_views: {extra['page_views']}")
+        if extra.get("edit_time"):
+            fm_lines.append(f'edit_time: "{extra["edit_time"]}"')
+
     # Tags (from tweet hashtags or other sources)
     if item.tags:
         # XHS: only top 3 tags in front matter (full list goes in body)
@@ -577,7 +588,7 @@ def _format_markdown(item: UnifiedContent) -> str:
         # WeChat / YouTube / GitHub / Feishu: skip title heading
         # (Feishu content already includes the document title from block tree)
         is_youtube = item.source_type == SourceType.YOUTUBE
-        if not is_wechat and not is_youtube and not is_github and not is_feishu and not is_kdocs and item.title and item.title.strip():
+        if not is_wechat and not is_youtube and not is_github and not is_feishu and not is_kdocs and not is_youdao and item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
 

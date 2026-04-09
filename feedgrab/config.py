@@ -778,6 +778,15 @@ def kdocs_download_images() -> bool:
     return os.getenv("KDOCS_DOWNLOAD_IMAGES", "false").lower() in ("true", "1", "yes")
 
 
+# ---------------------------------------------------------------------------
+# Youdao Note (有道云笔记)
+# ---------------------------------------------------------------------------
+
+def youdao_download_images() -> bool:
+    """Download Youdao Note images locally instead of linking to CDN. Default false."""
+    return os.getenv("YOUDAO_DOWNLOAD_IMAGES", "false").lower() in ("true", "1", "yes")
+
+
 # ── Media download ───────────────────────────────────────────
 
 def x_download_media() -> bool:

@@ -17,7 +17,7 @@ Give it a URL (article, video, podcast, tweet), get back structured content. Wor
 Any URL → Platform Detection → Fetch Content → Unified Output
               ↓                      ↓                ↓
          auto-detect           text: Jina Reader    → output/X/Author_Date：Title.md
-         8+ platforms          video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
+         11 platforms          video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
                                audio: Whisper transcription
                                API: Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / Feishu Open API
                                X/Twitter: GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
@@ -205,6 +205,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Xiaohongshu (小红书) | **API (xhshow)** → **Pinia Store injection** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
 | Feishu/Lark (飞书) | **Open API** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
 | KDocs (金山文档) | **Playwright ProseMirror DOM** extraction (virtual scroll + code blocks + image shapes API + CDP direct connect) | — |
+| Youdao Note (有道云笔记) | **JSON API** (zero dependency) → Playwright iframe DOM → Jina (single doc + image download) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
@@ -601,7 +602,8 @@ feedgrab/
 │   │   ├── xhs_search_notes.py # XHS search batch fetch (xhs-so API/Pinia search + scroll + deep fetch)
 │   │   ├── feishu.py          # Feishu single doc (Open API → Playwright PageMain → Jina + Block→MD + image download)
 │   │   ├── feishu_wiki.py     # Feishu wiki batch (Open API recursive + Playwright fallback + resume)
-│   │   └── kdocs.py           # KDocs (WPS) single doc (Playwright ProseMirror DOM + virtual scroll + CDP)
+│   │   ├── kdocs.py           # KDocs (WPS) single doc (Playwright ProseMirror DOM + virtual scroll + CDP)
+│   │   └── youdao.py          # Youdao Note single doc (JSON API + Playwright iframe DOM + Jina 3-tier fallback)
 │   └── utils/
 │       ├── storage.py         # Per-platform Markdown + JSON dual output
 │       ├── dedup.py           # Global dedup index (cross-mode unified tracking)
