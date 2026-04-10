@@ -257,19 +257,38 @@ async def _search_via_playwright(
         if not results:
             dom_results = await page.evaluate("""() => {
                 const items = document.querySelectorAll('.SearchResult-Card, .List-item');
-                return Array.from(items).map(el => {
+                const seen = new Set();
+                const out = [];
+                for (const el of items) {
                     const titleEl = el.querySelector('h2 a, .ContentItem-title a');
+                    if (!titleEl) continue;
+                    const url = titleEl.href || '';
+                    if (!url || seen.has(url)) continue;
+                    seen.add(url);
                     const excerptEl = el.querySelector('.RichContent-inner, .content');
-                    const authorEl = el.querySelector('.AuthorInfo-name');
+                    const authorEl = el.querySelector('.AuthorInfo-name a, .AuthorInfo-name');
                     const voteEl = el.querySelector('.VoteButton--up');
-                    return {
-                        title: titleEl ? titleEl.textContent.trim() : '',
-                        url: titleEl ? titleEl.href : '',
+                    const btns = el.querySelectorAll('.ContentItem-actions button, .ContentItem-action');
+                    const btnTexts = Array.from(btns).map(b => b.textContent.trim().replace(/\\u200b/g, ''));
+                    let upvotes = 0, comments = 0;
+                    for (const t of btnTexts) {
+                        const num = parseInt(t.replace(/[^0-9]/g, ''), 10) || 0;
+                        if (t.includes('赞同')) upvotes = num;
+                        else if (t.includes('评论')) comments = num;
+                    }
+                    if (!upvotes && voteEl) {
+                        upvotes = parseInt(voteEl.textContent.replace(/[^0-9]/g, ''), 10) || 0;
+                    }
+                    out.push({
+                        title: titleEl.textContent.trim(),
+                        url: url,
                         excerpt: excerptEl ? excerptEl.textContent.trim().substring(0, 200) : '',
-                        author: authorEl ? authorEl.textContent.trim() : '',
-                        upvotes: voteEl ? voteEl.textContent.replace(/[^0-9]/g, '') : '0',
-                    };
-                }).filter(x => x.title && x.url);
+                        author: authorEl ? authorEl.textContent.trim().replace(/\\u200b/g, '') : '',
+                        upvotes: upvotes,
+                        comments: comments,
+                    });
+                }
+                return out;
             }""")
 
             if dom_results:
@@ -281,8 +300,8 @@ async def _search_via_playwright(
                         "excerpt": item.get("excerpt", ""),
                         "url": item.get("url", ""),
                         "author": item.get("author", ""),
-                        "upvotes": int(item.get("upvotes", "0") or 0),
-                        "comments": 0,
+                        "upvotes": item.get("upvotes", 0),
+                        "comments": item.get("comments", 0),
                         "views": 0,
                         "date": "",
                     })

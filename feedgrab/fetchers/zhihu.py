@@ -469,11 +469,26 @@ _EXTRACT_ARTICLE_DOM_JS = """() => {
     result.title = (document.querySelector('.Post-Title') || {}).textContent || '';
     result.content = (document.querySelector('.Post-RichTextContainer .RichText, .RichText--color') || {}).innerHTML || '';
     const author = document.querySelector('.AuthorInfo-name, .Post-Author .UserLink-link');
-    result.author = author ? author.textContent.trim() : '';
-    const like = document.querySelector('.LikeButton--active, .VoteButton--up');
-    result.upvotes = like ? like.textContent.replace(/[^0-9]/g, '') : '0';
-    const comment = document.querySelector('.Post-SocialActions button');
-    result.comments = comment ? (comment.textContent.match(/\\d+/) || ['0'])[0] : '0';
+    result.author = author ? author.textContent.trim().replace(/\\u200b/g, '') : '';
+
+    // Engagement data from action buttons
+    const btns = document.querySelectorAll('.ContentItem-actions button, .ContentItem-action, .Post-SocialActions button');
+    const btnTexts = Array.from(btns).map(b => b.textContent.trim().replace(/\\u200b/g, ''));
+    let upvotes = 0, comments = 0, collected = 0, thanks = 0;
+    for (const t of btnTexts) {
+        const num = parseInt(t.replace(/[^0-9]/g, ''), 10) || 0;
+        if (t.includes('赞同') || t.includes('赞')) upvotes = num;
+        else if (t.includes('评论')) comments = num;
+    }
+    const numBtns = btnTexts.filter(t => /^\\d+$/.test(t));
+    if (numBtns.length >= 2) {
+        collected = parseInt(numBtns[0], 10) || 0;
+        thanks = parseInt(numBtns[1], 10) || 0;
+    }
+    result.upvotes = upvotes;
+    result.comments = comments;
+    result.collected = collected;
+    result.thanks = thanks;
     return result;
 }"""
 
@@ -570,8 +585,10 @@ async def _fetch_via_playwright(url: str) -> Optional[Dict[str, Any]]:
                     "article_id": pid or "",
                     "content": _html_to_markdown(dom["content"]),
                     "author": dom.get("author", ""),
-                    "upvotes": int(dom.get("upvotes", "0") or 0),
-                    "comments": int(dom.get("comments", "0") or 0),
+                    "upvotes": dom.get("upvotes", 0),
+                    "comments": dom.get("comments", 0),
+                    "thanks": dom.get("thanks", 0),
+                    "collected": dom.get("collected", 0),
                     "views": 0,
                     "publish_date": "",
                     "tags": [],
