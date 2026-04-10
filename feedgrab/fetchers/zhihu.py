@@ -713,41 +713,60 @@ async def _connect_zhihu_cdp():
     return None, None, None, False
 
 
+# Module-level cached Playwright CDP page for Tier 2 DOM extraction
+_pw_page = None
+_pw_pw = None
+_pw_browser = None
+_pw_is_cdp = False
+
+
+async def _get_playwright_page():
+    """Get or create a persistent CDP page for Playwright DOM extraction."""
+    global _pw_page, _pw_pw, _pw_browser, _pw_is_cdp
+
+    if _pw_page and not _pw_page.is_closed():
+        return _pw_pw, _pw_browser, _pw_page, _pw_is_cdp
+
+    # Try CDP
+    pw, browser, page, is_cdp = await _connect_zhihu_cdp()
+    if page:
+        _pw_pw, _pw_browser, _pw_page, _pw_is_cdp = pw, browser, page, True
+        return pw, browser, page, True
+
+    # Launch mode fallback
+    try:
+        from feedgrab.fetchers.browser import get_async_playwright, stealth_launch, get_stealth_context_options, setup_resource_blocking
+        pw_mod = get_async_playwright()
+        pw = await pw_mod().start()
+        browser = await stealth_launch(pw, headless=False)
+
+        from feedgrab.config import get_session_dir
+        session_path = get_session_dir() / "zhihu.json"
+        ctx_opts = get_stealth_context_options()
+        if session_path.exists():
+            ctx_opts["storage_state"] = str(session_path)
+        context = await browser.new_context(**ctx_opts)
+        await setup_resource_blocking(context)
+        page = await context.new_page()
+        _pw_pw, _pw_browser, _pw_page, _pw_is_cdp = pw, browser, page, False
+        return pw, browser, page, False
+    except Exception as e:
+        logger.warning(f"[zhihu] Playwright launch failed: {e}")
+        if pw:
+            await pw.stop()
+        return None, None, None, False
+
+
 async def _fetch_via_playwright(url: str) -> Optional[Dict[str, Any]]:
-    """Tier 1: Playwright browser extraction."""
+    """Tier 2: Playwright browser extraction (reuses CDP page across calls)."""
     from feedgrab.config import zhihu_page_load_timeout
 
     timeout = zhihu_page_load_timeout()
     content_type, qid, aid, pid = parse_zhihu_url(url)
 
-    # Try CDP first
-    pw, browser, page, is_cdp = await _connect_zhihu_cdp()
-
+    pw, browser, page, is_cdp = await _get_playwright_page()
     if not page:
-        # Launch mode
-        try:
-            from feedgrab.fetchers.browser import get_async_playwright, stealth_launch, get_stealth_context_options
-            pw_mod = get_async_playwright()
-            pw = await pw_mod().start()
-            browser = await stealth_launch(pw, headless=False)
-
-            # Load session if available
-            from feedgrab.config import get_session_dir
-            session_path = get_session_dir() / "zhihu.json"
-            ctx_opts = get_stealth_context_options()
-            if session_path.exists():
-                ctx_opts["storage_state"] = str(session_path)
-            context = await browser.new_context(**ctx_opts)
-
-            from feedgrab.fetchers.browser import setup_resource_blocking
-            await setup_resource_blocking(context)
-            page = await context.new_page()
-            is_cdp = False
-        except Exception as e:
-            logger.warning(f"[zhihu] Playwright launch failed: {e}")
-            if pw:
-                await pw.stop()
-            return None
+        return None
 
     try:
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -825,13 +844,6 @@ async def _fetch_via_playwright(url: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"[zhihu] Playwright extraction failed: {e}")
         return None
-    finally:
-        if is_cdp:
-            await page.close()
-            await browser.close()
-        else:
-            await browser.close()
-        await pw.stop()
 
 
 def _parse_initial_state(
@@ -999,11 +1011,9 @@ async def fetch_zhihu(url: str) -> Dict[str, Any]:
             logger.info("[zhihu] Tier 1: Browser XHR success")
             data["url"] = url
             data["img_subdir"] = item_id
-            await _close_xhr_page()
             return data
     except Exception as e:
         logger.warning(f"[zhihu] Tier 1 failed: {e}")
-    await _close_xhr_page()
 
     # Tier 2: Playwright DOM
     logger.info(f"[zhihu] Tier 2: Playwright for {url}")

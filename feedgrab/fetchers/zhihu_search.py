@@ -203,8 +203,6 @@ async def _search_via_xhr(
             offset += limit
     except Exception as e:
         logger.warning(f"[zhihu-so] XHR search error: {e}")
-    finally:
-        await _close_xhr_page()
 
     return results[:max_results]
 
@@ -224,70 +222,22 @@ def _ts_to_date(ts: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tier 1 — Playwright browser search
+# Tier 2 — Playwright browser search (reuses cached CDP page)
 # ---------------------------------------------------------------------------
 
 async def _search_via_playwright(
     keyword: str,
     max_results: int = 50,
 ) -> List[Dict[str, Any]]:
-    """Search Zhihu via Playwright browser, extract __INITIAL_STATE__."""
-    from feedgrab.config import zhihu_cdp_enabled, chrome_cdp_port, get_session_dir
+    """Search Zhihu via Playwright browser, extract from DOM."""
+    from feedgrab.fetchers.zhihu import _get_playwright_page
+    from urllib.parse import quote
 
-    search_url = f"https://www.zhihu.com/search?type=content&q={keyword}"
+    search_url = f"https://www.zhihu.com/search?type=content&q={quote(keyword)}"
 
-    # Try CDP first
-    pw = None
-    browser = None
-    page = None
-    is_cdp = False
-
-    if zhihu_cdp_enabled():
-        try:
-            from playwright.async_api import async_playwright
-            pw = await async_playwright().start()
-            port = chrome_cdp_port()
-            ws_url = f"ws://127.0.0.1:{port}/devtools/browser"
-            browser = await pw.chromium.connect_over_cdp(ws_url)
-
-            for ctx in browser.contexts:
-                cookies = await ctx.cookies()
-                if any(c.get("domain", "").endswith(".zhihu.com") for c in cookies):
-                    page = await ctx.new_page()
-                    is_cdp = True
-                    logger.info("[zhihu-so] CDP connected")
-                    break
-
-            if not page:
-                await browser.close()
-                await pw.stop()
-                pw = browser = None
-        except Exception as e:
-            logger.info(f"[zhihu-so] CDP failed: {e}")
-            if pw:
-                await pw.stop()
-            pw = browser = None
-
-    # Launch mode fallback
+    pw, browser, page, is_cdp = await _get_playwright_page()
     if not page:
-        try:
-            from feedgrab.fetchers.browser import get_async_playwright, stealth_launch, get_stealth_context_options, setup_resource_blocking
-            pw_mod = get_async_playwright()
-            pw = await pw_mod().start()
-            browser = await stealth_launch(pw, headless=False)
-
-            session_path = get_session_dir() / "zhihu.json"
-            ctx_opts = get_stealth_context_options()
-            if session_path.exists():
-                ctx_opts["storage_state"] = str(session_path)
-            context = await browser.new_context(**ctx_opts)
-            await setup_resource_blocking(context)
-            page = await context.new_page()
-        except Exception as e:
-            logger.warning(f"[zhihu-so] Playwright launch failed: {e}")
-            if pw:
-                await pw.stop()
-            return []
+        return []
 
     results: List[Dict[str, Any]] = []
     try:
@@ -361,13 +311,6 @@ async def _search_via_playwright(
 
     except Exception as e:
         logger.warning(f"[zhihu-so] Playwright search failed: {e}")
-    finally:
-        if is_cdp:
-            await page.close()
-            await browser.close()
-        else:
-            await browser.close()
-        await pw.stop()
 
     return results
 
