@@ -2,7 +2,10 @@
 """
 Zhihu (知乎) fetcher — single post (question/answer + article).
 
-Tier 0: API v4 + Cookie (fastest, <1s, needs z_c0)
+Tier 0: API v4 + Cookie (fastest, <1s, needs z_c0 + x-zse-96 — often 403)
+Tier 1: Browser XHR API (CDP page.evaluate XHR, reuses frontend signing, <1s)
+Tier 2: Playwright + DOM extraction (structured data, engagement metrics)
+Tier 3: Jina Reader (last resort, may lose engagement data)
 Tier 1: Playwright + __INITIAL_STATE__ (structured data, engagement metrics)
 Tier 2: Jina Reader (last resort, may lose engagement data)
 """
@@ -381,7 +384,191 @@ def _ts_to_str(ts: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tier 1 — Playwright + __INITIAL_STATE__
+# Tier 1 — Browser XHR API (reuses frontend x-zse-96 signing)
+# ---------------------------------------------------------------------------
+
+# XHR helper JS — injected into browser page context.
+# Uses XMLHttpRequest (not fetch) because Zhihu's frontend JS monkey-patches
+# XHR.prototype to auto-inject x-zse-96 signature headers.
+_XHR_GET_JS = """(url) => new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url);
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    xhr.onload = () => {
+        if (xhr.status === 200) {
+            try { resolve({ok: true, data: JSON.parse(xhr.responseText)}); }
+            catch(e) { resolve({ok: false, status: xhr.status, error: 'parse_error'}); }
+        } else {
+            resolve({ok: false, status: xhr.status, error: xhr.responseText.substring(0, 200)});
+        }
+    };
+    xhr.onerror = () => resolve({ok: false, status: 0, error: 'network_error'});
+    xhr.send();
+})"""
+
+# Module-level cached CDP page for batch operations
+_xhr_page = None
+_xhr_pw = None
+_xhr_browser = None
+
+
+async def _get_xhr_page():
+    """Get or create a persistent CDP page for XHR API calls."""
+    global _xhr_page, _xhr_pw, _xhr_browser
+
+    if _xhr_page and not _xhr_page.is_closed():
+        return _xhr_page
+
+    from feedgrab.config import chrome_cdp_port
+    try:
+        from playwright.async_api import async_playwright
+        _xhr_pw = await async_playwright().start()
+        port = chrome_cdp_port()
+        _xhr_browser = await _xhr_pw.chromium.connect_over_cdp(
+            f"ws://127.0.0.1:{port}/devtools/browser"
+        )
+        for ctx in _xhr_browser.contexts:
+            cookies = await ctx.cookies()
+            if any(c.get("domain", "").endswith(".zhihu.com") for c in cookies):
+                _xhr_page = await ctx.new_page()
+                # Navigate to zhihu to establish same-origin context
+                await _xhr_page.goto(
+                    "https://www.zhihu.com/", wait_until="domcontentloaded", timeout=20000
+                )
+                await _xhr_page.wait_for_timeout(2000)
+                logger.info("[zhihu] Tier 1: XHR page ready (CDP)")
+                return _xhr_page
+
+        logger.info("[zhihu] CDP: no Zhihu context found")
+        await _xhr_browser.close()
+        await _xhr_pw.stop()
+        _xhr_browser = _xhr_pw = _xhr_page = None
+    except Exception as e:
+        logger.info(f"[zhihu] XHR page init failed: {e}")
+        if _xhr_pw:
+            await _xhr_pw.stop()
+        _xhr_browser = _xhr_pw = _xhr_page = None
+    return None
+
+
+async def _close_xhr_page():
+    """Close the cached XHR page."""
+    global _xhr_page, _xhr_pw, _xhr_browser
+    try:
+        if _xhr_page and not _xhr_page.is_closed():
+            await _xhr_page.close()
+        if _xhr_browser:
+            await _xhr_browser.close()
+        if _xhr_pw:
+            await _xhr_pw.stop()
+    except Exception:
+        pass
+    _xhr_page = _xhr_pw = _xhr_browser = None
+
+
+async def _xhr_api_get(path: str) -> Optional[dict]:
+    """Execute an API GET via browser XHR (auto-signed by frontend JS)."""
+    page = await _get_xhr_page()
+    if not page:
+        return None
+    try:
+        result = await page.evaluate(_XHR_GET_JS, path)
+        if result and result.get("ok"):
+            return result["data"]
+        status = result.get("status", 0) if result else 0
+        logger.info(f"[zhihu] XHR API {status}: {path[:80]}")
+        return None
+    except Exception as e:
+        logger.info(f"[zhihu] XHR API error: {e}")
+        return None
+
+
+async def _fetch_answer_via_xhr(
+    qid: str, aid: str,
+) -> Optional[Dict[str, Any]]:
+    """Tier 0.5: Fetch answer + top N answers via browser XHR."""
+    include = _API_ANSWER_INCLUDE
+
+    # 1. Fetch target answer
+    ans = await _xhr_api_get(
+        f"/api/v4/answers/{aid}?include={include}"
+    )
+    if not ans or not ans.get("content"):
+        return None
+
+    question = ans.get("question", {})
+    target_answer = _parse_api_answer(ans)
+
+    # 2. Fetch top N answers
+    list_data = await _xhr_api_get(
+        f"/api/v4/questions/{qid}/answers?include={_API_ANSWERS_INCLUDE}"
+        f"&limit={_DEFAULT_TOP_ANSWERS}&offset=0"
+    )
+    top_answers = []
+    if list_data and list_data.get("data"):
+        top_answers = [_parse_api_answer(a) for a in list_data["data"]]
+
+    # 3. Build answers list: target first, fill from top
+    answers_list = [target_answer]
+    seen_ids = {target_answer["answer_id"]}
+    for ta in top_answers:
+        if ta["answer_id"] not in seen_ids and len(answers_list) < _DEFAULT_TOP_ANSWERS:
+            answers_list.append(ta)
+            seen_ids.add(ta["answer_id"])
+
+    if target_answer["answer_id"] in {a["answer_id"] for a in top_answers}:
+        answers_list = top_answers[:_DEFAULT_TOP_ANSWERS]
+
+    best = max(answers_list, key=lambda a: a.get("upvotes", 0))
+
+    return {
+        "content_type": "answer",
+        "title": question.get("title", ""),
+        "question_id": str(question.get("id", qid)),
+        "answer_id": best["answer_id"],
+        "question_title": question.get("title", ""),
+        "question_detail": _html_to_markdown(question.get("detail", "")),
+        "content": "",
+        "author": best["author"],
+        "author_url": best["author_url"],
+        "upvotes": best["upvotes"],
+        "comments": best["comments"],
+        "thanks": best["thanks"],
+        "collected": best["collected"],
+        "views": question.get("visit_count", 0),
+        "publish_date": best["publish_date"],
+        "tags": [t.get("name", "") for t in question.get("topics", [])],
+        "answers_list": answers_list,
+    }
+
+
+async def _fetch_article_via_xhr(pid: str) -> Optional[Dict[str, Any]]:
+    """Tier 0.5: Fetch article via browser XHR."""
+    art = await _xhr_api_get(f"/api/v4/articles/{pid}")
+    if not art or not art.get("content"):
+        return None
+
+    author = art.get("author", {})
+    return {
+        "content_type": "article",
+        "title": art.get("title", ""),
+        "article_id": str(art.get("id", pid)),
+        "content": _html_to_markdown(art.get("content", "")),
+        "author": author.get("name", "") if isinstance(author, dict) else "",
+        "author_url": author.get("url", "") if isinstance(author, dict) else "",
+        "upvotes": art.get("voteup_count", 0),
+        "comments": art.get("comment_count", 0),
+        "thanks": art.get("thanks_count", 0),
+        "collected": art.get("favlists_count", 0),
+        "views": 0,
+        "publish_date": _ts_to_str(art.get("created", 0)),
+        "tags": [t.get("name", "") for t in art.get("topics", [])],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 — Playwright + __INITIAL_STATE__
 # ---------------------------------------------------------------------------
 
 # JS to extract __INITIAL_STATE__ from Zhihu page
@@ -571,7 +758,7 @@ async def _fetch_via_playwright(url: str) -> Optional[Dict[str, Any]]:
         if state:
             data = _parse_initial_state(state, content_type, qid, aid, pid)
             if data and (data.get("content") or data.get("answers_list")):
-                logger.info("[zhihu] Tier 1: __INITIAL_STATE__ extraction success")
+                logger.info("[zhihu] Tier 2: __INITIAL_STATE__ extraction success")
                 return data
 
         # Fallback: DOM extraction
@@ -758,7 +945,7 @@ def _parse_article_state(
 async def fetch_zhihu(url: str) -> Dict[str, Any]:
     """Fetch Zhihu content with multi-tier fallback.
 
-    Tier 0: API v4 + Cookie  →  Tier 1: Playwright  →  Tier 2: Jina Reader
+    Tier 0: API v4 + Cookie  →  Tier 1: Browser XHR  →  Tier 2: Playwright DOM  →  Tier 3: Jina
     """
     url = clean_zhihu_url(url)
     content_type, qid, aid, pid = parse_zhihu_url(url)
@@ -798,8 +985,28 @@ async def fetch_zhihu(url: str) -> Dict[str, Any]:
     else:
         logger.info("[zhihu] No session file, skipping Tier 0 API")
 
-    # Tier 1: Playwright
-    logger.info(f"[zhihu] Tier 1: Playwright for {url}")
+    # Tier 1: Browser XHR API (CDP + frontend signing)
+    logger.info(f"[zhihu] Tier 1: Browser XHR for {content_type}")
+    try:
+        if content_type == "answer" and aid:
+            data = await _fetch_answer_via_xhr(qid or "", aid)
+        elif content_type == "article" and pid:
+            data = await _fetch_article_via_xhr(pid)
+        else:
+            data = None
+
+        if data and (data.get("content") or data.get("answers_list")):
+            logger.info("[zhihu] Tier 1: Browser XHR success")
+            data["url"] = url
+            data["img_subdir"] = item_id
+            await _close_xhr_page()
+            return data
+    except Exception as e:
+        logger.warning(f"[zhihu] Tier 1 failed: {e}")
+    await _close_xhr_page()
+
+    # Tier 2: Playwright DOM
+    logger.info(f"[zhihu] Tier 2: Playwright for {url}")
     try:
         pw_data = await _fetch_via_playwright(url)
         if pw_data and (pw_data.get("content") or pw_data.get("answers_list")):
@@ -807,10 +1014,10 @@ async def fetch_zhihu(url: str) -> Dict[str, Any]:
             pw_data.setdefault("img_subdir", item_id)
             return pw_data
     except Exception as e:
-        logger.warning(f"[zhihu] Tier 1 failed: {e}")
+        logger.warning(f"[zhihu] Tier 2 failed: {e}")
 
-    # Tier 2: Jina Reader
-    logger.info(f"[zhihu] Tier 2: Jina Reader for {url}")
+    # Tier 3: Jina Reader
+    logger.info(f"[zhihu] Tier 3: Jina Reader for {url}")
     from feedgrab.fetchers.jina import fetch_via_jina
     jina_data = fetch_via_jina(url)
     jina_content = jina_data.get("content", "")

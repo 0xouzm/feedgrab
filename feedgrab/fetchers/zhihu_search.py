@@ -157,6 +157,58 @@ def _parse_search_item(item: dict) -> Optional[Dict[str, Any]]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Tier 1 — Browser XHR search (reuses frontend x-zse-96 signing)
+# ---------------------------------------------------------------------------
+
+async def _search_via_xhr(
+    keyword: str,
+    max_results: int = 50,
+) -> List[Dict[str, Any]]:
+    """Search Zhihu via browser XHR (auto-signed by frontend JS)."""
+    from feedgrab.fetchers.zhihu import _get_xhr_page, _close_xhr_page, _XHR_GET_JS
+
+    page = await _get_xhr_page()
+    if not page:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    offset = 0
+    limit = 20
+
+    try:
+        while len(results) < max_results:
+            from urllib.parse import quote
+            path = (
+                f"/api/v4/search_v3?q={quote(keyword)}&t=content"
+                f"&offset={offset}&limit={limit}"
+            )
+            data = await page.evaluate(_XHR_GET_JS, path)
+            if not data or not data.get("ok"):
+                break
+
+            body = data["data"]
+            items = body.get("data", [])
+            if not items:
+                break
+
+            for item in items:
+                parsed = _parse_search_item(item)
+                if parsed:
+                    results.append(parsed)
+
+            paging = body.get("paging", {})
+            if paging.get("is_end", True):
+                break
+            offset += limit
+    except Exception as e:
+        logger.warning(f"[zhihu-so] XHR search error: {e}")
+    finally:
+        await _close_xhr_page()
+
+    return results[:max_results]
+
+
 def _strip_html(text: str) -> str:
     """Remove HTML tags from text."""
     return re.sub(r"<[^>]+>", "", text or "").strip()
@@ -497,20 +549,30 @@ async def search_zhihu_keyword(
     delay = zhihu_search_delay()
     items: List[Dict[str, Any]] = []
 
-    # Tier 0: API search
+    # Tier 0: API search (needs Cookie + x-zse-96, often 403)
     cookies = _load_zhihu_cookies()
     if cookies:
         logger.info(f"[zhihu-so] Tier 0: API search for '{keyword}'")
         try:
             items = _search_via_api(keyword, cookies, max_results, sort)
             if items:
-                logger.info(f"[zhihu-so] API returned {len(items)} results")
+                logger.info(f"[zhihu-so] Tier 0: API returned {len(items)} results")
         except Exception as e:
-            logger.warning(f"[zhihu-so] API search failed: {e}")
+            logger.warning(f"[zhihu-so] Tier 0 failed: {e}")
 
-    # Tier 1: Playwright browser search
+    # Tier 1: Browser XHR search (CDP + frontend signing)
     if not items:
-        logger.info(f"[zhihu-so] Tier 1: Playwright search for '{keyword}'")
+        logger.info(f"[zhihu-so] Tier 1: Browser XHR search for '{keyword}'")
+        try:
+            items = await _search_via_xhr(keyword, max_results)
+            if items:
+                logger.info(f"[zhihu-so] Tier 1: XHR returned {len(items)} results")
+        except Exception as e:
+            logger.warning(f"[zhihu-so] Tier 1 failed: {e}")
+
+    # Tier 2: Playwright browser search
+    if not items:
+        logger.info(f"[zhihu-so] Tier 2: Playwright search for '{keyword}'")
         try:
             items = await _search_via_playwright(keyword, max_results)
         except Exception as e:
