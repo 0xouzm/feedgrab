@@ -17,7 +17,7 @@ Give it a URL (article, video, podcast, tweet), get back structured content. Wor
 Any URL → Platform Detection → Fetch Content → Unified Output
               ↓                      ↓                ↓
          auto-detect           text: Jina Reader    → output/X/Author_Date：Title.md
-         11 platforms          video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
+         12 platforms          video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
                                audio: Whisper transcription
                                API: Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / Feishu Open API
                                X/Twitter: GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
@@ -206,6 +206,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Feishu/Lark (飞书) | **Open API** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
 | KDocs (金山文档) | **Playwright ProseMirror DOM** extraction (virtual scroll + code blocks + image shapes API + CDP direct connect) | — |
 | Youdao Note (有道云笔记) | **JSON API** (zero dependency) → Playwright iframe DOM → Jina (single doc + image download) | — |
+| Zhihu (知乎) | **API v4** → **Playwright CDP/DOM** → Jina (single Q&A top 3 answers + articles + **keyword search `zhihu-so`**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |

@@ -35,6 +35,7 @@ class SourceType(str, Enum):
     FEISHU = "feishu"
     KDOCS = "kdocs"
     YOUDAO = "youdao"
+    ZHIHU = "zhihu"
     MANUAL = "manual"
 
 
@@ -508,6 +509,35 @@ def from_youdao(data: dict) -> UnifiedContent:
             "edit_time": data.get("edit_time", ""),
             "images_info": data.get("images_info", []),
             "img_subdir": data.get("img_subdir", ""),
+        },
+    )
+
+
+def from_zhihu(data: dict) -> UnifiedContent:
+    """Convert Zhihu data dict to UnifiedContent."""
+    return UnifiedContent(
+        source_type=SourceType.ZHIHU,
+        source_name=data.get("author", ""),
+        title=data.get("title", ""),
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "content_type": data.get("content_type", ""),
+            "question_id": data.get("question_id", ""),
+            "answer_id": data.get("answer_id", ""),
+            "article_id": data.get("article_id", ""),
+            "question_title": data.get("question_title", ""),
+            "question_detail": data.get("question_detail", ""),
+            "upvotes": data.get("upvotes", 0),
+            "comments": data.get("comments", 0),
+            "thanks": data.get("thanks", 0),
+            "collected": data.get("collected", 0),
+            "views": data.get("views", 0),
+            "author_url": data.get("author_url", ""),
+            "publish_date": data.get("publish_date", ""),
+            "img_subdir": data.get("img_subdir", ""),
+            "answers_list": data.get("answers_list", []),
         },
     )
 

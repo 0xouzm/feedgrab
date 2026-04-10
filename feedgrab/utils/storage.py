@@ -147,6 +147,7 @@ PLATFORM_FOLDER_MAP = {
     SourceType.FEISHU: "Feishu",
     SourceType.KDOCS: "KDocs",
     SourceType.YOUDAO: "NoteYouDao",
+    SourceType.ZHIHU: "Zhihu",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",
     SourceType.MANUAL: "Manual",
@@ -485,6 +486,20 @@ def _format_markdown(item: UnifiedContent) -> str:
         if extra.get("edit_time"):
             fm_lines.append(f'edit_time: "{extra["edit_time"]}"')
 
+    # Zhihu extras
+    is_zhihu = item.source_type == SourceType.ZHIHU
+    if is_zhihu:
+        if extra.get("content_type"):
+            fm_lines.append(f'content_type: "{extra["content_type"]}"')
+        fm_lines.append(f"upvotes: {extra.get('upvotes', 0)}")
+        fm_lines.append(f"comments: {extra.get('comments', 0)}")
+        fm_lines.append(f"thanks: {extra.get('thanks', 0)}")
+        fm_lines.append(f"collected: {extra.get('collected', 0)}")
+        if extra.get("views"):
+            fm_lines.append(f"views: {extra['views']}")
+        if extra.get("publish_date"):
+            fm_lines.append(f"published: {extra['publish_date'][:10]}")
+
     # Tags (from tweet hashtags or other sources)
     if item.tags:
         # XHS: only top 3 tags in front matter (full list goes in body)
@@ -588,7 +603,7 @@ def _format_markdown(item: UnifiedContent) -> str:
         # WeChat / YouTube / GitHub / Feishu: skip title heading
         # (Feishu content already includes the document title from block tree)
         is_youtube = item.source_type == SourceType.YOUTUBE
-        if not is_wechat and not is_youtube and not is_github and not is_feishu and not is_kdocs and not is_youdao and item.title and item.title.strip():
+        if not is_wechat and not is_youtube and not is_github and not is_feishu and not is_kdocs and not is_youdao and not is_zhihu and item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
 
@@ -598,6 +613,43 @@ def _format_markdown(item: UnifiedContent) -> str:
                 fm_lines.append(f"![cover]({extra['thumbnail']})")
                 fm_lines.append("")
             fm_lines.append(_format_subtitle_text(item.content))
+        elif is_zhihu and extra.get("content_type") in ("answer", "question"):
+            # Zhihu Q&A: question detail + multi-answer content
+            if item.title:
+                fm_lines.append(f"# {item.title.strip()}")
+                fm_lines.append("")
+            q_detail = extra.get("question_detail", "").strip()
+            if q_detail:
+                fm_lines.append("## 问题描述")
+                fm_lines.append("")
+                fm_lines.append(q_detail)
+                fm_lines.append("")
+
+            answers_list = extra.get("answers_list", [])
+            if answers_list:
+                total = len(answers_list)
+                for idx, ans in enumerate(answers_list):
+                    fm_lines.append("---")
+                    fm_lines.append("")
+                    fm_lines.append(f"## [{idx+1}/{total}楼] {ans.get('author', '匿名')}")
+                    fm_lines.append("")
+                    # Engagement stats line
+                    stats = []
+                    stats.append(f"赞同 {ans.get('upvotes', 0)}")
+                    stats.append(f"评论 {ans.get('comments', 0)}")
+                    stats.append(f"收藏 {ans.get('collected', 0)}")
+                    stats.append(f"喜欢 {ans.get('thanks', 0)}")
+                    fm_lines.append(f"> {' · '.join(stats)}")
+                    fm_lines.append("")
+                    content = ans.get("content", "")
+                    if content:
+                        fm_lines.append(content)
+                    fm_lines.append("")
+            elif item.content:
+                # Single answer fallback (no answers_list)
+                fm_lines.append("## 回答")
+                fm_lines.append("")
+                fm_lines.append(item.content)
         else:
             fm_lines.append(item.content)
 

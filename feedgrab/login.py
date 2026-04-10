@@ -32,6 +32,7 @@ PLATFORM_URLS = {
     "feishu": "https://my.feishu.cn",
     "lark": "https://my.feishu.cn",
     "kdocs": "https://www.kdocs.cn",
+    "zhihu": "https://www.zhihu.com",
 }
 
 
@@ -195,6 +196,7 @@ _CDP_COOKIE_DOMAINS = {
     "wechat": [".qq.com"],
     "feishu": [".feishu.cn", ".larksuite.com", ".larkoffice.com"],
     "kdocs": [".kdocs.cn", ".wps.cn"],
+    "zhihu": [".zhihu.com"],
 }
 
 # URLs to pass to Network.getCookies (legacy WebSocket mode)
@@ -204,6 +206,7 @@ _CDP_COOKIE_URLS = {
     "wechat": ["https://mp.weixin.qq.com"],
     "feishu": ["https://my.feishu.cn", "https://open.feishu.cn"],
     "kdocs": ["https://www.kdocs.cn"],
+    "zhihu": ["https://www.zhihu.com"],
 }
 
 

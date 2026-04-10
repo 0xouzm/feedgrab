@@ -1458,6 +1458,95 @@ def cmd_twitter_search(args: list):
         print(f"   Total: {len(all_tweets_merged)} tweets from {len(keywords)} keywords")
 
 
+def cmd_zhihu_search(args: list):
+    """Search Zhihu for answers/articles by keyword and generate engagement-ranked summary."""
+    from feedgrab.config import zhihu_search_limit, zhihu_search_save_answers
+
+    keywords = _split_keywords(args[0])
+
+    def _opt(name: str, default: str = "") -> str:
+        if name in args:
+            idx = args.index(name)
+            if idx + 1 < len(args):
+                return args[idx + 1]
+        return default
+
+    sort = _opt("--sort", "hot")
+    max_results = int(_opt("--limit", str(zhihu_search_limit())))
+    save_answers = zhihu_search_save_answers() or "--save" in args
+    merge = "--merge" in args and len(keywords) > 1
+
+    from feedgrab.fetchers.zhihu_search import search_zhihu_keyword
+
+    if len(keywords) > 1:
+        mode = "merge" if merge else "separate"
+        print(f"\n\U0001f50d Zhihu batch search: {len(keywords)} keywords ({mode})")
+
+    all_items_merged: list[dict] = []
+
+    for ki, keyword in enumerate(keywords):
+        if len(keywords) > 1:
+            print(f"\n{'='*50}")
+            print(f"[{ki+1}/{len(keywords)}] {keyword}")
+            print(f"{'='*50}")
+
+        try:
+            result = asyncio.run(search_zhihu_keyword(
+                keyword=keyword,
+                sort=sort,
+                max_results=max_results,
+                save_answers=save_answers,
+                skip_summary=merge,
+            ))
+            print(f"\n\u2705 Zhihu search complete: '{keyword}'")
+            print(f"   Total results: {result['total']}")
+            if not merge:
+                if result.get("output_path"):
+                    print(f"   Summary: {result['output_path']}")
+                if result.get("csv_path"):
+                    print(f"   CSV: {result['csv_path']}")
+            if result.get("saved"):
+                print(f"   Individual answers saved: {result['saved']}")
+
+            if merge:
+                for item in result.get("items", []):
+                    item["_keyword"] = keyword
+                all_items_merged.extend(result.get("items", []))
+        except KeyboardInterrupt:
+            print("\n\u23f9 Cancelled")
+            return
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"\u274c [{keyword}] {e}")
+            if len(keywords) == 1:
+                sys.exit(1)
+
+    # Generate merged summary table
+    if merge and all_items_merged:
+        from feedgrab.fetchers.zhihu_search import _generate_summary_table, _resolve_output_base
+        from pathlib import Path
+        from datetime import datetime as _dt
+
+        base_dir = _resolve_output_base()
+        sort_label = "new" if sort == "new" else "hot"
+        date_str = _dt.now().strftime("%Y-%m-%d")
+        merged_dir = base_dir / "Zhihu" / "search" / sort_label
+        merged_name = "+".join(re.sub(r'[\\/:*?"<>|]', '_', k) for k in keywords)
+        merged_path = merged_dir / f"{merged_name}_{date_str}.md"
+
+        _generate_summary_table(
+            keyword=" + ".join(keywords),
+            sort=sort,
+            items=all_items_merged,
+            output_path=merged_path,
+            show_keyword=True,
+        )
+        print(f"\n\U0001f4ca Merged summary: {merged_path}")
+        print(f"   CSV: {merged_path.with_suffix('.csv')}")
+        print(f"   Total: {len(all_items_merged)} results from {len(keywords)} keywords")
+
+
 def cmd_xhs_search(args: list):
     """Search XHS for notes by keyword and generate engagement-ranked summary."""
     from feedgrab.config import xhs_search_sort, xhs_search_note_type, xhs_search_max_pages, xhs_search_save_notes, xhs_search_merge_keywords
@@ -1625,7 +1714,7 @@ Usage:
 
 Supported platforms:
     WeChat, Telegram, X/Twitter, YouTube,
-    Bilibili, Xiaohongshu, RSS, and any web page
+    Bilibili, Xiaohongshu, Zhihu, RSS, and any web page
 
 Examples:
     feedgrab https://mp.weixin.qq.com/s/abc123
@@ -1638,6 +1727,8 @@ Examples:
     feedgrab x-so "AI Agent" --days 7 --min-faves 50 --sort top
     feedgrab xhs-so "AI Agent"
     feedgrab xhs-so "AI Agent" --sort popular --type video
+    feedgrab zhihu-so "AI Agent"
+    feedgrab zhihu-so "openclaw" --limit 20 --sort hot
     feedgrab mpweixin-id "饼干哥哥AGI"
     feedgrab mpweixin-so "AI Agent"
     feedgrab ytb-so "AI Agent"
@@ -1747,6 +1838,19 @@ Examples:
             print("     --merge            Merge multi-keyword results into one table")
             sys.exit(1)
         cmd_xhs_search(sys.argv[2:])
+    elif cmd == "zhihu-so":
+        if len(sys.argv) < 3:
+            print("\u274c Usage: feedgrab zhihu-so <keyword> [options]")
+            print('   Example: feedgrab zhihu-so "openclaw"')
+            print('            feedgrab zhihu-so "AI Agent" --sort hot --limit 20')
+            print('            feedgrab zhihu-so "openclaw,ChatGPT" --merge')
+            print("   Options:")
+            print("     --sort MODE        hot=热门, new=最新 (default: hot)")
+            print("     --limit N          Max results (default: 50)")
+            print("     --save             Save individual answer .md files")
+            print("     --merge            Merge multi-keyword results into one table")
+            sys.exit(1)
+        cmd_zhihu_search(sys.argv[2:])
     elif cmd == "ytb-so":
         if len(sys.argv) < 3:
             print("\u274c Usage: feedgrab ytb-so <keyword> [options]")

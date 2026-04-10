@@ -779,6 +779,57 @@ def kdocs_download_images() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Zhihu (知乎)
+# ---------------------------------------------------------------------------
+
+def zhihu_cdp_enabled() -> bool:
+    """Connect to running Chrome via CDP for Zhihu. Default false."""
+    return os.getenv("ZHIHU_CDP_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def zhihu_page_load_timeout() -> int:
+    """Playwright page element wait timeout in ms. Default 10000."""
+    try:
+        return int(os.getenv("ZHIHU_PAGE_LOAD_TIMEOUT", "10000"))
+    except ValueError:
+        return 10000
+
+
+def zhihu_download_images() -> bool:
+    """Download Zhihu images locally. Default false."""
+    return os.getenv("ZHIHU_DOWNLOAD_IMAGES", "false").lower() in ("true", "1", "yes")
+
+
+def zhihu_search_days() -> int:
+    """Search within recent N days. Default 30."""
+    try:
+        return int(os.getenv("ZHIHU_SEARCH_DAYS", "30"))
+    except ValueError:
+        return 30
+
+
+def zhihu_search_limit() -> int:
+    """Maximum search results. Default 50."""
+    try:
+        return int(os.getenv("ZHIHU_SEARCH_LIMIT", "50"))
+    except ValueError:
+        return 50
+
+
+def zhihu_search_save_answers() -> bool:
+    """Save individual answer .md files during search. Default false."""
+    return os.getenv("ZHIHU_SEARCH_SAVE_ANSWERS", "false").lower() in ("true", "1", "yes")
+
+
+def zhihu_search_delay() -> float:
+    """Delay between search requests in seconds. Default 2.0."""
+    try:
+        return float(os.getenv("ZHIHU_SEARCH_DELAY", "2.0"))
+    except ValueError:
+        return 2.0
+
+
+# ---------------------------------------------------------------------------
 # Youdao Note (有道云笔记)
 # ---------------------------------------------------------------------------
 

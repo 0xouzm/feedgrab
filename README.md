@@ -17,7 +17,7 @@
 任意 URL → 平台检测 → 抓取内容 → 统一输出
               ↓                ↓          ↓
          自动识别          文本：Jina Reader    → output/X/作者_日期：标题.md
-         11 平台            视频：InnerTube API → yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
+         12 平台            视频：InnerTube API → yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
                            音频：Whisper 转录
                            API：Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / 飞书 Open API
                            X/Twitter：GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
@@ -232,6 +232,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | 飞书/Lark | **Open API** → **CDP 直连** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载） | — |
 | 金山文档/KDocs | **Playwright ProseMirror DOM** 提取（虚拟滚动 + 代码块 + 图片 shapes API + CDP 直连） | — |
 | 有道云笔记 | **JSON API**（零依赖）→ Playwright iframe DOM → Jina（单篇 + 图片下载） | — |
+| 知乎 | **API v4** → **Playwright CDP/DOM** → Jina（单篇问答前 3 楼 + 专栏文章 + **关键词搜索 `zhihu-so`**） | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
 | 小宇宙播客 | — | 通过 Claude Code 技能 |

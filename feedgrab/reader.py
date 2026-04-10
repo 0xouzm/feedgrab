@@ -83,6 +83,9 @@ class UniversalReader:
         # Youdao Note (有道云笔记)
         if "note.youdao.com" in domain:
             return "youdao"
+        # Zhihu (知乎)
+        if "zhihu.com" in domain or "zhuanlan.zhihu.com" in domain:
+            return "zhihu"
         # Feishu / Lark
         from feedgrab.fetchers.feishu import is_feishu_url
         if is_feishu_url(url):
@@ -321,6 +324,12 @@ class UniversalReader:
             from feedgrab.fetchers.youdao import fetch_youdao
             data = await fetch_youdao(url)
             return from_youdao(data)
+
+        if platform == "zhihu":
+            from feedgrab.fetchers.zhihu import fetch_zhihu
+            data = await fetch_zhihu(url)
+            from feedgrab.schema import from_zhihu
+            return from_zhihu(data)
 
         if platform == "rss":
             from feedgrab.fetchers.rss import fetch_rss

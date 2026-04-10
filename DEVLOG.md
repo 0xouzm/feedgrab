@@ -2,6 +2,53 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-11 · v0.15.0 · 知乎 (Zhihu) 平台支持
+
+### 背景
+
+新增知乎平台抓取能力，支持问答页面（前 3 楼回答）和专栏文章的单篇抓取，以及关键词搜索（`zhihu-so` 命令）。
+
+### 功能内容
+
+1. **单篇问答抓取**：`feedgrab https://www.zhihu.com/question/{qid}/answer/{aid}`，默认抓取前 3 楼回答
+2. **单篇专栏文章**：`feedgrab https://zhuanlan.zhihu.com/p/{pid}`
+3. **三级兜底策略**：API v4 + Cookie → Playwright CDP/Launch + DOM 提取 → Jina Reader
+4. **前 3 楼多回答格式**：横线分隔 `[1/3楼]`、`[2/3楼]`、`[3/3楼]`，每楼正文开头输出互动数据行
+5. **完整互动数据**：赞同（voteup_count）、评论（comment_count）、收藏（favlists_count）、喜欢（thanks_count）
+6. **front matter 元数据**：取前 3 楼中最高赞回答的互动数据写入元数据
+7. **关键词搜索**：`feedgrab zhihu-so "关键词"` — API/Playwright 双层兜底，按赞数降序汇总表格（MD + CSV）
+8. **多关键词批量**：逗号分隔 `feedgrab zhihu-so "k1,k2"` + `--merge` 合并模式
+9. **CDP 直连**：`ZHIHU_CDP_ENABLED=true` 复用已打开的 Chrome 抓取知乎
+10. **登录管理**：`feedgrab login zhihu` 保存 session + CDP Cookie 提取
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/zhihu.py` | 新增 | 单篇抓取（API v4 → Playwright DOM → Jina 三级兜底 + 前 3 楼多回答） |
+| `feedgrab/fetchers/zhihu_search.py` | 新增 | 关键词搜索（API/Playwright 双层 + 汇总表格 + CSV） |
+| `feedgrab/schema.py` | 修改 | +SourceType.ZHIHU + from_zhihu() |
+| `feedgrab/config.py` | 修改 | +7 个 ZHIHU_* 配置函数 |
+| `feedgrab/reader.py` | 修改 | +知乎平台检测 + 路由 |
+| `feedgrab/cli.py` | 修改 | +zhihu-so 命令 + cmd_zhihu_search() + 帮助文本 |
+| `feedgrab/login.py` | 修改 | +知乎平台注册（PLATFORM_URLS + CDP 域名） |
+| `feedgrab/utils/storage.py` | 修改 | +PLATFORM_FOLDER_MAP + front matter + 多楼 body 格式 |
+| `.env.example` | 修改 | +知乎配置段 |
+
+### 验证结果
+
+- ✅ 单篇问答（Playwright CDP DOM 提取，前 3 楼互动数据完整）
+- ✅ 单篇专栏文章（Playwright DOM 提取，图片链接完整）
+- ✅ zhihu-so 命令注册正常
+- ✅ feedgrab login zhihu 平台注册正常
+- ✅ 输出 Markdown 格式正确（front matter + 多楼分隔 + 互动数据行）
+
+### 状态
+
+已完成 ✅
+
+---
+
 ## 2026-04-09 · v0.14.1 · 有道云笔记 (Youdao Note) 平台支持
 
 ### 背景
