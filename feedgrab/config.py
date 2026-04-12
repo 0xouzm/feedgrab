@@ -872,3 +872,17 @@ def chrome_cdp_port() -> int:
         return int(os.getenv("CHROME_CDP_PORT", "9222"))
     except ValueError:
         return 9222
+
+
+# ---------------------------------------------------------------------------
+# YouTube Whisper (Groq)
+# ---------------------------------------------------------------------------
+
+def groq_whisper_model() -> str:
+    """Groq Whisper model. Default whisper-large-v3. Alt: whisper-large-v3-turbo (faster, cheaper)."""
+    return os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3").strip()
+
+
+def youtube_whisper_lang() -> str:
+    """Language hint for Whisper transcription. Default zh (Chinese)."""
+    return os.getenv("YOUTUBE_WHISPER_LANG", "zh").strip()

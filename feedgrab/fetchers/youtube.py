@@ -33,6 +33,18 @@ def _js_runtime_args() -> list:
     return []
 
 
+def _cookies_args() -> list:
+    """Return yt-dlp cookies args to bypass YouTube bot detection.
+
+    Uses --cookies-from-browser to extract cookies from the user's browser.
+    Default: chrome. Set YTDLP_COOKIES_BROWSER="" to disable.
+    """
+    browser = os.getenv("YTDLP_COOKIES_BROWSER", "chrome").strip()
+    if browser:
+        return ["--cookies-from-browser", browser]
+    return []
+
+
 def _extract_video_id(url: str) -> str:
     """Extract video ID from YouTube URL."""
     match = re.search(r'(?:v=|youtu\.be/|/shorts/)([a-zA-Z0-9_-]{11})', url)
@@ -441,6 +453,7 @@ def _get_subtitles_via_ytdlp(url: str, lang: str = "en") -> List[Dict]:
         cmd = [
             "yt-dlp",
             *_js_runtime_args(),
+            *_cookies_args(),
             "--write-auto-sub",
             "--write-sub",
             "--sub-lang", lang,
@@ -514,23 +527,153 @@ def _parse_srt_to_snippets(filepath: str) -> List[Dict]:
     return snippets
 
 
-def _transcribe_via_whisper(url: str) -> str:
-    """
-    Download audio with yt-dlp and transcribe via Groq Whisper API.
+# ---------------------------------------------------------------------------
+# Groq Whisper helpers
+# ---------------------------------------------------------------------------
 
-    Requires: GROQ_API_KEY env var + yt-dlp + ffmpeg installed.
-    Groq Whisper limit: 25MB audio file.
-    Returns transcript text, or empty string if unavailable.
+_GROQ_TRANSCRIPTION_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+
+
+def _whisper_single(audio_path: str, api_key: str, model: str, lang: str) -> List[Dict]:
+    """Transcribe a single audio file via Groq Whisper verbose_json.
+
+    Returns snippets [{text, start (float), duration (float)}].
+    """
+    import requests  # use standard requests for multipart upload (curl_cffi incompatible)
+
+    try:
+        with open(audio_path, "rb") as f:
+            response = requests.post(
+                _GROQ_TRANSCRIPTION_URL,
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": (os.path.basename(audio_path), f, "audio/mp4")},
+                data={
+                    "model": model,
+                    "response_format": "verbose_json",
+                    "timestamp_granularities[]": "segment",
+                    "language": lang,
+                },
+                timeout=180,
+            )
+
+        if response.status_code != 200:
+            logger.warning(f"Groq Whisper API error: {response.status_code} {response.text[:200]}")
+            return []
+
+        data = response.json()
+        segments = data.get("segments", [])
+        return [
+            {
+                "text": seg["text"].strip(),
+                "start": float(seg["start"]),
+                "duration": float(seg["end"]) - float(seg["start"]),
+            }
+            for seg in segments if seg.get("text", "").strip()
+        ]
+    except Exception as e:
+        logger.warning(f"Whisper transcription failed: {e}")
+        return []
+
+
+def _whisper_chunked(
+    audio_path: str, tmpdir: str, api_key: str, model: str, lang: str,
+    chunk_secs: int = 600, overlap_secs: int = 10,
+) -> List[Dict]:
+    """Split large audio into chunks via ffmpeg, transcribe each, merge results.
+
+    Each chunk is 10 minutes with 10-second overlap. Timestamps are offset-adjusted.
+    Overlap segments are deduplicated by dropping segments from the next chunk
+    that fall within the overlap window of the previous chunk.
+    """
+    # Probe audio duration via ffprobe
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        total_duration = float(probe.stdout.strip())
+    except Exception:
+        logger.warning("ffprobe failed, cannot determine audio duration for chunking")
+        return []
+
+    # Generate chunk boundaries
+    chunks = []
+    start = 0.0
+    while start < total_duration:
+        end = min(start + chunk_secs, total_duration)
+        chunks.append((start, end))
+        start += chunk_secs - overlap_secs  # overlap with previous chunk
+
+    logger.info(f"Splitting {total_duration:.0f}s audio into {len(chunks)} chunks "
+                f"({chunk_secs}s each, {overlap_secs}s overlap)")
+
+    all_snippets: List[Dict] = []
+    prev_end = 0.0  # track where previous chunk's content ends
+
+    for i, (c_start, c_end) in enumerate(chunks):
+        chunk_path = os.path.join(tmpdir, f"chunk_{i:03d}.m4a")
+        # ffmpeg extract chunk
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", audio_path,
+                 "-ss", str(c_start), "-to", str(c_end),
+                 "-c", "copy", chunk_path],
+                capture_output=True, timeout=30,
+            )
+        except Exception as e:
+            logger.warning(f"ffmpeg chunk {i} failed: {e}")
+            continue
+
+        if not os.path.exists(chunk_path):
+            continue
+
+        logger.info(f"  Chunk {i + 1}/{len(chunks)}: {c_start:.0f}s-{c_end:.0f}s "
+                     f"({os.path.getsize(chunk_path) // 1024}KB)")
+
+        segments = _whisper_single(chunk_path, api_key, model, lang)
+
+        # Offset timestamps and deduplicate overlap region
+        for seg in segments:
+            abs_start = seg["start"] + c_start
+            # Skip segments that fall within the overlap of the previous chunk
+            if abs_start < prev_end - 1.0:  # 1s tolerance
+                continue
+            all_snippets.append({
+                "text": seg["text"],
+                "start": abs_start,
+                "duration": seg["duration"],
+            })
+
+        prev_end = c_end
+
+    return all_snippets
+
+
+def _transcribe_via_whisper(url: str) -> List[Dict]:
+    """Download audio with yt-dlp and transcribe via Groq Whisper API.
+
+    Returns snippets [{text, start (float), duration (float)}] with segment
+    timestamps, compatible with _segment_into_sentences() pipeline.
+    Returns [] if unavailable.
+
+    Requires: GROQ_API_KEY env var + yt-dlp installed.
+    Supports files up to 100MB (Groq Dev tier). Larger files are split into
+    10-minute chunks via ffmpeg and transcribed sequentially.
     """
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         logger.info("GROQ_API_KEY not set, skipping Whisper transcription")
-        return ""
+        return []
+
+    from feedgrab.config import groq_whisper_model, youtube_whisper_lang
+    model = groq_whisper_model()
+    lang = youtube_whisper_lang()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         output_template = os.path.join(tmpdir, "audio.%(ext)s")
 
-        cmd = [
+        base_cmd = [
             "yt-dlp",
             *_js_runtime_args(),
             "-x",
@@ -541,14 +684,39 @@ def _transcribe_via_whisper(url: str) -> str:
             url,
         ]
 
-        try:
-            subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-        except FileNotFoundError:
-            logger.warning("yt-dlp not found for audio download")
-            return ""
-        except subprocess.TimeoutExpired:
-            logger.warning("yt-dlp audio download timed out")
-            return ""
+        # Try with cookies first, then without (Chrome DB lock on Windows)
+        cookie_args = _cookies_args()
+        attempts = [base_cmd[:1] + cookie_args + base_cmd[1:]] if cookie_args else []
+        attempts.append(base_cmd)  # fallback without cookies
+
+        downloaded = False
+        for cmd in attempts:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                # Check if audio file was created
+                found = False
+                for f in os.listdir(tmpdir):
+                    if f.startswith("audio."):
+                        found = True
+                        break
+                if found:
+                    downloaded = True
+                    break
+                # If cookie attempt failed, log and try next
+                if cookie_args and cmd is attempts[0]:
+                    stderr = result.stderr or ""
+                    if "cookie" in stderr.lower() or result.returncode != 0:
+                        logger.info("[Whisper] Cookie extraction failed, retrying without cookies...")
+            except FileNotFoundError:
+                logger.warning("yt-dlp not found for audio download")
+                return []
+            except subprocess.TimeoutExpired:
+                logger.warning("yt-dlp audio download timed out")
+                return []
+
+        if not downloaded:
+            logger.warning("No audio file downloaded")
+            return []
 
         # Find the downloaded audio file
         audio_path = os.path.join(tmpdir, "audio.m4a")
@@ -559,36 +727,23 @@ def _transcribe_via_whisper(url: str) -> str:
                     break
             else:
                 logger.warning("No audio file downloaded")
-                return ""
+                return []
 
         file_size = os.path.getsize(audio_path)
-        if file_size > 25 * 1024 * 1024:
-            logger.warning(f"Audio file too large ({file_size // 1024 // 1024}MB > 25MB limit)")
-            return ""
+        _MAX_DIRECT = 100 * 1024 * 1024  # 100MB Groq Dev tier limit
 
-        logger.info(f"Transcribing {file_size // 1024}KB audio via Groq Whisper...")
+        if file_size > _MAX_DIRECT:
+            # Split into 10-min chunks via ffmpeg
+            logger.info(f"Audio {file_size // 1024 // 1024}MB > 100MB, splitting into chunks...")
+            snippets = _whisper_chunked(audio_path, tmpdir, api_key, model, lang)
+        else:
+            logger.info(f"Transcribing {file_size // 1024}KB audio via Groq Whisper ({model})...")
+            snippets = _whisper_single(audio_path, api_key, model, lang)
 
-        from feedgrab.utils import http_client
-        try:
-            with open(audio_path, "rb") as f:
-                response = http_client.post(
-                    "https://api.groq.com/openai/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    files={"file": (os.path.basename(audio_path), f, "audio/mp4")},
-                    data={"model": "whisper-large-v3", "response_format": "text"},
-                    timeout=120,
-                )
-
-            if response.status_code == 200:
-                transcript = response.text.strip()
-                logger.info(f"Whisper transcript: {len(transcript)} chars")
-                return transcript
-            else:
-                logger.warning(f"Groq Whisper API error: {response.status_code} {response.text[:200]}")
-                return ""
-        except Exception as e:
-            logger.warning(f"Whisper transcription failed: {e}")
-            return ""
+        if snippets:
+            logger.info(f"Whisper transcript: {len(snippets)} segments, "
+                        f"{sum(len(s['text']) for s in snippets)} chars")
+        return snippets
 
 
 async def fetch_youtube(url: str, sub_lang: str = "en") -> Dict[str, Any]:
@@ -655,20 +810,30 @@ async def fetch_youtube(url: str, sub_lang: str = "en") -> Dict[str, Any]:
             f"{len(sentences)} sentences, {len(chapters)} chapters"
         )
 
-    # Step 4: Tier 2 — Whisper transcription
+    # Step 4: Tier 2 — Whisper transcription (returns snippets with timestamps)
     if not has_transcript:
         logger.info("[Tier 2] No subtitles, trying Whisper transcription...")
-        transcript = _transcribe_via_whisper(url)
-        has_transcript = bool(transcript)
+        whisper_snippets = _transcribe_via_whisper(url)
+        if whisper_snippets:
+            desc_for_ch = (api_meta.get("description", "") if api_meta else "") or description_text
+            chapters = _parse_chapters(desc_for_ch)
+            sentences = _segment_into_sentences(whisper_snippets)
+            transcript = _format_transcript_markdown(sentences, chapters)
+            has_transcript = True
+            logger.info(
+                f"[Tier 2] Whisper transcript: {len(transcript)} chars, "
+                f"{len(sentences)} sentences, {len(chapters)} chapters"
+            )
 
-    # Step 5: Tier 3 — Description / Jina fallback
+    # Step 5: Tier 3 — Description / Jina fallback (no transcript available)
     if not has_transcript:
+        no_transcript_hint = "> **Note**: 本视频无可用字幕（无自动字幕、无手动字幕），以下为视频描述。\n\n"
         if api_meta and api_meta.get("description"):
             logger.info("[Tier 3] Using API description")
-            transcript = api_meta["description"]
+            transcript = no_transcript_hint + api_meta["description"]
         elif innertube_meta.get("description"):
             logger.info("[Tier 3] Using InnerTube description")
-            transcript = innertube_meta["description"]
+            transcript = no_transcript_hint + innertube_meta["description"]
         else:
             logger.info("[Tier 3] Falling back to Jina")
             from feedgrab.fetchers.jina import fetch_via_jina

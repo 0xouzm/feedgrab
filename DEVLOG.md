@@ -2,6 +2,44 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-13 · v0.15.1 · YouTube Whisper 时间戳 + ytb-all 双目录修复
+
+### 背景
+
+用户执行 `feedgrab ytb-all` 后发现两个问题：(1) 同一视频的 4 个文件分散在两个目录（作者名空格不一致）；(2) 无字幕视频的 MD 文件没有带时间轴的转录内容。
+
+### 功能内容
+
+1. **Groq Whisper verbose_json 升级**：`_transcribe_via_whisper()` 从纯文本输出改为 `verbose_json` + `timestamp_granularities[]=segment`，返回 snippets 格式，复用完整的断句+章节+段落分组管线，输出与 Tier 0/1 格式完全一致
+2. **大文件分片**：音频 >100MB 时自动 ffmpeg 按 600s 切片（10s overlap），逐片调用 Groq API，时间戳偏移累加 + overlap 去重
+3. **yt-dlp 反爬增强**：新增 `_cookies_args()` 默认从 Chrome 提取 cookies 绕过 YouTube bot 检测，Cookie 提取失败（Chrome DB 锁定）自动降级到无 cookies 模式
+4. **ytb-all 双目录修复**：`_youtube_resolve_meta()` 的 `safe_author` 增加空格 collapse（`\s+ → " "`），与 `_sanitize_filename()` 行为一致
+5. **无字幕提示**：Tier 3 description fallback 时添加 `> **Note**: 本视频无可用字幕` 提示
+6. **配置项**：`GROQ_WHISPER_MODEL`（默认 whisper-large-v3）、`YOUTUBE_WHISPER_LANG`（默认 zh）、`YTDLP_COOKIES_BROWSER`（默认 chrome）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/youtube.py` | 修改 | `_transcribe_via_whisper()` 重写 + `_whisper_single()`/`_whisper_chunked()` + `_cookies_args()` + Tier 2 调用适配 + Tier 3 提示 |
+| `feedgrab/cli.py` | 修改 | `_youtube_resolve_meta()` safe_author + filename_prefix 空格 collapse |
+| `feedgrab/config.py` | 修改 | +`groq_whisper_model()` + `youtube_whisper_lang()` |
+| `.env.example` | 修改 | +Whisper 配置项说明 |
+
+### 验证结果
+
+- ✅ 无字幕视频 `nlK7-zuYDcs` Whisper 转录成功（330 segments, 5 chapters, 6585 chars）
+- ✅ MD 输出带 `[HH:MM:SS → HH:MM:SS]` 时间戳 + 章节标题
+- ✅ `has_transcript: true` 在 front matter 中
+- ✅ `_youtube_resolve_meta()` 输出单空格目录名，与 `save_to_markdown` 一致
+- ✅ Cookie 提取失败自动降级到无 cookies 模式
+
+### 状态
+
+已完成 ✅
+
+---
+
 ## 2026-04-11 · v0.15.0 · 知乎 (Zhihu) 平台支持
 
 ### 背景

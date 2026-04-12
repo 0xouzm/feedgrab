@@ -1058,6 +1058,8 @@ def _youtube_resolve_meta(url: str) -> dict:
                 author = meta.get("channel_title", "").strip()
                 pub = meta.get("published_at", "")[:10]
                 title = meta.get("title", "").strip()
+                # Collapse whitespace in author (match _sanitize_filename behavior)
+                author = _re.sub(r'\s+', ' ', author).strip()
                 parts = []
                 if author:
                     parts.append(author)
@@ -1072,6 +1074,7 @@ def _youtube_resolve_meta(url: str) -> dict:
     # Add author subdirectory: YouTube/{author}/
     if author:
         safe_author = _re.sub(r'[\\/:*?"<>|\x00-\x1f]', '_', author).strip('. ')
+        safe_author = _re.sub(r'\s+', ' ', safe_author).strip()
         output_dir = os.path.join(base_dir, safe_author)
     else:
         output_dir = base_dir
