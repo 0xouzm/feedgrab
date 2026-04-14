@@ -1,4 +1,4 @@
-完成当前功能的收尾工作：更新文档、提交代码、推送到 GitHub。
+完成当前功能的收尾工作：优先使用 Git Bash 执行 `D:\Git\bin\bash.exe ./scripts/ship.sh` 做收尾检查；若 Git Bash 不可用，再回退执行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\ship.ps1`。然后更新文档、提交代码、推送到 GitHub。
 
 请按以下步骤执行：
 
