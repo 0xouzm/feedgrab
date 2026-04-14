@@ -1078,14 +1078,17 @@ async def _evaluate_feishu_doc_on_page(
     """
     from urllib.parse import urlparse
 
-    # Intercept sheet client_vars responses for embedded spreadsheet data
+    # Intercept sheet client_vars + lazy block responses for embedded sheets
     sheet_cv_data: dict = {}
+    sheet_block_data: dict = {}
     # Intercept image responses during page load (most reliable auth)
     image_response_data: dict = {}  # token -> bytes
 
     async def _capture_sheet_response(response):
         try:
-            if "client_vars" in response.url and response.status == 200:
+            if response.status != 200:
+                return
+            if "client_vars" in response.url:
                 body = await response.json()
                 if (
                     body.get("code") == 0
@@ -1094,9 +1097,20 @@ async def _evaluate_feishu_doc_on_page(
                     token = body["data"].get("token", "")
                     sheet_id = body["data"].get("sheetId", "")
                     key = f"{token}_{sheet_id}" if sheet_id else token
-                    sheet_cv_data[key] = body["data"]
+                    if key:
+                        sheet_cv_data[key] = body["data"]
+                        logger.info(
+                            f"[Feishu] Intercepted sheet data: {key}"
+                        )
+                return
+            if "/space/api/v3/sheet/block" in response.url:
+                body = await response.json()
+                blocks = body.get("data", {}).get("blocks", {})
+                if blocks:
+                    sheet_block_data.update(blocks)
                     logger.info(
-                        f"[Feishu] Intercepted sheet data: {key}"
+                        f"[Feishu] Intercepted sheet blocks: +{len(blocks)} "
+                        f"(total {len(sheet_block_data)})"
                     )
         except Exception:
             pass  # non-JSON or parsing error, skip
@@ -1175,37 +1189,66 @@ async def _evaluate_feishu_doc_on_page(
     data = await page.evaluate(FEISHU_DOC_JS_EVALUATE)
     result = data or {}
 
-    # If we intercepted sheet data during page load, attach it
-    if sheet_cv_data:
-        result["sheet_client_vars"] = sheet_cv_data
+    sheet_tokens = _find_sheet_tokens(result.get("blockTree"))
+    merged_sheet_data = dict(sheet_cv_data)
 
-    # If block tree has sheet embeds but no data was intercepted,
-    # try fetching via internal API from the page context
-    if not sheet_cv_data:
-        sheet_tokens = _find_sheet_tokens(result.get("blockTree"))
-        if sheet_tokens:
+    if sheet_tokens:
+        logger.info(
+            f"[Feishu] Preloading {len(sheet_tokens)} embedded sheet(s) via stepped scroll"
+        )
+        try:
+            await page.evaluate(
+                """async () => {
+                    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                    const doc = document.documentElement;
+                    const total = Math.max(doc?.scrollHeight || 0, document.body?.scrollHeight || 0);
+                    const step = Math.max(Math.floor((window.innerHeight || 800) * 0.8), 640);
+                    window.scrollTo(0, 0);
+                    await sleep(250);
+                    for (let y = 0; y <= total; y += step) {
+                        window.scrollTo(0, y);
+                        await sleep(450);
+                    }
+                    window.scrollTo(0, 0);
+                    await sleep(250);
+                    return true;
+                }"""
+            )
+            await page.wait_for_timeout(2000)
+        except Exception as e:
+            logger.debug(f"[Feishu] Sheet preload scroll failed: {e}")
+
+        merged_sheet_data = dict(sheet_cv_data)
+        missing_tokens = sorted(
+            tk for tk in sheet_tokens if tk not in merged_sheet_data
+        )
+        if merged_sheet_data:
             logger.info(
-                f"[Feishu] Fetching {len(sheet_tokens)} sheet(s) "
+                f"[Feishu] Intercepted {len(merged_sheet_data)}/"
+                f"{len(sheet_tokens)} sheet(s); missing {len(missing_tokens)}"
+            )
+        if missing_tokens:
+            logger.info(
+                f"[Feishu] Fetching {len(missing_tokens)} missing sheet(s) "
                 "via internal API"
             )
             fetched = await page.evaluate(
-                FEISHU_SHEET_FETCH_JS, list(sheet_tokens)
+                FEISHU_SHEET_FETCH_JS, missing_tokens
             )
             if fetched:
-                result["sheet_client_vars"] = fetched
-            else:
-                # API call failed — try scrolling to trigger lazy load,
-                # then wait for intercepted response
+                merged_sheet_data.update(fetched)
+                still_missing = sorted(
+                    tk for tk in sheet_tokens if tk not in merged_sheet_data
+                )
                 logger.info(
-                    "[Feishu] Direct API failed, scrolling to "
-                    "trigger sheet loading"
+                    f"[Feishu] Active fetch got {len(fetched)} sheet(s); "
+                    f"still missing {len(still_missing)}"
                 )
-                await page.evaluate(
-                    "window.scrollTo(0, document.body.scrollHeight)"
-                )
-                await page.wait_for_timeout(5000)
-                if sheet_cv_data:
-                    result["sheet_client_vars"] = sheet_cv_data
+
+    if merged_sheet_data:
+        result["sheet_client_vars"] = merged_sheet_data
+    if sheet_block_data:
+        result["sheet_blocks"] = dict(sheet_block_data)
 
     # Collect pre-downloaded images from interceptor + JS fetch fallback
     try:
@@ -1490,7 +1533,6 @@ FEISHU_SHEET_FETCH_JS = """
 async (tokens) => {
     const results = {};
     const csrfToken = (document.cookie.match(/_csrf_token=([^;]+)/) || [])[1] || '';
-    // Try to get memberId from the page context (Feishu stores it globally)
     let memberId = 0;
     try {
         memberId = window.User?.id || window.__INITIAL_STATE__?.user?.id || 0;
@@ -1503,19 +1545,20 @@ async (tokens) => {
 
     for (const fullToken of tokens) {
         try {
-            // Token format: "{spreadsheet_token}_{sheetId}"
             const idx = fullToken.lastIndexOf('_');
-            if (idx < 0) continue;
-            const ssToken = fullToken.substring(0, idx);
-            const sheetId = fullToken.substring(idx + 1);
+            const hasSheetHint = idx > 0;
+            const ssToken = hasSheetHint ? fullToken.substring(0, idx) : fullToken;
+            const hintedSheetId = hasSheetHint ? fullToken.substring(idx + 1) : '';
 
             const body = {
                 schemaVersion: 9,
                 openType: 1,
                 token: ssToken,
-                sheetRange: { sheetId: sheetId },
                 clientVersion: 'v0.0.1'
             };
+            if (hintedSheetId) {
+                body.sheetRange = { sheetId: hintedSheetId };
+            }
             if (memberId) body.memberId = memberId;
 
             const resp = await fetch('/space/api/v3/sheet/client_vars', {
@@ -1526,10 +1569,20 @@ async (tokens) => {
             });
             const data = await resp.json();
             if (data.code === 0 && data.data && data.data.snapshot) {
-                results[fullToken] = data.data;
+                const realToken = data.data.token || ssToken;
+                const realSheetId = data.data.sheetId || hintedSheetId || '';
+                const key = realSheetId ? `${realToken}_${realSheetId}` : realToken;
+                results[key] = data.data;
+                continue;
             }
+            console.info(
+                `[Feishu] sheet client_vars miss for ${fullToken}: ` +
+                `${data.code ?? 'unknown'} ${data.msg ?? ''}`
+            );
         } catch (e) {
-            // silently fail for individual sheets
+            console.info(
+                `[Feishu] sheet client_vars error for ${fullToken}: ${String(e)}`
+            );
         }
     }
     return Object.keys(results).length > 0 ? results : null;

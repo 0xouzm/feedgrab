@@ -27,6 +27,7 @@ from feedgrab.config import (
 )
 from feedgrab.fetchers.feishu import (
     _decode_sheet_client_vars,
+    _merge_sheet_snapshot_blocks,
     _fetch_document_blocks,
     _get_lark_client,
     _is_api_available,
@@ -376,20 +377,38 @@ async def _fetch_wiki_via_playwright(
             }
         """)
 
-        # Sheet data interceptor — captures client_vars responses per page
+        # Sheet data interceptor — captures client_vars + lazy block payloads
         sheet_cv_data: dict = {}
+        sheet_block_data: dict = {}
 
         async def _capture_sheet_response(response):
             try:
-                if "client_vars" in response.url and response.status == 200:
+                if response.status != 200:
+                    return
+                if "client_vars" in response.url:
                     body = await response.json()
-                    if body and isinstance(body, dict):
-                        # Extract token from URL or response
-                        url_str = response.url
-                        for part in url_str.split("/"):
-                            if len(part) > 10 and part.isalnum():
-                                sheet_cv_data[part] = body
-                                break
+                    if (
+                        body.get("code") == 0
+                        and body.get("data", {}).get("snapshot")
+                    ):
+                        token = body["data"].get("token", "")
+                        sheet_id = body["data"].get("sheetId", "")
+                        key = f"{token}_{sheet_id}" if sheet_id else token
+                        if key:
+                            sheet_cv_data[key] = body["data"]
+                            logger.info(
+                                f"[Feishu Wiki PW] Intercepted sheet data: {key}"
+                            )
+                    return
+                if "/space/api/v3/sheet/block" in response.url:
+                    body = await response.json()
+                    blocks = body.get("data", {}).get("blocks", {})
+                    if blocks:
+                        sheet_block_data.update(blocks)
+                        logger.info(
+                            f"[Feishu Wiki PW] Intercepted sheet blocks: +{len(blocks)} "
+                            f"(total {len(sheet_block_data)})"
+                        )
             except Exception:
                 pass
 
@@ -450,6 +469,7 @@ async def _fetch_wiki_via_playwright(
             try:
                 # Clear per-page sheet data
                 sheet_cv_data.clear()
+                sheet_block_data.clear()
 
                 # Navigate to each page
                 await page.goto(link_url, wait_until="domcontentloaded", timeout=30000)
@@ -477,30 +497,97 @@ async def _fetch_wiki_via_playwright(
                     raise RuntimeError(data.get("error", "extraction failed"))
 
                 # Sheet processing: intercepted data + active fetch
-                if sheet_cv_data:
-                    data["sheet_client_vars"] = dict(sheet_cv_data)
-                else:
-                    sheet_tokens = _find_sheet_tokens(data.get("blockTree"))
-                    if sheet_tokens:
+                sheet_tokens = _find_sheet_tokens(data.get("blockTree"))
+                merged_sheet_data = dict(sheet_cv_data)
+                if sheet_tokens:
+                    logger.info(
+                        f"[Feishu Wiki PW] Preloading {len(sheet_tokens)} embedded sheet(s) via stepped scroll"
+                    )
+                    try:
+                        await page.evaluate(
+                            """async () => {
+                                const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                                const doc = document.documentElement;
+                                const total = Math.max(doc?.scrollHeight || 0, document.body?.scrollHeight || 0);
+                                const step = Math.max(Math.floor((window.innerHeight || 800) * 0.8), 640);
+                                window.scrollTo(0, 0);
+                                await sleep(250);
+                                for (let y = 0; y <= total; y += step) {
+                                    window.scrollTo(0, y);
+                                    await sleep(450);
+                                }
+                                window.scrollTo(0, 0);
+                                await sleep(250);
+                                return true;
+                            }"""
+                        )
+                        await page.wait_for_timeout(2000)
+                    except Exception as e:
+                        logger.debug(f"[Feishu Wiki PW] Sheet preload scroll failed: {e}")
+
+                    merged_sheet_data = dict(sheet_cv_data)
+                    missing_tokens = sorted(
+                        tk for tk in sheet_tokens if tk not in merged_sheet_data
+                    )
+                    if merged_sheet_data:
                         logger.info(
-                            f"[Feishu Wiki PW] Fetching {len(sheet_tokens)} "
-                            "sheet(s) via internal API"
+                            f"[Feishu Wiki PW] Intercepted "
+                            f"{len(merged_sheet_data)}/{len(sheet_tokens)} "
+                            f"sheet(s); missing {len(missing_tokens)}"
+                        )
+                    if missing_tokens:
+                        logger.info(
+                            f"[Feishu Wiki PW] Fetching {len(missing_tokens)} "
+                            f"missing sheet(s) via internal API: "
+                            f"{missing_tokens}"
                         )
                         fetched_sheets = await page.evaluate(
-                            FEISHU_SHEET_FETCH_JS, list(sheet_tokens)
+                            FEISHU_SHEET_FETCH_JS, missing_tokens
                         )
                         if fetched_sheets:
-                            data["sheet_client_vars"] = fetched_sheets
+                            merged_sheet_data.update(fetched_sheets)
+                            still_missing = sorted(
+                                tk for tk in sheet_tokens
+                                if tk not in merged_sheet_data
+                            )
+                            logger.info(
+                                f"[Feishu Wiki PW] Active fetch got "
+                                f"{len(fetched_sheets)} sheet(s); "
+                                f"still missing {len(still_missing)}"
+                            )
+                if merged_sheet_data:
+                    data["sheet_client_vars"] = merged_sheet_data
+                if sheet_block_data:
+                    data["sheet_blocks"] = dict(sheet_block_data)
 
                 # Populate sheet cache for blocks_to_markdown()
                 _PLAYWRIGHT_SHEET_CACHE.clear()
+                prefer_api_for_sparse = _is_api_available()
+                extra_sheet_blocks = data.get("sheet_blocks") or {}
                 for tk, cv in (data.get("sheet_client_vars") or {}).items():
                     try:
-                        table_md = _decode_sheet_client_vars(cv)
+                        merged_cv = _merge_sheet_snapshot_blocks(
+                            cv, extra_sheet_blocks
+                        )
+                        table_md = _decode_sheet_client_vars(
+                            merged_cv,
+                            allow_sparse_blocks=not prefer_api_for_sparse,
+                        )
                         if table_md:
                             _PLAYWRIGHT_SHEET_CACHE[tk] = table_md
+                            logger.info(
+                                f"[Feishu Wiki PW] Pre-decoded sheet: {tk}"
+                            )
+                        else:
+                            _PLAYWRIGHT_SHEET_CACHE[tk] = ""
+                            logger.info(
+                                f"[Feishu Wiki PW] Sheet decode deferred to fallback: {tk}"
+                            )
                     except Exception as e:
-                        logger.debug(f"[Feishu Wiki PW] Sheet decode: {e}")
+                        _PLAYWRIGHT_SHEET_CACHE[tk] = ""
+                        logger.debug(
+                            f"[Feishu Wiki PW] Sheet decode failed for {tk}: {e}"
+                        )
 
                 # Convert block tree to Markdown with image collection
                 _img_subdir = hashlib.md5(link_url.encode()).hexdigest()[:12]

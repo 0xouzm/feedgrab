@@ -959,7 +959,201 @@ def _extract_protobuf_cell_strings(block_raw: bytes) -> List[str]:
         return []
 
 
-def _decode_sheet_client_vars(cv_data: dict) -> Optional[str]:
+def _parse_sheet_block_payload(block_raw: bytes) -> Optional[List[tuple]]:
+    """Return the decoded L3 payload for a sheet block, or None on failure."""
+
+    def _get_ld(fields: List[tuple], field_num: int) -> Optional[bytes]:
+        for fn, wt, v in fields:
+            if fn == field_num and wt == 2:
+                return v
+        return None
+
+    try:
+        L0 = _parse_protobuf_fields(block_raw)
+        l1_data = _get_ld(L0, 1)
+        if not l1_data:
+            return None
+        L1 = _parse_protobuf_fields(l1_data)
+        l2_data = _get_ld(L1, 2)
+        if not l2_data:
+            return None
+        L2 = _parse_protobuf_fields(l2_data)
+        l3_data = _get_ld(L2, 12)
+        if not l3_data:
+            return None
+        return _parse_protobuf_fields(l3_data)
+    except Exception:
+        return None
+
+
+def _decode_packed_varints(data: bytes) -> List[int]:
+    """Decode a protobuf packed-varint byte sequence."""
+    from google.protobuf.internal.decoder import _DecodeVarint
+
+    values: List[int] = []
+    pos = 0
+    while pos < len(data):
+        value, pos = _DecodeVarint(data, pos)
+        values.append(int(value))
+    return values
+
+
+def _extract_sheet_slot_mapping(block_raw: bytes) -> Optional[List[Optional[int]]]:
+    """Extract per-slot string indices from the sheet block payload.
+
+    Live Feishu sheet payloads use two different encodings:
+
+    1. A packed varint array under slot-blob field 1. Values are 1-based
+       string references and may intentionally repeat earlier strings when a
+       later cell reuses the same vendor/type/price.
+    2. A repeated descriptor list under slot-blob field 2. Some older payloads
+       expose the string index directly there.
+
+    The packed form is the authoritative one for the misaligned-table bug.
+    """
+    payload = _parse_sheet_block_payload(block_raw)
+    if not payload:
+        return None
+
+    slot_blob = None
+    for fn, wt, v in payload:
+        if fn == 6 and wt == 2:
+            slot_blob = v
+            break
+    if not slot_blob:
+        return None
+
+    try:
+        slot_fields = _parse_protobuf_fields(slot_blob)
+
+        packed = next(
+            (v for fn, wt, v in slot_fields if fn == 1 and wt == 2 and v),
+            b"",
+        )
+        if packed:
+            packed_values = _decode_packed_varints(packed)
+            entries = [
+                (value - 1) if value > 0 else None
+                for value in packed_values
+            ]
+            if any(value is not None for value in entries):
+                return entries
+
+        entries: List[Optional[int]] = []
+        saw_nonempty = False
+        for fn, wt, v in slot_fields:
+            if fn != 2 or wt != 2:
+                continue
+            if not v:
+                entries.append(None)
+                continue
+            inner = _parse_protobuf_fields(v)
+            mapping: Dict[int, int] = {
+                inner_fn: inner_v
+                for inner_fn, inner_wt, inner_v in inner
+                if inner_wt == 0
+            }
+            string_idx = mapping.get(2)
+            if string_idx is not None:
+                entries.append(int(string_idx))
+                saw_nonempty = True
+            else:
+                entries.append(None)
+        if not saw_nonempty:
+            return None
+        return entries
+    except Exception:
+        return None
+
+
+def _pick_sheet_meta(meta: dict, cv_data: dict) -> Tuple[Optional[str], Optional[dict]]:
+    """Pick the most likely target sheet metadata from workbook-level meta."""
+    target_sheet_id = str(cv_data.get("sheetId") or "").strip()
+    if target_sheet_id and target_sheet_id in meta:
+        return target_sheet_id, meta[target_sheet_id]
+
+    token = str(cv_data.get("token") or "").strip()
+    if token and "_" in token:
+        suffix = token.rsplit("_", 1)[-1].strip()
+        if suffix and suffix in meta:
+            return suffix, meta[suffix]
+
+    populated = [
+        (sheet_id, sheet_meta)
+        for sheet_id, sheet_meta in meta.items()
+        if sheet_meta.get("cellBlockMetas")
+    ]
+    if len(populated) == 1:
+        return populated[0]
+    if populated:
+        return populated[0]
+    return None, None
+
+
+
+def _merge_sheet_snapshot_blocks(cv_data: dict, extra_blocks: dict) -> dict:
+    """Merge lazy-loaded ``/sheet/block`` payloads into a client_vars snapshot."""
+    if not extra_blocks:
+        return cv_data
+
+    snapshot = cv_data.get("snapshot")
+    if not isinstance(snapshot, dict):
+        return cv_data
+
+    import copy
+
+    merged = copy.deepcopy(cv_data)
+    merged_snapshot = merged.setdefault("snapshot", {})
+    blocks = dict(merged_snapshot.get("blocks") or {})
+    before = len(blocks)
+    blocks.update(extra_blocks)
+    merged_snapshot["blocks"] = blocks
+    if len(blocks) != before:
+        logger.info(
+            f"[Feishu] Merged lazy sheet blocks: +{len(blocks) - before} "
+            f"(total {len(blocks)})"
+        )
+    return merged
+
+
+def _render_sheet_markdown(rows_data: List[List[str]]) -> Optional[str]:
+    """Render a 2D string grid into a GFM table."""
+    while rows_data and all(not c.strip() for c in rows_data[-1]):
+        rows_data.pop()
+    if not rows_data:
+        return None
+
+    max_cols = max((len(row) for row in rows_data), default=0)
+    if max_cols < 1:
+        return None
+
+    normalized_rows: List[List[str]] = []
+    for row in rows_data:
+        cells = list(row)
+        while len(cells) < max_cols:
+            cells.append("")
+        normalized_rows.append(cells)
+
+    header = [
+        c.replace("|", "\\|").replace("\n", " ")
+        for c in normalized_rows[0]
+    ]
+    lines: List[str] = []
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("| " + " | ".join("---" for _ in header) + " |")
+    for row in normalized_rows[1:]:
+        cells = [
+            c.replace("|", "\\|").replace("\n", " ") for c in row
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _decode_sheet_client_vars(
+    cv_data: dict,
+    *,
+    allow_sparse_blocks: bool = True,
+) -> Optional[str]:
     """Decode a ``client_vars`` snapshot into a GFM Markdown table.
 
     *cv_data* is the ``data`` field from the ``client_vars`` JSON response,
@@ -975,7 +1169,6 @@ def _decode_sheet_client_vars(cv_data: dict) -> Optional[str]:
         if not snapshot or "gzipBlockMeta" not in snapshot:
             return None
 
-        # Step 1: decode metadata for row/col ranges
         meta = _json_mod.loads(
             gzip.decompress(base64.b64decode(snapshot["gzipBlockMeta"]))
         )
@@ -983,76 +1176,155 @@ def _decode_sheet_client_vars(cv_data: dict) -> Optional[str]:
         if not blocks_dict:
             return None
 
-        # Find the first sheet with cell blocks
-        for _sheet_id, sheet_meta in meta.items():
-            cell_block_metas = sheet_meta.get("cellBlockMetas", [])
-            if not cell_block_metas:
+        target_sheet_id, sheet_meta = _pick_sheet_meta(meta, cv_data)
+        if not sheet_meta:
+            return None
+
+        cell_block_metas = sheet_meta.get("cellBlockMetas", [])
+        if not cell_block_metas:
+            return None
+
+        decoded_blocks: List[Tuple[dict, List[str], int, Optional[List[Optional[int]]]]] = []
+        max_row = 0
+        max_col = 0
+        for cb in sorted(
+            cell_block_metas,
+            key=lambda item: (
+                (item.get("range") or {}).get("rowStart", 0),
+                (item.get("range") or {}).get("colStart", 0),
+            ),
+        ):
+            block_id = cb.get("blockId")
+            rng = cb.get("range") or {}
+            if not block_id or block_id not in blocks_dict:
                 continue
-
-            cb = cell_block_metas[0]
-            rng = cb["range"]
-            num_rows = rng["rowEnd"] - rng["rowStart"]  # exclusive end
-            num_cols = rng["colEnd"] - rng["colStart"]   # exclusive end
-            block_id = cb["blockId"]
-
-            if block_id not in blocks_dict:
+            try:
+                block_raw = gzip.decompress(base64.b64decode(blocks_dict[block_id]))
+            except Exception:
                 continue
-
-            # Step 2: decode Protobuf cell block
-            block_raw = gzip.decompress(base64.b64decode(blocks_dict[block_id]))
             strings = _extract_protobuf_cell_strings(block_raw)
+            slot_mapping = _extract_sheet_slot_mapping(block_raw)
 
-            if not strings:
+            row_start = int(rng.get("rowStart", 0) or 0)
+            row_end = int(rng.get("rowEnd", row_start) or row_start)
+            col_start = int(rng.get("colStart", 0) or 0)
+            col_end = int(rng.get("colEnd", col_start) or col_start)
+            if row_end <= row_start or col_end <= col_start:
                 continue
 
-            # Infer column count from data if metadata seems off
-            actual_cols = num_cols
-            if num_rows > 0 and len(strings) % num_rows == 0:
-                actual_cols = len(strings) // num_rows
-            elif num_cols > 0 and len(strings) % num_cols == 0:
-                actual_cols = num_cols
-            else:
-                # best-effort: use metadata column count
-                actual_cols = num_cols if num_cols > 0 else 1
+            slots = max(0, (row_end - row_start) * (col_end - col_start))
+            max_row = max(max_row, row_end)
+            max_col = max(max_col, col_end)
+            decoded_blocks.append((rng, strings, slots, slot_mapping))
 
-            if actual_cols < 1 or len(strings) < actual_cols:
+        if not decoded_blocks or max_row < 1 or max_col < 1:
+            return None
+
+        grid: List[List[str]] = [
+            ["" for _ in range(max_col)] for _ in range(max_row)
+        ]
+        filled_any = False
+        usable_blocks = 0
+
+        for rng, strings, slots, slot_mapping in decoded_blocks:
+            row_start = int(rng.get("rowStart", 0) or 0)
+            row_end = int(rng.get("rowEnd", row_start) or row_start)
+            col_start = int(rng.get("colStart", 0) or 0)
+            col_end = int(rng.get("colEnd", col_start) or col_start)
+
+            if slots <= 0 or not strings:
                 continue
 
-            # Step 3: render as GFM table
-            rows_data: List[List[str]] = []
-            for i in range(0, len(strings), actual_cols):
-                rows_data.append(strings[i : i + actual_cols])
+            mapped_slots: Optional[List[Optional[str]]] = None
+            if slot_mapping:
+                candidates = slot_mapping
+                if len(candidates) == slots + 1 and candidates[0] is None:
+                    candidates = candidates[1:]
+                if len(candidates) == slots:
+                    mapped_slots = []
+                    for string_idx in candidates:
+                        if string_idx is None:
+                            mapped_slots.append(None)
+                            continue
+                        if 0 <= string_idx < len(strings):
+                            mapped_slots.append(strings[string_idx])
+                        else:
+                            mapped_slots.append(None)
+                else:
+                    logger.debug(
+                        f"[Feishu] Ignore sheet slot mapping due to length mismatch: "
+                        f"sheet={target_sheet_id or '?'} range=({row_start}:{row_end},{col_start}:{col_end}) "
+                        f"mapping={len(candidates)} slots={slots}"
+                    )
 
-            # Trim trailing empty rows
-            while rows_data and all(
-                not c.strip() for c in rows_data[-1]
-            ):
-                rows_data.pop()
-
-            if not rows_data:
+            available = len([v for v in mapped_slots if v is not None]) if mapped_slots else len(strings)
+            missing = max(0, slots - available)
+            missing_ratio = (missing / slots) if slots else 0.0
+            if missing_ratio > 0.2:
+                logger.info(
+                    f"[Feishu] Skip sparse sheet block: sheet={target_sheet_id or '?'} "
+                    f"range=({row_start}:{row_end},{col_start}:{col_end}) "
+                    f"values={available}/{slots}"
+                )
                 continue
 
-            lines: List[str] = []
-            header = [
-                c.replace("|", "\\|") for c in rows_data[0]
-            ]
-            lines.append("| " + " | ".join(header) + " |")
-            lines.append("| " + " | ".join("---" for _ in header) + " |")
-            for row in rows_data[1:]:
-                cells = [
-                    c.replace("|", "\\|").replace("\n", " ") for c in row
-                ]
-                while len(cells) < len(header):
-                    cells.append("")
-                lines.append("| " + " | ".join(cells) + " |")
+            if missing:
+                if not allow_sparse_blocks:
+                    logger.info(
+                        f"[Feishu] Defer sparse sheet to API fallback: sheet={target_sheet_id or '?'} "
+                        f"range=({row_start}:{row_end},{col_start}:{col_end}) "
+                        f"values={available}/{slots}"
+                    )
+                    return None
+                logger.info(
+                    f"[Feishu] Keep sparse sheet block: sheet={target_sheet_id or '?'} "
+                    f"range=({row_start}:{row_end},{col_start}:{col_end}) "
+                    f"values={available}/{slots}"
+                )
 
-            logger.info(
-                f"[Feishu] Decoded sheet protobuf: "
-                f"{len(rows_data)} rows x {actual_cols} cols"
-            )
-            return "\n".join(lines)
+            usable_blocks += 1
+            idx = 0
+            for row in range(row_start, row_end):
+                for col in range(col_start, col_end):
+                    value: Optional[str]
+                    if mapped_slots is not None:
+                        if idx >= len(mapped_slots):
+                            break
+                        value = mapped_slots[idx]
+                        idx += 1
+                    else:
+                        if idx >= len(strings) or idx >= slots:
+                            break
+                        value = strings[idx]
+                        idx += 1
+                    if value:
+                        grid[row][col] = value
+                        filled_any = True
+                if mapped_slots is not None:
+                    if idx >= len(mapped_slots):
+                        break
+                else:
+                    if idx >= len(strings) or idx >= slots:
+                        break
 
-        return None
+        if usable_blocks == 0 or not filled_any:
+            return None
+
+        rows_data = [row[:] for row in grid]
+        while rows_data and all(not c.strip() for c in rows_data[-1]):
+            rows_data.pop()
+        while rows_data and rows_data[0] and all(not c.strip() for c in rows_data[0]):
+            rows_data.pop(0)
+
+        table_md = _render_sheet_markdown(rows_data)
+        if not table_md:
+            return None
+
+        logger.info(
+            f"[Feishu] Decoded sheet protobuf: sheet={target_sheet_id or '?'} "
+            f"blocks={len(decoded_blocks)} usable={usable_blocks} rows={len(rows_data)} cols={max_col}"
+        )
+        return table_md
     except Exception as e:
         logger.debug(f"[Feishu] Sheet protobuf decode error: {e}")
         return None
@@ -1069,9 +1341,46 @@ def _fetch_embedded_sheet(token: str) -> Optional[str]:
     Returns a GFM Markdown table string, or None if extraction fails.
     """
     # Check Playwright-extracted cache first (populated by _fetch_via_playwright)
+    cache_key = None
     if token in _PLAYWRIGHT_SHEET_CACHE:
-        logger.info(f"[Feishu] Sheet from Playwright cache: {token}")
-        return _PLAYWRIGHT_SHEET_CACHE[token]
+        cache_key = token
+    else:
+        cache_candidates: List[str] = []
+        if "_" in token:
+            base_token = token.rsplit("_", 1)[0]
+            if base_token in _PLAYWRIGHT_SHEET_CACHE:
+                cache_key = base_token
+            else:
+                cache_candidates = [
+                    key for key in _PLAYWRIGHT_SHEET_CACHE
+                    if key == base_token or key.startswith(f"{base_token}_")
+                ]
+        else:
+            cache_candidates = [
+                key for key in _PLAYWRIGHT_SHEET_CACHE
+                if key.startswith(f"{token}_")
+            ]
+
+        if cache_key is None and len(cache_candidates) == 1:
+            cache_key = cache_candidates[0]
+            logger.info(
+                f"[Feishu] Sheet cache alias hit: {token} -> {cache_key}"
+            )
+        elif len(cache_candidates) > 1:
+            logger.debug(
+                f"[Feishu] Sheet cache ambiguous for {token}: {cache_candidates}"
+            )
+        else:
+            logger.debug(f"[Feishu] Sheet cache miss: {token}")
+
+    if cache_key is not None:
+        cached_table = _PLAYWRIGHT_SHEET_CACHE[cache_key]
+        if cached_table:
+            logger.info(f"[Feishu] Sheet from Playwright cache: {cache_key}")
+            return cached_table
+        logger.info(
+            f"[Feishu] Sheet cache deferred to Open API fallback: {cache_key}"
+        )
 
     if not _is_api_available():
         return None
@@ -1384,13 +1693,25 @@ async def _fetch_via_playwright(url: str) -> Dict[str, Any]:
     # Pre-extract embedded sheet data from intercepted client_vars responses.
     # Populate the module-level cache so _render_embedded_block() can use it.
     _PLAYWRIGHT_SHEET_CACHE.clear()
+    prefer_api_for_sparse = _is_api_available()
+    extra_sheet_blocks = data.get("sheet_blocks") or {}
     for token_key, cv_data in (data.get("sheet_client_vars") or {}).items():
         try:
-            table_md = _decode_sheet_client_vars(cv_data)
+            merged_cv_data = _merge_sheet_snapshot_blocks(
+                cv_data, extra_sheet_blocks
+            )
+            table_md = _decode_sheet_client_vars(
+                merged_cv_data,
+                allow_sparse_blocks=not prefer_api_for_sparse,
+            )
             if table_md:
                 _PLAYWRIGHT_SHEET_CACHE[token_key] = table_md
                 logger.info(f"[Feishu] Pre-decoded sheet: {token_key}")
+            else:
+                _PLAYWRIGHT_SHEET_CACHE[token_key] = ""
+                logger.info(f"[Feishu] Sheet decode deferred to fallback: {token_key}")
         except Exception as e:
+            _PLAYWRIGHT_SHEET_CACHE[token_key] = ""
             logger.debug(f"[Feishu] Sheet decode failed for {token_key}: {e}")
 
     # Convert editor block tree to Markdown
