@@ -2,6 +2,46 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-14 · v0.15.2 · 飞书内嵌表格错位修复（懒加载 blocks 合并 + packed slot 解码）
+
+### 背景
+
+用户抓取飞书文档 `https://uz9e9pqslc.feishu.cn/wiki/TviRwSkP5iKr1FkIdwWc7ObbnKc` 后发现多张嵌入电子表格在导出的 Markdown 中出现明显错列：从第二行开始厂商、类型、价格等列整体左滑，导致整张表不可用。联调真实页面后确认问题并非单纯等待时间不足，而是飞书 Sheet 的懒加载数据链路和单元格映射逻辑同时存在缺口。
+
+### 功能内容
+
+1. **懒加载表格预热**：`browser.py` / `feishu_wiki.py` 在提取前对整页执行分段滚动预热，主动触发飞书嵌入 Sheet 的懒加载请求
+2. **补抓 `/sheet/block` 数据**：响应拦截器除了 `client_vars` 外，新增捕获 `/space/api/v3/sheet/block` 返回的 blocks，并挂回提取结果
+3. **快照 blocks 合并**：`_merge_sheet_snapshot_blocks()` 将懒加载返回的 blocks 与 `client_vars.snapshot.blocks` 合并，确保工作簿级 meta 能找到完整 block payload
+4. **packed slot 映射修复**：`_extract_sheet_slot_mapping()` 优先解析 slot blob 中 field 1 的 packed varint 序列，正确恢复重复复用的厂商/类型/价格单元格，解决第二行开始整体错列问题
+5. **client_vars 主动补抓增强**：`FEISHU_SHEET_FETCH_JS` 不再强依赖错误的 token 拆分，允许按真实返回的 `token + sheetId` 回填缓存 key
+6. **知识库批量同步修复**：`feishu_wiki.py` 复用同一套滚动预热、block 合并和预解码逻辑，避免单篇修好而批量模式继续错位
+7. **真实样本回归测试**：新增 `tests/test_feishu_sheet_decode.py`，使用真实 `client_vars + sheet/block` 样本验证高性价比模型表和图像/嵌入表不再错列
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/feishu.py` | 修改 | 新增 packed varint 解码、懒加载 block 合并、sheet cache alias/fallback 优化、表格解码修复 |
+| `feedgrab/fetchers/browser.py` | 修改 | 新增 `/sheet/block` 响应拦截、分段滚动预热、表格数据合并透传 |
+| `feedgrab/fetchers/feishu_wiki.py` | 修改 | 批量抓取路径同步接入 block 拦截、滚动预热、合并后预解码 |
+| `tests/test_feishu_sheet_decode.py` | 新增 | 真实飞书样本回归测试（3 条） |
+
+### 验证结果
+
+- ✅ `python -m pytest tests/test_feishu_sheet_decode.py -q` → `3 passed`
+- ✅ 实测重抓目标文档成功：`python -m feedgrab.cli "https://uz9e9pqslc.feishu.cn/wiki/TviRwSkP5iKr1FkIdwWc7ObbnKc"`
+- ✅ 导出文件 `E:\Obsidian\Qiang_Obsidian\inbox\Feishu\AI奶爸：XAI教程.md` 中错位表格恢复正常
+- ✅ 关键行验证通过：
+  - `gpt-4.1-nano | OpenAI | $0.1 入 / $0.4 出 | 极致性价比`
+  - `nova-micro | AWS | $0.035 入 / $0.14 出 | 最便宜之一`
+  - `gemini-3-pro-image-preview | 图像生成 | Google | $2 入 / $12 出`
+  - `whisper-1 | 语音识别 | OpenAI | $0.006/分钟`
+
+### 状态
+
+已完成 ✅
+
 ## 2026-04-13 · v0.15.1 · YouTube Whisper 时间戳 + ytb-all 双目录修复
 
 ### 背景

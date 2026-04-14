@@ -229,7 +229,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`）/ 专辑批量（`mpweixin-zhuanji`） | — |
 | GitHub | **REST API**（仓库元数据 + 中文 README 优先（含子目录语言链接搜索）+ 相对图片链接补全 + 摘要提取） | — |
 | 小红书 | **API (xhshow)** → **Pinia Store 注入** → Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量** + **关键词搜索 `xhs-so`**) | — |
-| 飞书/Lark | **Open API** → **CDP 直连** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载） | — |
+| 飞书/Lark | **Open API** → **CDP 直连** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载；支持懒加载 Sheet 预热、`/sheet/block` 合并、重复单元格不再错列） | — |
 | 金山文档/KDocs | **Playwright ProseMirror DOM** 提取（虚拟滚动 + 代码块 + 图片 shapes API + CDP 直连） | — |
 | 有道云笔记 | **JSON API**（零依赖）→ Playwright iframe DOM → Jina（单篇 + 图片下载） | — |
 | 知乎 | **API v4** → **Playwright CDP/DOM** → Jina（单篇问答前 3 楼 + 专栏文章 + **关键词搜索 `zhihu-so`**） | — |
