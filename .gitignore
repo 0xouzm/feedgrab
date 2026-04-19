@@ -34,3 +34,17 @@ output/
 # IDE
 .vscode/
 .idea/
+
+# Local tooling / Claude Code state
+.ccpanes/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+pytest-cache-files-*/
+
+# Local debug scripts (temporary reverse-engineering artifacts)
+debug_*.py
+debug_*_output.json
+
+# Iteration research notes (kept local only)
+迭代方案调研报告/
+
