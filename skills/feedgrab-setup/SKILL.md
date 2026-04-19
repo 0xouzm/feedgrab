@@ -74,6 +74,12 @@ feedgrab login wechat
 
 # Feishu — opens browser for login
 feedgrab login feishu
+
+# KDocs (金山文档) — opens browser for login
+feedgrab login kdocs
+
+# Zhihu (知乎) — opens browser for login
+feedgrab login zhihu
 ```
 
 **Tip**: If you have Chrome running with remote debugging enabled, set `CHROME_CDP_LOGIN=true` in `.env` to extract cookies from your existing browser session without re-login.
@@ -119,6 +125,7 @@ XHS_USER_NOTES_ENABLED=true
 XHS_SEARCH_ENABLED=true
 XHS_DOWNLOAD_MEDIA=true
 XHS_FETCH_COMMENTS=true
+XHS_PINIA_ENABLED=true
 
 # WeChat
 MPWEIXIN_DOWNLOAD_MEDIA=true
@@ -126,6 +133,7 @@ MPWEIXIN_FETCH_COMMENTS=true
 
 # YouTube
 YOUTUBE_API_KEY=your_key_here
+YTDLP_COOKIES_BROWSER=chrome
 
 # GitHub
 GITHUB_TOKEN=your_token_here
@@ -134,8 +142,34 @@ GITHUB_TOKEN=your_token_here
 FEISHU_APP_ID=your_app_id
 FEISHU_APP_SECRET=your_secret
 FEISHU_DOWNLOAD_IMAGES=true
+FEISHU_CDP_ENABLED=false
 
-# Stealth
+# KDocs (金山文档)
+KDOCS_CDP_ENABLED=false
+KDOCS_DOWNLOAD_IMAGES=false
+
+# Youdao Note (有道云笔记)
+YOUDAO_DOWNLOAD_IMAGES=false
+
+# Zhihu (知乎)
+ZHIHU_CDP_ENABLED=false
+
+# Bilibili subtitles / transcription
+BILIBILI_SUBTITLE_LANG=zh-CN
+BILIBILI_SUBTITLE_WHISPER=false
+
+# Xiaoyuzhou / Ximalaya podcasts (require GROQ_API_KEY for transcription)
+XIAOYUZHOU_WHISPER=true
+XIMALAYA_WHISPER=true
+GROQ_API_KEY=your_groq_key
+
+# Paywall bypass (300+ news sites)
+PAYWALL_ENABLED=true
+PAYWALL_USE_AMP=true
+PAYWALL_USE_ARCHIVE=true
+PAYWALL_USE_GOOGLE_CACHE=true
+
+# Stealth / CDP Cookie extraction
 CHROME_CDP_LOGIN=true
 CHROME_CDP_PORT=9222
 ```

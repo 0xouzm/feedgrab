@@ -1,6 +1,6 @@
 ---
 name: feedgrab-batch
-description: Batch content grabber — bulk fetch bookmarks, user tweets, search results, author notes, wiki pages, and more from X/Twitter, Xiaohongshu, WeChat, YouTube, Feishu. Use when user wants to batch/bulk fetch, search keywords, or grab all posts from an account.
+description: Batch content grabber — bulk fetch bookmarks, user tweets, search results, author notes, wiki pages, and more from X/Twitter, Xiaohongshu, WeChat, YouTube, Feishu, Zhihu. Use when user wants to batch/bulk fetch, search keywords, or grab all posts from an account.
 ---
 
 # feedgrab-batch — Batch Content Grabber
@@ -143,6 +143,21 @@ feedgrab feishu-wiki "WIKI_SPACE_URL"
 
 ---
 
+### Zhihu (知乎)
+
+#### Keyword Search (zhihu-so)
+```bash
+# Requires: feedgrab login zhihu (for full content)
+feedgrab zhihu-so "AI Agent"                          # Search Q&A + articles
+feedgrab zhihu-so "AI Agent" --sort hot               # By popularity
+feedgrab zhihu-so "AI Agent" --limit 20               # Max 20 results
+feedgrab zhihu-so "AI Agent" --days 30                # Last 30 days
+feedgrab zhihu-so "claude,cursor" --merge             # Multi-keyword merged
+```
+Output: Markdown table (sorted by upvotes) + CSV at `output/Zhihu/search/`
+
+---
+
 ## Environment Variables Quick Reference
 
 | Platform | Required Variables | How to Get |
@@ -154,6 +169,7 @@ feedgrab feishu-wiki "WIKI_SPACE_URL"
 | YouTube | `YOUTUBE_API_KEY` | Google Cloud Console |
 | GitHub | `GITHUB_TOKEN` (optional) | GitHub Settings |
 | Feishu | `FEISHU_APP_ID` + `FEISHU_APP_SECRET` | Feishu Open Platform |
+| Zhihu | Cookie via `feedgrab login zhihu` | Login in browser |
 
 ## Resume After Interruption
 

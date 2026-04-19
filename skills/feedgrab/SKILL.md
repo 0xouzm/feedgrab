@@ -1,11 +1,11 @@
 ---
 name: feedgrab
-description: Universal content grabber — fetch any URL and return structured Markdown. Supports X/Twitter, WeChat, Xiaohongshu, YouTube, GitHub, Feishu/Lark, Bilibili, Telegram, RSS, and any web page. Use when user provides a URL and wants its content extracted.
+description: Universal content grabber — fetch any URL and return structured Markdown. Supports X/Twitter, WeChat, Xiaohongshu, YouTube, GitHub, Feishu/Lark, KDocs, Youdao Note, Zhihu, Bilibili (with subtitle transcription), Xiaoyuzhou podcasts, Ximalaya podcasts, Telegram, RSS, 300+ paywall news sites, and any web page. Use when user provides a URL and wants its content extracted.
 ---
 
 # feedgrab — Universal Content Grabber
 
-> Give it a URL, get back structured Markdown. Supports 8+ platforms with deep extraction.
+> Give it a URL, get back structured Markdown. Supports 16+ platforms with deep extraction.
 
 ## Trigger
 
@@ -38,14 +38,20 @@ Then stop — do not proceed without feedgrab.
 |----------|------------|--------|
 | X/Twitter | `x.com/*/status/*`, `twitter.com/*` | GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright |
 | WeChat (微信公众号) | `mp.weixin.qq.com/*` | Playwright JS evaluate → Jina |
-| Xiaohongshu (小红书) | `xiaohongshu.com/explore/*`, `xhslink.com/*` | API (xhshow) → Jina → Playwright |
-| YouTube | `youtube.com/watch?v=*`, `youtu.be/*` | API metadata + yt-dlp subtitles |
-| GitHub | `github.com/*/*` | REST API (Chinese README priority) |
-| Feishu/Lark (飞书) | `feishu.cn/docx/*`, `feishu.cn/wiki/*` | Open API → Playwright → Jina |
-| Bilibili (B站) | `bilibili.com/video/*`, `b23.tv/*` | API |
+| Xiaohongshu (小红书) | `xiaohongshu.com/explore/*`, `xhslink.com/*` | API (xhshow) → Pinia Store injection → Jina → Playwright |
+| YouTube | `youtube.com/watch?v=*`, `youtu.be/*`, Shorts | InnerTube API → yt-dlp subtitles → Groq Whisper |
+| GitHub | `github.com/*/*` | REST API (Chinese README priority + subdirectory scan) |
+| Feishu/Lark (飞书) | `feishu.cn/docx/*`, `feishu.cn/wiki/*` | Open API → CDP → Playwright PageMain → Jina |
+| KDocs (金山文档) | `kdocs.cn/l/*` | Playwright ProseMirror DOM (virtual scroll + CDP) |
+| Youdao Note (有道云笔记) | `share.note.youdao.com/*` | JSON API → Playwright iframe → Jina |
+| Zhihu (知乎) | `zhihu.com/question/*/answer/*`, `zhuanlan.zhihu.com/p/*` | API v4 → Playwright CDP/DOM → Jina |
+| Bilibili (B站) | `bilibili.com/video/*`, `b23.tv/*` | API metadata + 3-tier subtitle fallback (v2 → WBI v2 → Whisper) |
+| Xiaoyuzhou (小宇宙) | `xiaoyuzhoufm.com/episode/*` | SSR `__NEXT_DATA__` + Groq Whisper transcription |
+| Ximalaya (喜马拉雅) | `ximalaya.com/sound/*`, `m.ximalaya.com/sound/*` | Web Revision API + canPlay degradation + Groq Whisper |
 | Telegram | `t.me/*` | Telethon |
 | RSS | RSS/Atom feed URLs | feedparser |
-| Any web page | Any other URL | Jina Reader fallback |
+| Paywall news (300+) | NYT/WSJ/FT/Economist/Bloomberg... | JSON-LD → Googlebot/Bingbot UA → AMP → EU IP → archive.today → Google Cache → Jina |
+| Any web page | Any other URL | JSON-LD pre-scan → Jina Reader fallback |
 
 ## Pipeline
 
@@ -66,6 +72,13 @@ feedgrab saves output to `OUTPUT_DIR` (default: `./output/`). Check the CLI outp
 - `output/YouTube/author_date：title.md`
 - `output/GitHub/author_date：title.md`
 - `output/Feishu/author_date：title.md`
+- `output/KDocs/author_date：title.md`
+- `output/NoteYouDao/author_date：title.md`
+- `output/Zhihu/author_date：title.md`
+- `output/Bilibili/author_date：title.md`
+- `output/Xiaoyuzhou/author_date：title.md`
+- `output/Ximalaya/author_date：title.md`
+- `output/Web/author_date：title.md` (paywall / generic pages)
 
 ### Step 3: Read and Present
 
@@ -101,4 +114,9 @@ This reads the URL from the system clipboard.
 - For **Xiaohongshu**: `pip install xhshow` for API mode (faster, no browser needed)
 - For **GitHub**: set `GITHUB_TOKEN` for higher rate limits (5000/hr vs 60/hr)
 - For **Feishu**: set `FEISHU_APP_ID` + `FEISHU_APP_SECRET` for Open API access
+- For **KDocs**: `feedgrab login kdocs` to save session (or enable `KDOCS_CDP_ENABLED=true` to reuse running Chrome)
+- For **Zhihu**: `feedgrab login zhihu` to save session (enables full answer content)
+- For **Bilibili subtitles**: free tier (`player/v2` + WBI) works out of the box; set `BILIBILI_SUBTITLE_WHISPER=true` for Whisper fallback on videos without subtitles
+- For **Xiaoyuzhou / Ximalaya**: set `GROQ_API_KEY` for Whisper transcription (free tier = metadata + shownotes only)
+- For **paywall sites**: `PAYWALL_ENABLED=true` by default, no extra config
 - Run `feedgrab doctor` to diagnose issues
