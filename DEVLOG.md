@@ -2,6 +2,70 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-19 · v0.16.0 · 付费墙绕过 + JSON-LD articleBody 提取（融合 qiaomu fetch_url.sh）
+
+### 背景
+
+feedgrab 此前对未识别 URL（generic 路径）只用 Jina Reader 一层兜底，对 NYT/WSJ/FT/Economist/Bloomberg/SCMP 等 300+ 主流付费新闻网站命中率低：Jina 对软付费墙勉强能抓一部分，对硬付费墙（The Information、Bloomberg premium）基本返回付费墙提示页。参考调研报告 `迭代方案调研报告/20260419-qiaomu-anything-to-notebooklm对比分析.md`，`qiaomu-anything-to-notebooklm/scripts/fetch_url.sh` 的 6 层付费墙级联绕过策略（含 JSON-LD 提取）经评估为唯一独立价值显著的融合点。本次用 Python 重写移植，作为 Jina 之前的前置兜底。
+
+### 功能内容
+
+1. **新增 `feedgrab/utils/jsonld.py`**：通用 JSON-LD `articleBody` 提取器，支持 Schema.org NewsArticle / Article / BlogPosting 等 10 种类型，`@graph` 嵌套数组、`@type` 数组、`author` 多种形态（str/dict/list），多 JSON-LD 块中选最长 body
+2. **新增 `feedgrab/fetchers/paywall.py`**：7 级 Tier 级联绕过引擎，4 套硬编码域名列表
+   - **Tier 0** 直接 JSON-LD 探测（非付费站点也跑，<1s 拿到 articleBody，比 Jina 快 5-10 倍）
+   - **Tier 1** Googlebot UA + `X-Forwarded-For: 66.249.66.1` + Google Referer（22 个头部付费站）
+   - **Tier 2** Bingbot UA（4 站）
+   - **Tier 3** 通用策略 a/b/c/d：Googlebot / Bingbot / Facebook Referer / Twitter Referer（44 站）
+   - **Tier 4** AMP 页面（尝试 `/amp`、`?outputType=amp`、`.amp.html`、`?amp` 4 种模式 + `.html` → `.amp.html` 重写，12 站）
+   - **Tier 5** EU IP (`X-Forwarded-For: 185.X.X.X`) + Google Referer
+   - **Tier 6** archive.today 存档（CAPTCHA 自动检测 → `logger.warning` 提示 + 跳过）
+   - **Tier 7** Google Cache（`webcache.googleusercontent.com`）
+   - 全部失败返回 `None` → 由 `reader.py` 回退到 Jina（保持原有行为）
+3. **关键辅助函数**（移植自 fetch_url.sh）：`_has_content()`（500+ 字符 + 8+ 行 + 过滤 404/Access Denied）、`_is_paywall_content()`（20+ 种付费墙文案正则）、`_is_captcha_page()`（CAPTCHA/Cloudflare Challenge）、`_match_domain()`（管道分隔域名匹配，兼容 `www.` 前缀和子域名）
+4. **HTML 解析双通道**：JSON-LD articleBody 优先（快速路径，`tier*+jsonld` 标记），markdownify 整页兜底（`tier*+markdown` 标记），自动剥离 `<script>/<style>/<nav>/<footer>/<aside>/<form>`
+5. **HTTP 客户端复用**：所有请求走 `utils/http_client.py` 的 curl_cffi Chrome TLS 指纹，但每个 Tier 覆盖 UA（Googlebot/Bingbot/Chrome）+ Referer + 自定义 headers + `cookies={}` 清空 cookie 罐子（等价于 `curl -b ""`）
+6. **SourceType.WEB + from_web**：付费墙抓到的内容使用新类型，落到 `output/Web/` 独立目录，与其他未分类内容（MANUAL → Manual/）隔离。`author` / `published` / `image` / `strategy` 存 `extra`
+7. **reader.py 集成**：`_fetch()` 原行 351-360 的 Jina 兜底改造为 `try_paywall_bypass() → Jina` 二级兜底；异常时 `logger.warning` 后回落 Jina，保证零回归
+8. **配置项（7 个）**：`PAYWALL_ENABLED`（默认 true）、`PAYWALL_TIMEOUT`（15s）、`PAYWALL_USE_AMP` / `PAYWALL_USE_ARCHIVE` / `PAYWALL_USE_GOOGLE_CACHE`（均默认 true）、`PAYWALL_DOMAINS_EXTRA`（用户追加自定义域名，管道分隔）、`PAYWALL_JSONLD_FOR_ALL`（默认 true，让 Tier 0 对所有 generic URL 生效）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/utils/jsonld.py` | 新增 | JSON-LD 提取器（~165 行） |
+| `feedgrab/fetchers/paywall.py` | 新增 | 7 级付费墙绕过引擎（~530 行） |
+| `feedgrab/config.py` | 修改 | +7 个 `paywall_*()` 配置函数 |
+| `feedgrab/schema.py` | 修改 | +`SourceType.WEB` + `from_web()` 工厂 |
+| `feedgrab/reader.py` | 修改 | `_fetch()` 兜底分支：paywall → Jina 二级兜底，`from_web` 导入 |
+| `feedgrab/utils/storage.py` | 修改 | `PLATFORM_FOLDER_MAP[SourceType.WEB] = "Web"` |
+| `.env.example` | 修改 | 新增 `=== 付费墙绕过 ===` section |
+| `tests/test_paywall.py` | 新增 | 26 条单元测试（JSON-LD 提取 + 内容验证器 + 域名匹配 + 域名列表合法性） |
+
+### 验证结果
+
+- ✅ `python -m pytest tests/test_paywall.py -v` → **26 passed in 0.39s**
+- ✅ `python -m pytest tests/ -q` → **29 passed in 0.39s**（含历史 3 条飞书 Sheet 解码回归）
+- ✅ 模块 import / SourceType.WEB / from_web 行为正确
+- ✅ 7 Tier 级联流程完整跑通（WSJ 用例各 Tier 按序执行，全失败正确返回 None）
+- ✅ GitHub 路由回归：`source_type: SourceType.GITHUB`，27842 字符 README 完整提取，未被 paywall 劫持
+- ✅ 付费域名识别：`is_paywall_domain(wsj.com)=True`、`is_paywall_domain(example.com)=False`
+- ✅ `_has_content` / `_is_paywall_content` / `_is_captcha_page` 边界用例全覆盖
+- ✅ 配置项默认值正确读取（`PAYWALL_ENABLED=True` / `TIMEOUT=15` / `JSONLD_FOR_ALL=True`）
+
+### 设计决策
+
+- **新增 `SourceType.WEB` 而非复用 `MANUAL`**：付费墙新闻落到 `output/Web/` 独立目录，与 `Manual/` 隔离，便于 Obsidian 视图索引
+- **JSON-LD 提取独立成 `utils/jsonld.py`**：非付费站点也常带 JSON-LD（SEO 标配），未来可给 GitHub README / Medium free / Notion 等复用
+- **不移植 Bash 版 fetch_url.sh**：(1) Windows 无 Git Bash 用户不能用；(2) feedgrab 全 Python；(3) curl_cffi 比原生 curl 更难被检测
+- **archive.today CAPTCHA 降级策略**：feedgrab 是库不是 CLI 工具，不能 exit 75。检测到 CAPTCHA 时 `logger.warning` 提示用户手动打开 archive URL 验证，流程继续走 Google Cache / Jina
+- **域名列表硬编码 + env 追加**：开箱即用 + 用户扩展（`PAYWALL_DOMAINS_EXTRA=foo.com|bar.com`）
+
+### 状态
+
+已完成 ✅
+
+---
+
 ## 2026-04-14 · v0.15.2 · 飞书内嵌表格错位修复（懒加载 blocks 合并 + packed slot 解码）
 
 ### 背景

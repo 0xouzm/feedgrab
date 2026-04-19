@@ -36,6 +36,7 @@ class SourceType(str, Enum):
     KDOCS = "kdocs"
     YOUDAO = "youdao"
     ZHIHU = "zhihu"
+    WEB = "web"
     MANUAL = "manual"
 
 
@@ -549,6 +550,34 @@ def from_manual(title: str, content: str, url: str = "") -> UnifiedContent:
         title=title,
         content=content,
         url=url or f"manual://{hashlib.md5(title.encode()).hexdigest()[:8]}",
+    )
+
+
+def from_web(data: dict) -> UnifiedContent:
+    """Build UnifiedContent from paywall-bypass or generic web fetcher output.
+
+    Accepts the dict returned by ``try_paywall_bypass()`` / ``fetch_via_jina()``
+    (keys: title, content, url, author, published, image, strategy).
+    """
+    from urllib.parse import urlparse
+    url = data.get("url", "")
+    source_name = urlparse(url).netloc if url else "web"
+    extra = {}
+    if data.get("strategy"):
+        extra["strategy"] = data["strategy"]
+    if data.get("image"):
+        extra["cover_image"] = data["image"]
+    if data.get("author"):
+        extra["author"] = data["author"]
+    if data.get("published"):
+        extra["published"] = data["published"]
+    return UnifiedContent(
+        source_type=SourceType.WEB,
+        source_name=source_name,
+        title=data.get("title", "") or "Untitled",
+        content=data.get("content", ""),
+        url=url,
+        extra=extra,
     )
 
 

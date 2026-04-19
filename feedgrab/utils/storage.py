@@ -150,6 +150,7 @@ PLATFORM_FOLDER_MAP = {
     SourceType.ZHIHU: "Zhihu",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",
+    SourceType.WEB: "Web",
     SourceType.MANUAL: "Manual",
 }
 

@@ -211,7 +211,8 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
 | Apple Podcasts | — | via Claude Code skill |
-| Any web page | Jina fallback | — |
+| **Paywalled news sites** (NYT/WSJ/FT/Economist/Bloomberg/SCMP, 300+) | **7-tier paywall bypass** (JSON-LD probe + Googlebot/Bingbot UA + AMP pages + archive.today + Google Cache) | — |
+| Any web page | **JSON-LD probe** → Jina fallback | — |
 
 > \*XHS supports **API fetching** (xhshow, no login required) and **browser fetching** (requires one-time login: `feedgrab login xhs`). Single note fetch prefers API (full metadata + comments), falls back to **Pinia Store injection** (browser-native requests, no third-party signing library needed) → Jina → Playwright when unavailable. **Keyword search** (`feedgrab xhs-so`), **author profile batch**, and **search result batch** also support Pinia fallback. `XHS_PINIA_ENABLED=true` (enabled by default).
 >

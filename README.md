@@ -237,7 +237,8 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | RSS | feedparser | — |
 | 小宇宙播客 | — | 通过 Claude Code 技能 |
 | Apple Podcasts | — | 通过 Claude Code 技能 |
-| 任意网页 | Jina 兜底 | — |
+| **付费新闻网站**（NYT/WSJ/FT/Economist/Bloomberg/SCMP 等 300+ 站） | **7 级 Tier 付费墙绕过**（JSON-LD 探测 + Googlebot/Bingbot UA + AMP 页面 + archive.today + Google Cache） | — |
+| 任意网页 | **JSON-LD 前置** → Jina 兜底 | — |
 
 > \*小红书支持 **API 抓取**（xhshow，无需登录）和 **浏览器抓取**（需一次性登录：`feedgrab login xhs`）。单篇抓取优先走 API（完整元数据 + 评论），API 不可用时自动降级到 **Pinia Store 注入**（浏览器原生请求，无需第三方签名库）→ Jina → Playwright。**关键词搜索**（`feedgrab xhs-so`）和**作者主页批量**、**搜索结果批量**同样支持 Pinia 兜底层。`XHS_PINIA_ENABLED=true`（默认开启）。
 >

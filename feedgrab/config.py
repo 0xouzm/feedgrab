@@ -886,3 +886,52 @@ def groq_whisper_model() -> str:
 def youtube_whisper_lang() -> str:
     """Language hint for Whisper transcription. Default zh (Chinese)."""
     return os.getenv("YOUTUBE_WHISPER_LANG", "zh").strip()
+
+
+# ---------------------------------------------------------------------------
+# Paywall bypass (generic news sites)
+# ---------------------------------------------------------------------------
+
+def paywall_enabled() -> bool:
+    """Master switch for paywall bypass pre-Jina fallback. Default true."""
+    return os.getenv("PAYWALL_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def paywall_timeout() -> int:
+    """HTTP timeout per paywall tier request, in seconds. Default 15."""
+    try:
+        return int(os.getenv("PAYWALL_TIMEOUT", "15"))
+    except ValueError:
+        return 15
+
+
+def paywall_use_amp() -> bool:
+    """Try AMP page variants during bypass. Default true."""
+    return os.getenv("PAYWALL_USE_AMP", "true").lower() in ("true", "1", "yes")
+
+
+def paywall_use_archive() -> bool:
+    """Try archive.today snapshot during bypass. Default true."""
+    return os.getenv("PAYWALL_USE_ARCHIVE", "true").lower() in ("true", "1", "yes")
+
+
+def paywall_use_google_cache() -> bool:
+    """Try Google web cache during bypass. Default true."""
+    return os.getenv("PAYWALL_USE_GOOGLE_CACHE", "true").lower() in ("true", "1", "yes")
+
+
+def paywall_domains_extra() -> str:
+    """User-supplied extra paywall domains, pipe-separated (e.g. a.com|b.com).
+
+    Appended to the hardcoded PAYWALL_DOMAINS list. Default empty.
+    """
+    return os.getenv("PAYWALL_DOMAINS_EXTRA", "").strip()
+
+
+def paywall_jsonld_for_all() -> bool:
+    """Probe JSON-LD articleBody on non-paywall URLs before Jina fallback.
+
+    Much faster than Jina on SEO-heavy sites (<1s vs 5-15s). Default true.
+    Disable if you want generic URLs to go straight to Jina.
+    """
+    return os.getenv("PAYWALL_JSONLD_FOR_ALL", "true").lower() in ("true", "1", "yes")

@@ -15,7 +15,7 @@ from feedgrab.schema import (
     UnifiedContent, SourceType,
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
-    from_github, from_feishu, from_kdocs, from_youdao,
+    from_github, from_feishu, from_kdocs, from_youdao, from_web,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.utils.url_validator import validate_url
@@ -348,7 +348,18 @@ class UniversalReader:
                 return from_telegram(messages[0], channel, channel)
             raise ValueError(f"No messages from Telegram channel: {url}")
 
-        # Fallback: Jina Reader for any unknown URL
+        # Fallback: paywall bypass (Tier 0-7) → Jina Reader (final)
+        from feedgrab.config import paywall_enabled
+        if paywall_enabled():
+            try:
+                from feedgrab.fetchers.paywall import try_paywall_bypass
+                paywall_data = try_paywall_bypass(url)
+                if paywall_data:
+                    paywall_data["url"] = url
+                    return from_web(paywall_data)
+            except Exception as e:
+                logger.warning(f"Paywall bypass error, falling back to Jina: {e}")
+
         logger.info(f"Using Jina fallback for: {url}")
         data = fetch_via_jina(url)
         return UnifiedContent(
