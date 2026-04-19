@@ -198,7 +198,9 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Platform | Text Fetch | Video/Audio Transcript |
 |----------|-----------|----------------------|
 | YouTube | **InnerTube API** (zero deps, zero quota) + YouTube Data API v3 search | InnerTube → yt-dlp subtitles → Groq Whisper fallback + smart segmentation + chapters |
-| Bilibili (B站) | API | via Claude Code skill |
+| Bilibili (B站) | API metadata | **3-tier subtitle cascade** (`/x/player/v2` → `/x/player/wbi/v2` WBI-signed → Whisper opt-in) + shared Whisper pipeline |
+| **Xiaoyuzhou (小宇宙)** | `__NEXT_DATA__` SSR (title/shownotes/podcast/m4a URL) | **Groq Whisper auto-transcribe** + smart segmentation + chapters |
+| **Ximalaya (喜马拉雅)** | Web Revision API (audio + simple, free tracks m4a direct link) | **Groq Whisper auto-transcribe** (paid tracks `canPlay=false` gracefully degraded) |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) / Album batch (`mpweixin-zhuanji`) | — |
 | GitHub | **REST API** (repo metadata + Chinese README priority (incl. subdirectory language link search) + relative image URL resolution + summary extraction) | — |
@@ -209,7 +211,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Zhihu (知乎) | **API v4** → **Playwright CDP/DOM** → Jina (single Q&A top 3 answers + articles + **keyword search `zhihu-so`**) | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
-| 小宇宙 (Xiaoyuzhou) | — | via Claude Code skill |
+| 小宇宙 (Xiaoyuzhou) | see Xiaoyuzhou row above | Groq Whisper auto-transcribe |
 | Apple Podcasts | — | via Claude Code skill |
 | **Paywalled news sites** (NYT/WSJ/FT/Economist/Bloomberg/SCMP, 300+) | **7-tier paywall bypass** (JSON-LD probe + Googlebot/Bingbot UA + AMP pages + archive.today + Google Cache) | — |
 | Any web page | **JSON-LD probe** → Jina fallback | — |

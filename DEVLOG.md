@@ -2,6 +2,105 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-19 · v0.17.0 · 小宇宙 / 喜马拉雅 / B 站字幕（P1 三平台支持）
+
+### 背景
+
+feedgrab v0.16.0 完成付费墙绕过后，继续执行 `迭代方案调研报告/20260419-qiaomu-anything-to-notebooklm对比分析.md` 的 P1 计划：**三个头部中文音频/视频平台 —— 小宇宙（xiaoyuzhoufm.com）、喜马拉雅（ximalaya.com）、B 站字幕/转录**。其中小宇宙之前 `_detect_platform` 已识别为 `"podcast"` 但无 fetcher，落 Jina 兜底只能拿 SSR 简介；喜马拉雅完全未识别；B 站 `fetchers/bilibili.py` 只抓元数据，无字幕/转录能力。
+
+P1 目标：**任意播客 URL → 完整带时间戳的中文转录 Markdown**，不依赖 qiaomu 用的付费第三方 Get笔记 API，全部自研逆向 + 复用已有 YouTube Whisper 管线。
+
+### 功能内容
+
+1. **新增 `feedgrab/utils/transcribe.py`**（~180 行）—— Whisper 共享薄层，不重构 youtube.py
+   - `groq_transcribe_file(audio_path)` 本地文件转录（≥95 MB 自动 ffmpeg 分片）
+   - `groq_transcribe_url(audio_url, referer)` 下载 + 转录 + 自动清理
+   - `format_transcript(snippets, description)` 委托 `youtube._parse_chapters` + `_segment_into_sentences` + `_format_transcript_markdown`
+   - `subtitle_body_to_snippets(body)` 将 B 站字幕 `body` 转成 Whisper snippets 格式
+
+2. **新增 `feedgrab/utils/bilibili_wbi.py`**（~150 行）—— B 站 WBI 签名自研实现
+   - `fetch_wbi_keys()` 从 `/x/web-interface/nav` 提取 `img_key` + `sub_key`，5 分钟磁盘缓存（`sessions/cache/bilibili_wbi_key.json`）
+   - `get_mixin_key()` 64 元素 `MIXIN_KEY_ENC_TAB` 置换 → 取前 32 字符
+   - `sign_wbi_params()` 按 key 排序 + 过滤 `!()*'` + URL 编码 + `wts` + `md5(query+mixin_key)` → `w_rid`
+   - 真实网络验证：生成 `mixin_key=ea1db124af3c7062474693fa704f4ff8`（与社区文档金标准一致）
+
+3. **新增 `feedgrab/fetchers/xiaoyuzhou.py`**（~180 行）—— 小宇宙单集抓取
+   - Tier 1：HTTP 抓页面 → 正则提取 `<script id="__NEXT_DATA__">` → `json.loads` → `props.pageProps.episode.media.source.url` (m4a)
+   - Tier 2：`groq_transcribe_url(m4a, referer="https://www.xiaoyuzhoufm.com/")` 转录
+   - shownotes HTML → Markdown（markdownify）
+   - 完整元数据：title / podcast_name / podcast_id / author / duration / pubDate / image / shownotes
+
+4. **新增 `feedgrab/fetchers/ximalaya.py`**（~190 行）—— 喜马拉雅单集抓取
+   - Tier 1：`GET /revision/track/v2/audio?ptype=1&trackId={id}` → `data.src` + `canPlay`
+   - 若 `canPlay=False`（付费节目）：logger.warning 提示 + 返回可用元数据（不强破解）
+   - Tier 2：`GET /revision/track/simple?trackId={id}` → 标题 + 专辑 + 主播
+   - Tier 3：`groq_transcribe_url(src, referer="https://www.ximalaya.com/")`（仅免费节目）
+   - 支持 3 种 URL 格式：`/sound/{id}` / `/{cat}/{aid}/{tid}` / 移动 `m.ximalaya.com/sound/{id}`
+
+5. **扩展 `feedgrab/fetchers/bilibili.py`**（+~170 行）—— 字幕抓取 + Whisper 兜底
+   - 现有 `x/web-interface/view` → 补充 `aid` / `cid`（之前没取）
+   - Tier 1 `/x/player/v2`（无签名，覆盖老视频）→ Tier 2 `/x/player/wbi/v2`（WBI 签名，覆盖新视频）
+   - 字幕选择：exact lang → `zh-CN` → `zh-Hans` → `zh-Hant` → `zh` → `ai-zh` → `en` → first
+   - 字幕 JSON 下载 + `subtitle_body_to_snippets` → `format_transcript` 统一 Markdown 输出
+   - Tier 3 Whisper 兜底：`BILIBILI_SUBTITLE_WHISPER=true` 时调 `youtube._transcribe_via_whisper`（yt-dlp 支持 B 站）
+   - 新增 extra 字段：`aid` / `cid` / `like_count` / `coin_count` / `favorite_count` / `has_transcript`
+
+6. **2 个新 SourceType**：`SourceType.XIAOYUZHOU` / `SourceType.XIMALAYA`，对应 `output/Xiaoyuzhou/` / `output/Ximalaya/`
+
+7. **2 个新工厂 + 1 个扩展工厂**（`schema.py`）：
+   - `from_xiaoyuzhou(data)` / `from_ximalaya(data)` 新建
+   - `from_bilibili(data)` 扩展：`content` 拼接 description + `## 🎙️ 转录` + transcript；`extra` 新增 aid/cid/like/coin/favorite/has_transcript
+   - 共享 `_build_podcast_content()` 拼装 `## 📝 Shownotes` + `## 🎙️ 完整转录` 两段
+
+8. **reader.py 路由**：`xiaoyuzhoufm.com` → `"xiaoyuzhou"`（原 `"podcast"`），新增 `ximalaya.com` → `"ximalaya"`，`_fetch` +2 分支
+
+9. **配置项（7 个）**：
+   - `XIAOYUZHOU_ENABLED` / `XIAOYUZHOU_WHISPER`（均默认 true）
+   - `XIMALAYA_ENABLED` / `XIMALAYA_WHISPER`（均默认 true）
+   - `BILIBILI_SUBTITLE_ENABLED`（默认 true）/ `BILIBILI_SUBTITLE_LANG`（默认 `zh-CN`）/ `BILIBILI_SUBTITLE_WHISPER`（默认 false，节约 Groq 额度）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/utils/transcribe.py` | 新增 | Whisper 共享层（4 个公开 API） |
+| `feedgrab/utils/bilibili_wbi.py` | 新增 | WBI 签名 + nav 缓存 |
+| `feedgrab/fetchers/xiaoyuzhou.py` | 新增 | SSR 提取 + Whisper |
+| `feedgrab/fetchers/ximalaya.py` | 新增 | Web API + canPlay 降级 + Whisper |
+| `feedgrab/fetchers/bilibili.py` | 重写 | Tier 0 元数据 + Tier 1/2 字幕 + Tier 3 Whisper |
+| `feedgrab/config.py` | 修改 | +7 个 `xiaoyuzhou_*()` / `ximalaya_*()` / `bilibili_subtitle_*()` 配置函数 |
+| `feedgrab/schema.py` | 修改 | +2 SourceType + 2 from_* 工厂 + 扩展 from_bilibili + `_build_podcast_content` 共享 |
+| `feedgrab/reader.py` | 修改 | 路由：+ `ximalaya`，`xiaoyuzhou` 替代原 `podcast`；`_fetch` +2 分支 |
+| `feedgrab/utils/storage.py` | 修改 | `PLATFORM_FOLDER_MAP` +2 条 |
+| `.env.example` | 修改 | +3 个 section（小宇宙 / 喜马拉雅 / B 站字幕） |
+| `tests/test_p1_platforms.py` | 新增 | 41 条单元测试 |
+
+### 验证结果
+
+- ✅ `pytest tests/test_p1_platforms.py -v` → **41 passed**
+- ✅ `pytest tests/ -q` → **70 passed in 0.42s**（29 旧 + 41 新）
+- ✅ WBI 签名网络验证：`mixin_key=ea1db124af3c7062474693fa704f4ff8`（社区文档金标准）
+- ✅ B 站实抓（`BV1GJ411x7h7`）：Tier 0 元数据 + Tier 1 v2 + Tier 2 WBI 全部调通；音乐视频无字幕，优雅降级（`has_transcript: False`）
+- ✅ 小宇宙 fetcher：HTTP 404 等错误正确抛 RuntimeError
+- ✅ YouTube 回归：`format_transcript` 正确委托 youtube.py 的 `_parse_chapters` + `_segment_into_sentences` + `_format_transcript_markdown`，输出含章节标题（`## Intro [0:00]`）+ `[HH:MM:SS → HH:MM:SS]` 时间戳
+- ✅ 路由检测：`xiaoyuzhoufm.com→xiaoyuzhou`、`ximalaya.com→ximalaya`、`bilibili→bilibili`、`github→github`（未被新逻辑劫持）
+- ✅ 配置默认值正确（`BILIBILI_SUBTITLE_WHISPER=false` 节约 Groq 额度）
+
+### 设计决策
+
+- **不重构 youtube.py**：新建 `utils/transcribe.py` 作为"共享薄层"委托 youtube.py 内部函数（`_whisper_single`/`_whisper_chunked`/`_segment_into_sentences`/`_format_transcript_markdown`/`_parse_chapters`），零动现有代码保证 YouTube 回归
+- **小宇宙走 SSR 不用移动 API**：移动 API 需 device token；`__NEXT_DATA__` 完整（episode + podcast + shownotes + m4a URL），技术路线与 xhs `__INITIAL_STATE__` 一致
+- **喜马拉雅付费节目不破解**：`canPlay=false` 优雅降级为"元数据 + warning"，feedgrab 定位知识管理而非盗版
+- **B 站字幕 3 级兜底，Whisper 默认关**：字幕免费免额度；Whisper 显式启用避免意外超配额
+- **WBI 签名自研不引 bilibili-api-python**：算法公开稳定 4 年未变，仅 150 行 Python，无需引入 >10k 行大库
+- **3 个独立 SourceType**：与现有每平台独立 SourceType 风格一致，独立目录便于 Obsidian 索引
+
+### 状态
+
+已完成 ✅
+
+---
+
 ## 2026-04-19 · v0.16.0 · 付费墙绕过 + JSON-LD articleBody 提取（融合 qiaomu fetch_url.sh）
 
 ### 背景

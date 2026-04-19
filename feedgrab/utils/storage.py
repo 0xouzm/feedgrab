@@ -148,6 +148,8 @@ PLATFORM_FOLDER_MAP = {
     SourceType.KDOCS: "KDocs",
     SourceType.YOUDAO: "NoteYouDao",
     SourceType.ZHIHU: "Zhihu",
+    SourceType.XIAOYUZHOU: "Xiaoyuzhou",
+    SourceType.XIMALAYA: "Ximalaya",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",
     SourceType.WEB: "Web",

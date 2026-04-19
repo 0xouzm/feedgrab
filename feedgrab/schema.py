@@ -36,6 +36,8 @@ class SourceType(str, Enum):
     KDOCS = "kdocs"
     YOUDAO = "youdao"
     ZHIHU = "zhihu"
+    XIAOYUZHOU = "xiaoyuzhou"
+    XIMALAYA = "ximalaya"
     WEB = "web"
     MANUAL = "manual"
 
@@ -149,18 +151,33 @@ def from_rss(article: dict) -> UnifiedContent:
 
 
 def from_bilibili(video: dict) -> UnifiedContent:
+    # Build content: description + transcript (if available)
+    description = video.get('description', '') or ''
+    transcript = video.get('transcript', '') or ''
+    if transcript:
+        content = f"{description}\n\n## 🎙️ 转录\n\n{transcript}" if description else transcript
+    else:
+        content = description
+
     return UnifiedContent(
         source_type=SourceType.BILIBILI,
         source_name=video.get('author', ''),
         title=video.get('title', ''),
-        content=video.get('description', ''),
+        content=content,
         url=video.get('url', ''),
         media_type=MediaType.VIDEO,
         media_url=video.get('cover', ''),
         extra={
             "bvid": video.get('bvid', ''),
+            "aid": video.get('aid', 0),
+            "cid": video.get('cid', 0),
             "duration": video.get('duration', 0),
             "view_count": video.get('view_count', 0),
+            "like_count": video.get('like_count', 0),
+            "coin_count": video.get('coin_count', 0),
+            "favorite_count": video.get('favorite_count', 0),
+            "has_transcript": video.get('has_transcript', False),
+            "cover_image": video.get('cover', ''),
         },
     )
 
@@ -578,6 +595,72 @@ def from_web(data: dict) -> UnifiedContent:
         content=data.get("content", ""),
         url=url,
         extra=extra,
+    )
+
+
+def _build_podcast_content(data: dict) -> str:
+    """Combine shownotes / description + transcript into a single Markdown body."""
+    shownotes = (data.get("shownotes") or "").strip()
+    description = (data.get("description") or "").strip()
+    transcript = (data.get("transcript") or "").strip()
+
+    parts = []
+    intro = shownotes or description
+    if intro:
+        parts.append("## 📝 Shownotes\n\n" + intro if shownotes else intro)
+    if transcript:
+        parts.append("## 🎙️ 完整转录\n\n" + transcript)
+    return "\n\n".join(parts)
+
+
+def from_xiaoyuzhou(data: dict) -> UnifiedContent:
+    """Build UnifiedContent from xiaoyuzhou fetcher output."""
+    return UnifiedContent(
+        source_type=SourceType.XIAOYUZHOU,
+        source_name=data.get("podcast_name", "") or data.get("author", "") or "xiaoyuzhou",
+        title=data.get("title", "") or "Untitled",
+        content=_build_podcast_content(data),
+        url=data.get("url", ""),
+        media_type=MediaType.AUDIO,
+        media_url=data.get("audio_url", "") or data.get("cover_image", ""),
+        extra={
+            "episode_id": data.get("episode_id", ""),
+            "podcast_name": data.get("podcast_name", ""),
+            "podcast_id": data.get("podcast_id", ""),
+            "author": data.get("author", ""),
+            "duration": data.get("duration", ""),
+            "duration_seconds": data.get("duration_seconds", 0),
+            "published": data.get("published", ""),
+            "cover_image": data.get("cover_image", ""),
+            "audio_url": data.get("audio_url", ""),
+            "has_transcript": data.get("has_transcript", False),
+        },
+    )
+
+
+def from_ximalaya(data: dict) -> UnifiedContent:
+    """Build UnifiedContent from ximalaya fetcher output."""
+    return UnifiedContent(
+        source_type=SourceType.XIMALAYA,
+        source_name=data.get("album_name", "") or data.get("author", "") or "ximalaya",
+        title=data.get("title", "") or "Untitled",
+        content=_build_podcast_content(data),
+        url=data.get("url", ""),
+        media_type=MediaType.AUDIO,
+        media_url=data.get("audio_url", "") or data.get("cover_image", ""),
+        extra={
+            "track_id": data.get("track_id", ""),
+            "album_name": data.get("album_name", ""),
+            "album_id": data.get("album_id", ""),
+            "author": data.get("author", ""),
+            "duration": data.get("duration", ""),
+            "duration_seconds": data.get("duration_seconds", 0),
+            "published": data.get("published", ""),
+            "cover_image": data.get("cover_image", ""),
+            "audio_url": data.get("audio_url", ""),
+            "can_play": data.get("can_play", True),
+            "has_transcript": data.get("has_transcript", False),
+        },
     )
 
 

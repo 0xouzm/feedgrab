@@ -935,3 +935,69 @@ def paywall_jsonld_for_all() -> bool:
     Disable if you want generic URLs to go straight to Jina.
     """
     return os.getenv("PAYWALL_JSONLD_FOR_ALL", "true").lower() in ("true", "1", "yes")
+
+
+# ---------------------------------------------------------------------------
+# Xiaoyuzhou (小宇宙) podcast
+# ---------------------------------------------------------------------------
+
+def xiaoyuzhou_enabled() -> bool:
+    """Master switch for Xiaoyuzhou fetcher. Default true."""
+    return os.getenv("XIAOYUZHOU_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def xiaoyuzhou_whisper() -> bool:
+    """Transcribe Xiaoyuzhou audio via Groq Whisper. Default true.
+
+    Disable if you only want metadata + shownotes (saves GROQ quota).
+    """
+    return os.getenv("XIAOYUZHOU_WHISPER", "true").lower() in ("true", "1", "yes")
+
+
+# ---------------------------------------------------------------------------
+# Ximalaya (喜马拉雅)
+# ---------------------------------------------------------------------------
+
+def ximalaya_enabled() -> bool:
+    """Master switch for Ximalaya fetcher. Default true."""
+    return os.getenv("XIMALAYA_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def ximalaya_whisper() -> bool:
+    """Transcribe Ximalaya audio via Groq Whisper. Default true.
+
+    Disable if you only want metadata (saves GROQ quota). Paid tracks
+    (``canPlay=false``) are always skipped regardless of this flag.
+    """
+    return os.getenv("XIMALAYA_WHISPER", "true").lower() in ("true", "1", "yes")
+
+
+# ---------------------------------------------------------------------------
+# Bilibili subtitle / transcript
+# ---------------------------------------------------------------------------
+
+def bilibili_subtitle_enabled() -> bool:
+    """Fetch subtitles for Bilibili videos. Default true.
+
+    Subtitles are typically free (AI-generated or user-uploaded), so we
+    always try them. Use /x/player/v2 first, /x/player/wbi/v2 (WBI-signed)
+    as second tier.
+    """
+    return os.getenv("BILIBILI_SUBTITLE_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def bilibili_subtitle_lang() -> str:
+    """Preferred subtitle language. Default ``zh-CN``.
+
+    Falls back to zh-Hans/zh/ai-zh/en if exact match unavailable.
+    """
+    return os.getenv("BILIBILI_SUBTITLE_LANG", "zh-CN").strip() or "zh-CN"
+
+
+def bilibili_subtitle_whisper() -> bool:
+    """Whisper fallback when Bilibili has no subtitles. Default false.
+
+    Transcribing Bilibili audio consumes GROQ quota + time, so opt-in only.
+    When enabled, yt-dlp downloads audio → Groq Whisper transcribes.
+    """
+    return os.getenv("BILIBILI_SUBTITLE_WHISPER", "false").lower() in ("true", "1", "yes")

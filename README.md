@@ -224,7 +224,9 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | 平台 | 文本抓取 | 视频/音频转录 |
 |------|---------|-------------|
 | YouTube | **InnerTube API**（零依赖零 quota）+ YouTube Data API v3 搜索 | InnerTube → yt-dlp 字幕 → Groq Whisper 兜底 + 智能断句 + 章节解析 |
-| B 站 (Bilibili) | API | 通过 Claude Code 技能 |
+| B 站 (Bilibili) | API 元数据 | **字幕 3 级兜底**（`/x/player/v2` → `/x/player/wbi/v2` WBI 签名 → Whisper 可选） + 共享 Whisper 管线 |
+| **小宇宙（Xiaoyuzhou）** | `__NEXT_DATA__` SSR（title/shownotes/podcast/m4a URL） | **Groq Whisper 自动转录** + 智能断句 + 章节解析 |
+| **喜马拉雅（Ximalaya）** | Web Revision API（audio + simple，免费节目直链 m4a） | **Groq Whisper 自动转录**（付费节目 `canPlay=false` 降级元数据） |
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`）/ 专辑批量（`mpweixin-zhuanji`） | — |
 | GitHub | **REST API**（仓库元数据 + 中文 README 优先（含子目录语言链接搜索）+ 相对图片链接补全 + 摘要提取） | — |
@@ -235,7 +237,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | 知乎 | **API v4** → **Playwright CDP/DOM** → Jina（单篇问答前 3 楼 + 专栏文章 + **关键词搜索 `zhihu-so`**） | — |
 | Telegram | Telethon | — |
 | RSS | feedparser | — |
-| 小宇宙播客 | — | 通过 Claude Code 技能 |
+| 小宇宙播客 | 见上方「小宇宙」行 | Groq Whisper 自动转录 |
 | Apple Podcasts | — | 通过 Claude Code 技能 |
 | **付费新闻网站**（NYT/WSJ/FT/Economist/Bloomberg/SCMP 等 300+ 站） | **7 级 Tier 付费墙绕过**（JSON-LD 探测 + Googlebot/Bingbot UA + AMP 页面 + archive.today + Google Cache） | — |
 | 任意网页 | **JSON-LD 前置** → Jina 兜底 | — |

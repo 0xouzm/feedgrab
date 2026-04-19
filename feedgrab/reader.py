@@ -16,6 +16,7 @@ from feedgrab.schema import (
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
     from_github, from_feishu, from_kdocs, from_youdao, from_web,
+    from_xiaoyuzhou, from_ximalaya,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.utils.url_validator import validate_url
@@ -70,7 +71,9 @@ class UniversalReader:
         if "bilibili.com" in domain or "b23.tv" in domain:
             return "bilibili"
         if "xiaoyuzhoufm.com" in domain:
-            return "podcast"
+            return "xiaoyuzhou"
+        if "ximalaya.com" in domain:
+            return "ximalaya"
         if "podcasts.apple.com" in domain:
             return "podcast"
         if "t.me" in domain or "telegram.org" in domain:
@@ -330,6 +333,22 @@ class UniversalReader:
             data = await fetch_zhihu(url)
             from feedgrab.schema import from_zhihu
             return from_zhihu(data)
+
+        if platform == "xiaoyuzhou":
+            from feedgrab.config import xiaoyuzhou_enabled
+            if not xiaoyuzhou_enabled():
+                raise RuntimeError("小宇宙抓取已禁用，请设置 XIAOYUZHOU_ENABLED=true")
+            from feedgrab.fetchers.xiaoyuzhou import fetch_xiaoyuzhou
+            data = await fetch_xiaoyuzhou(url)
+            return from_xiaoyuzhou(data)
+
+        if platform == "ximalaya":
+            from feedgrab.config import ximalaya_enabled
+            if not ximalaya_enabled():
+                raise RuntimeError("喜马拉雅抓取已禁用，请设置 XIMALAYA_ENABLED=true")
+            from feedgrab.fetchers.ximalaya import fetch_ximalaya
+            data = await fetch_ximalaya(url)
+            return from_ximalaya(data)
 
         if platform == "rss":
             from feedgrab.fetchers.rss import fetch_rss
