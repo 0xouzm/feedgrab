@@ -22,12 +22,21 @@ status_exit=$?
 mapfile -t git_diff_stat < <(run_git diff --stat || true)
 diff_exit=$?
 
-required_docs=("DEVLOG.md" "CLAUDE.md" "README.md" "README_EN.md")
+# Scan skills/*/SKILL.md (feedgrab project's own skill manifests)
+skill_manifests=()
+if [[ -d "$repo_root/skills" ]]; then
+  while IFS= read -r -d '' manifest; do
+    skill_manifests+=("${manifest#$repo_root/}")
+  done < <(find "$repo_root/skills" -mindepth 2 -maxdepth 2 -name SKILL.md -print0 2>/dev/null | sort -z)
+fi
+
+required_docs=("DEVLOG.md" "CLAUDE.md" "AGENTS.md" "README.md" "README_EN.md")
 next_actions=(
   "Confirm the feature is finished and tested"
   "Update the top entry in DEVLOG.md"
-  "Sync CLAUDE.md project notes with the latest code"
+  "Sync CLAUDE.md and AGENTS.md project notes with the latest code"
   "Sync README.md and README_EN.md if needed"
+  "Sync skills/*/SKILL.md (description, platforms, commands) with new capabilities"
   "Review git diff before commit and push"
 )
 
@@ -36,6 +45,7 @@ if [[ "$json_mode" -eq 1 ]]; then
   export STATUS_EXIT="$status_exit"
   export DIFF_EXIT="$diff_exit"
   export REQUIRED_DOCS="$(printf '%s\n' "${required_docs[@]}")"
+  export SKILL_MANIFESTS="$(printf '%s\n' "${skill_manifests[@]}")"
   export GIT_STATUS_LINES="$(printf '%s\n' "${git_status[@]}")"
   export GIT_DIFF_STAT_LINES="$(printf '%s\n' "${git_diff_stat[@]}")"
   export NEXT_ACTIONS="$(printf '%s\n' "${next_actions[@]}")"
@@ -46,6 +56,7 @@ from pathlib import Path
 
 repo_root = os.environ["REPO_ROOT"]
 required_docs = [line for line in os.environ.get("REQUIRED_DOCS", "").splitlines() if line]
+skill_manifests = [line for line in os.environ.get("SKILL_MANIFESTS", "").splitlines() if line]
 git_status = [line for line in os.environ.get("GIT_STATUS_LINES", "").splitlines() if line]
 git_diff_stat = [line for line in os.environ.get("GIT_DIFF_STAT_LINES", "").splitlines() if line]
 next_actions = [line for line in os.environ.get("NEXT_ACTIONS", "").splitlines() if line]
@@ -58,6 +69,9 @@ result = {
     "git_diff_stat": git_diff_stat,
     "required_docs": [
         {"path": doc, "exists": Path(repo_root, doc).exists()} for doc in required_docs
+    ],
+    "skill_manifests": [
+        {"path": m, "exists": Path(repo_root, m).exists()} for m in skill_manifests
     ],
     "next_actions": next_actions,
 }
@@ -77,6 +91,16 @@ for doc in "${required_docs[@]}"; do
     echo "MISSING $doc"
   fi
 done
+
+echo
+echo "[skill-manifests]"
+if [[ ${#skill_manifests[@]} -eq 0 ]]; then
+  echo "(no skills/ directory found)"
+else
+  for manifest in "${skill_manifests[@]}"; do
+    echo "OK $manifest"
+  done
+fi
 
 echo
 echo "[git-status --short]"

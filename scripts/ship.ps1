@@ -66,13 +66,28 @@ finally {
     Pop-Location
 }
 
-$requiredDocs = @("DEVLOG.md", "CLAUDE.md", "README.md", "README_EN.md")
+$requiredDocs = @("DEVLOG.md", "CLAUDE.md", "AGENTS.md", "README.md", "README_EN.md")
 $docStates = foreach ($doc in $requiredDocs) {
     $fullPath = Join-Path $repoRoot $doc
     [pscustomobject]@{
         path = $doc
         exists = $(Test-Path $fullPath)
     }
+}
+
+# Scan skills/*/SKILL.md (feedgrab project's own skill manifests)
+$skillsDir = Join-Path $repoRoot "skills"
+$skillManifests = @()
+if (Test-Path $skillsDir) {
+    $skillManifests = Get-ChildItem -Path $skillsDir -Filter "SKILL.md" -Recurse -Depth 1 -File 2>$null |
+        Sort-Object FullName |
+        ForEach-Object {
+            $relative = $_.FullName.Substring($repoRoot.Length).TrimStart('\', '/') -replace '\\', '/'
+            [pscustomobject]@{
+                path = $relative
+                exists = $true
+            }
+        }
 }
 
 $result = [ordered]@{
@@ -82,11 +97,13 @@ $result = [ordered]@{
     git_status = $status.Output
     git_diff_stat = $diffStat.Output
     required_docs = $docStates
+    skill_manifests = $skillManifests
     next_actions = @(
         "Confirm the feature is finished and tested",
         "Update the top entry in DEVLOG.md",
-        "Sync CLAUDE.md project notes with the latest code",
+        "Sync CLAUDE.md and AGENTS.md project notes with the latest code",
         "Sync README.md and README_EN.md if needed",
+        "Sync skills/*/SKILL.md (description, platforms, commands) with new capabilities",
         "Review git diff before commit and push"
     )
 }
@@ -108,6 +125,17 @@ foreach ($doc in $docStates) {
         $flag = "MISSING"
     }
     Write-Output "$flag $($doc.path)"
+}
+
+Write-Output ""
+Write-Output "[skill-manifests]"
+if ($skillManifests.Count -eq 0) {
+    Write-Output "(no skills/ directory found)"
+}
+else {
+    foreach ($manifest in $skillManifests) {
+        Write-Output "OK $($manifest.path)"
+    }
 }
 
 Write-Output ""
