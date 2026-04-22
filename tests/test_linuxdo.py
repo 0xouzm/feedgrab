@@ -2,6 +2,7 @@
 """LinuxDo / Discourse topic parsing tests."""
 
 from feedgrab.fetchers.linuxdo import (
+    _extract_first_image,
     _html_to_markdown,
     _parse_topic_payload,
     is_linuxdo_url,
@@ -95,6 +96,55 @@ def test_linuxdo_html_to_markdown_makes_links_absolute():
     assert "https://linux.do/uploads/default/original/1X/demo.png" in md
 
 
+def test_linuxdo_html_to_markdown_simplifies_lightbox_images():
+    html = (
+        '<p><a class="lightbox" href="https://cdn3.linux.do/original/4X/c/a/7/demo.jpeg" '
+        'title="封面-1-设计稿 (1)">'
+        '<img src="https://cdn3.linux.do/optimized/4X/c/a/7/demo_2_690x388.jpeg" '
+        'alt="封面-1-设计稿 (1)">'
+        '<span class="meta">'
+        '<span class="filename">封面-1-设计稿 (1)</span>'
+        '<span class="informations">1920×1080 135 KB</span>'
+        "</span>"
+        "</a></p>"
+    )
+    md = _html_to_markdown(html)
+    assert '![封面-1-设计稿 (1)](https://cdn3.linux.do/original/4X/c/a/7/demo.jpeg)' in md
+    assert "optimized/4X" not in md
+    assert "1920×1080 135 KB" not in md
+    assert not md.startswith("[![")
+
+
+def test_linuxdo_html_to_markdown_filters_avatar_images():
+    html = (
+        "<p>引用卡片保留正文。</p>"
+        '<p><img src="https://cdn.ldstatic.com/user_avatar/linux.do/sandun/48/1505730_2.png" alt=""></p>'
+        '<p><img src="https://cdn.ldstatic.com/letter_avatar/linux.do/koushuiwa/48/5_c16b2ee14fe83ed9a59fc65fbec00f85.png" alt=""></p>'
+        '<p><a href="/t/topic/1782304">原帖链接</a></p>'
+    )
+    md = _html_to_markdown(html)
+    assert "引用卡片保留正文。" in md
+    assert "原帖链接" in md
+    assert "https://linux.do/t/topic/1782304" in md
+    assert "user_avatar" not in md
+    assert "letter_avatar" not in md
+
+
+def test_linuxdo_html_to_markdown_filters_emoji_images_in_links():
+    html = (
+        '<p><a href="/t/topic/1976476/1">'
+        '尼区timon钱包成功订阅claude max20x 实付156'
+        '<img src="https://cdn.ldstatic.com/images/emoji/twemoji/kitchen_knife.png?v=15" alt="kitchen_knife">'
+        '(约1064 rmb),订阅经验分享'
+        "</a></p>"
+    )
+    md = _html_to_markdown(html)
+    assert "emoji/twemoji" not in md
+    assert "kitchen_knife" not in md
+    assert "(约1064 rmb),订阅经验分享" in md
+    assert "https://linux.do/t/topic/1976476/1" in md
+
+
 def test_linuxdo_html_to_markdown_uses_callout_for_simple_details():
     html = (
         "<p>折叠前提示</p>"
@@ -138,6 +188,24 @@ def test_parse_topic_payload_builds_thread_markdown():
     assert "```python" in data["content"]
     assert "https://linux.do/uploads/default/original/1X/demo.png" in data["content"]
     assert data["tags"] == ["快问快答", "人工智能"]
+
+
+def test_extract_first_image_prefers_lightbox_original():
+    payload = {
+        "image_url": "https://cdn3.ldstatic.com/optimized/4X/c/a/7/demo_2_1024x576.jpeg",
+        "post_stream": {
+            "posts": [
+                {
+                    "cooked": (
+                        '<p><a class="lightbox" href="https://cdn3.linux.do/original/4X/c/a/7/demo.jpeg">'
+                        '<img src="https://cdn3.linux.do/optimized/4X/c/a/7/demo_2_690x388.jpeg" alt="demo">'
+                        "</a></p>"
+                    )
+                }
+            ]
+        }
+    }
+    assert _extract_first_image(payload) == "https://cdn3.linux.do/original/4X/c/a/7/demo.jpeg"
 
 
 def test_from_linuxdo_builds_unified_content():

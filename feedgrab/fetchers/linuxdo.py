@@ -162,6 +162,9 @@ def _html_to_markdown(html: str) -> str:
         elif val.startswith("/"):
             tag[attr] = urljoin("https://linux.do", val)
 
+    _remove_avatar_images(soup)
+    _simplify_lightbox_images(soup)
+
     # Preserve code fences with language.
     details_blocks: List[str] = []
     for idx, details in enumerate(list(soup.find_all("details"))):
@@ -212,6 +215,40 @@ def _html_to_markdown(html: str) -> str:
         result = result.replace(f"FEEDGRABCODEBLOCK{idx}TOKEN", block)
     result = re.sub(r"\n{3,}", "\n\n", result).strip()
     return result
+
+
+def _remove_avatar_images(soup) -> None:
+    """Remove forum avatar and emoji thumbnails that pollute exported markdown."""
+    avatar_markers = ("user_avatar", "letter_avatar", "images/emoji/", "emoji/twemoji")
+    for image in list(soup.find_all("img")):
+        src = (image.get("src") or "").lower()
+        if any(marker in src for marker in avatar_markers):
+            image.decompose()
+
+
+def _simplify_lightbox_images(soup) -> None:
+    """Replace Discourse lightbox wrappers with a single original image node."""
+    for anchor in list(soup.find_all("a")):
+        image = anchor.find("img")
+        if not image:
+            continue
+
+        classes = set(anchor.get("class", []))
+        has_meta = anchor.find(class_="meta") is not None
+        if "lightbox" not in classes and not has_meta:
+            continue
+
+        original_url = (anchor.get("href") or "").strip()
+        if not original_url:
+            continue
+
+        alt_text = (image.get("alt") or anchor.get("title") or "").strip()
+        clean_img = soup.new_tag("img")
+        clean_img["src"] = original_url
+        if alt_text:
+            clean_img["alt"] = alt_text
+
+        anchor.replace_with(clean_img)
 
 
 def _is_simple_details_block(details, inner_md: str) -> bool:
@@ -280,11 +317,21 @@ def _format_iso_dt(raw: str) -> str:
 
 
 def _extract_first_image(payload: Dict[str, Any]) -> str:
-    if payload.get("image_url"):
-        return payload["image_url"]
     posts = payload.get("post_stream", {}).get("posts", [])
-    img_match = re.search(r'<img[^>]+src="([^"]+)"', posts[0].get("cooked", "")) if posts else None
+    cooked = posts[0].get("cooked", "") if posts else ""
+    lightbox_match = re.search(r'<a[^>]+href="([^"]+)"[^>]*>\s*<img\b', cooked)
+    if lightbox_match:
+        src = lightbox_match.group(1)
+        if src.startswith("/"):
+            return urljoin("https://linux.do", src)
+        if src.startswith("//"):
+            return "https:" + src
+        return src
+    img_match = re.search(r'<img[^>]+src="([^"]+)"', cooked)
     if not img_match:
+        image_url = payload.get("image_url", "")
+        if image_url:
+            return image_url
         return ""
     src = img_match.group(1)
     if src.startswith("/"):
