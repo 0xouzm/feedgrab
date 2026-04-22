@@ -75,6 +75,9 @@ feedgrab login wechat
 # Feishu — opens browser for login
 feedgrab login feishu
 
+# LinuxDo / Discourse — opens browser for login
+feedgrab login linuxdo
+
 # KDocs (金山文档) — opens browser for login
 feedgrab login kdocs
 
@@ -143,6 +146,10 @@ FEISHU_APP_ID=your_app_id
 FEISHU_APP_SECRET=your_secret
 FEISHU_DOWNLOAD_IMAGES=true
 FEISHU_CDP_ENABLED=false
+
+# LinuxDo / Discourse
+LINUXDO_CDP_ENABLED=true
+LINUXDO_PAGE_LOAD_TIMEOUT=15000
 
 # KDocs (金山文档)
 KDOCS_CDP_ENABLED=false
