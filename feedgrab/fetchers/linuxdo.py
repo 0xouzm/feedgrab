@@ -219,7 +219,7 @@ def _html_to_markdown(html: str) -> str:
 
 def _remove_avatar_images(soup) -> None:
     """Remove forum avatar and emoji thumbnails that pollute exported markdown."""
-    avatar_markers = ("user_avatar", "letter_avatar", "images/emoji/", "emoji/twemoji")
+    avatar_markers = ("user_avatar", "letter_avatar", "emoji", "twemoji")
     for image in list(soup.find_all("img")):
         src = (image.get("src") or "").lower()
         if any(marker in src for marker in avatar_markers):

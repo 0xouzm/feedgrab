@@ -145,6 +145,20 @@ def test_linuxdo_html_to_markdown_filters_emoji_images_in_links():
     assert "https://linux.do/t/topic/1976476/1" in md
 
 
+def test_linuxdo_html_to_markdown_filters_twemoji_keyword_images():
+    html = (
+        '<p><a href="/t/topic/1976476/1">'
+        '链接标题'
+        '<img src="https://cdn.ldstatic.com/assets/twemoji/kitchen_knife.png?v=15" alt="kitchen_knife">'
+        '链接尾巴'
+        "</a></p>"
+    )
+    md = _html_to_markdown(html)
+    assert "assets/twemoji" not in md
+    assert "kitchen_knife" not in md
+    assert "链接标题链接尾巴" in md
+
+
 def test_linuxdo_html_to_markdown_uses_callout_for_simple_details():
     html = (
         "<p>折叠前提示</p>"
