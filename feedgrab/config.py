@@ -800,6 +800,19 @@ def zhihu_download_images() -> bool:
     return os.getenv("ZHIHU_DOWNLOAD_IMAGES", "false").lower() in ("true", "1", "yes")
 
 
+def linuxdo_cdp_enabled() -> bool:
+    """Connect to running Chrome via CDP for LinuxDo. Default true."""
+    return os.getenv("LINUXDO_CDP_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def linuxdo_page_load_timeout() -> int:
+    """Playwright page element wait timeout in ms. Default 15000."""
+    try:
+        return int(os.getenv("LINUXDO_PAGE_LOAD_TIMEOUT", "15000"))
+    except ValueError:
+        return 15000
+
+
 def zhihu_search_days() -> int:
     """Search within recent N days. Default 30."""
     try:

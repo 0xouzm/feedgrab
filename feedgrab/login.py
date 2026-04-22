@@ -33,6 +33,7 @@ PLATFORM_URLS = {
     "lark": "https://my.feishu.cn",
     "kdocs": "https://www.kdocs.cn",
     "zhihu": "https://www.zhihu.com",
+    "linuxdo": "https://linux.do/",
 }
 
 
@@ -197,6 +198,7 @@ _CDP_COOKIE_DOMAINS = {
     "feishu": [".feishu.cn", ".larksuite.com", ".larkoffice.com"],
     "kdocs": [".kdocs.cn", ".wps.cn"],
     "zhihu": [".zhihu.com"],
+    "linuxdo": [".linux.do"],
 }
 
 # URLs to pass to Network.getCookies (legacy WebSocket mode)
@@ -207,6 +209,7 @@ _CDP_COOKIE_URLS = {
     "feishu": ["https://my.feishu.cn", "https://open.feishu.cn"],
     "kdocs": ["https://www.kdocs.cn"],
     "zhihu": ["https://www.zhihu.com"],
+    "linuxdo": ["https://linux.do"],
 }
 
 

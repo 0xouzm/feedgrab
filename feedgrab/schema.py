@@ -36,6 +36,7 @@ class SourceType(str, Enum):
     KDOCS = "kdocs"
     YOUDAO = "youdao"
     ZHIHU = "zhihu"
+    LINUXDO = "linuxdo"
     XIAOYUZHOU = "xiaoyuzhou"
     XIMALAYA = "ximalaya"
     WEB = "web"
@@ -556,6 +557,33 @@ def from_zhihu(data: dict) -> UnifiedContent:
             "publish_date": data.get("publish_date", ""),
             "img_subdir": data.get("img_subdir", ""),
             "answers_list": data.get("answers_list", []),
+        },
+    )
+
+
+def from_linuxdo(data: dict) -> UnifiedContent:
+    """Convert LinuxDo / Discourse topic dict to UnifiedContent."""
+    return UnifiedContent(
+        source_type=SourceType.LINUXDO,
+        source_name=data.get("author", "") or "linux.do",
+        title=data.get("title", ""),
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        category=data.get("category", ""),
+        tags=data.get("tags", []),
+        extra={
+            "topic_id": data.get("topic_id", ""),
+            "topic_slug": data.get("topic_slug", ""),
+            "category": data.get("category", ""),
+            "category_id": data.get("category_id", 0),
+            "posts_count": data.get("posts_count", 0),
+            "reply_count": data.get("reply_count", 0),
+            "like_count": data.get("like_count", 0),
+            "views": data.get("views", 0),
+            "created_at": data.get("created_at", ""),
+            "last_posted_at": data.get("last_posted_at", ""),
+            "cover_image": data.get("cover_image", ""),
+            "post_count_loaded": data.get("post_count_loaded", 0),
         },
     )
 

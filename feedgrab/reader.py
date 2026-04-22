@@ -15,7 +15,7 @@ from feedgrab.schema import (
     UnifiedContent, SourceType,
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
-    from_github, from_feishu, from_kdocs, from_youdao, from_web,
+    from_github, from_feishu, from_kdocs, from_youdao, from_linuxdo, from_web,
     from_xiaoyuzhou, from_ximalaya,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
@@ -89,6 +89,9 @@ class UniversalReader:
         # Zhihu (知乎)
         if "zhihu.com" in domain or "zhuanlan.zhihu.com" in domain:
             return "zhihu"
+        # LinuxDo / Discourse topic pages
+        if ("linux.do" in domain or domain.endswith(".linux.do")) and path.startswith("/t/"):
+            return "linuxdo"
         # Feishu / Lark
         from feedgrab.fetchers.feishu import is_feishu_url
         if is_feishu_url(url):
@@ -265,6 +268,7 @@ class UniversalReader:
                     SourceType.BILIBILI: "Bilibili",
                     SourceType.FEISHU: "Feishu",
                     SourceType.YOUDAO: "NoteYouDao",
+                    SourceType.LINUXDO: "LinuxDo",
                 }
                 plat = _dedup_plat_map.get(content.source_type, "X")
                 index = load_index(platform=plat)
@@ -333,6 +337,11 @@ class UniversalReader:
             data = await fetch_zhihu(url)
             from feedgrab.schema import from_zhihu
             return from_zhihu(data)
+
+        if platform == "linuxdo":
+            from feedgrab.fetchers.linuxdo import fetch_linuxdo
+            data = await fetch_linuxdo(url)
+            return from_linuxdo(data)
 
         if platform == "xiaoyuzhou":
             from feedgrab.config import xiaoyuzhou_enabled
