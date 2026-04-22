@@ -162,7 +162,7 @@ def _html_to_markdown(html: str) -> str:
         elif val.startswith("/"):
             tag[attr] = urljoin("https://linux.do", val)
 
-    _remove_avatar_images(soup)
+    _remove_noise_images(soup)
     _simplify_lightbox_images(soup)
 
     # Preserve code fences with language.
@@ -217,12 +217,22 @@ def _html_to_markdown(html: str) -> str:
     return result
 
 
-def _remove_avatar_images(soup) -> None:
+def _remove_noise_images(soup) -> None:
     """Remove forum avatar and emoji thumbnails that pollute exported markdown."""
     avatar_markers = ("user_avatar", "letter_avatar", "emoji", "twemoji")
+    shortcode_pattern = re.compile(r"^:[a-z0-9_+-]+:$", re.IGNORECASE)
     for image in list(soup.find_all("img")):
         src = (image.get("src") or "").lower()
+        alt = (image.get("alt") or "").strip()
+        title = (image.get("title") or "").strip()
+        classes = [str(cls).lower() for cls in image.get("class", [])]
         if any(marker in src for marker in avatar_markers):
+            image.decompose()
+            continue
+        if any("emoji" in cls for cls in classes):
+            image.decompose()
+            continue
+        if shortcode_pattern.match(alt) or shortcode_pattern.match(title):
             image.decompose()
 
 

@@ -159,6 +159,18 @@ def test_linuxdo_html_to_markdown_filters_twemoji_keyword_images():
     assert "链接标题链接尾巴" in md
 
 
+def test_linuxdo_html_to_markdown_filters_shortcode_emoji_images():
+    html = (
+        "<p>好耶，我最喜欢的省钱CC系列又更新了</p>"
+        '<p><img src="https://cdn3.ldstatic.com/original/3X/e/7/e795be81708bb078edbd3b237c7c58b0190911c3.png?v=15" '
+        'alt=":bili_052:" title=":bili_052:" class="emoji"></p>'
+    )
+    md = _html_to_markdown(html)
+    assert "bili_052" not in md
+    assert "cdn3.ldstatic.com/original/3X/e/7/" not in md
+    assert "好耶，我最喜欢的省钱CC系列又更新了" in md
+
+
 def test_linuxdo_html_to_markdown_uses_callout_for_simple_details():
     html = (
         "<p>折叠前提示</p>"
