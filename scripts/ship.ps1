@@ -66,7 +66,7 @@ finally {
     Pop-Location
 }
 
-$requiredDocs = @("DEVLOG.md", "CLAUDE.md", "AGENTS.md", "README.md", "README_EN.md")
+$requiredDocs = @("DEVLOG.md", "CLAUDE.md", "AGENTS.md", "README.md", "README_en.md")
 $docStates = foreach ($doc in $requiredDocs) {
     $fullPath = Join-Path $repoRoot $doc
     [pscustomobject]@{
@@ -102,7 +102,7 @@ $result = [ordered]@{
         "Confirm the feature is finished and tested",
         "Update the top entry in DEVLOG.md",
         "Sync CLAUDE.md and AGENTS.md project notes with the latest code",
-        "Sync README.md and README_EN.md if needed",
+        "Sync README.md and README_en.md if needed",
         "Sync skills/*/SKILL.md (description, platforms, commands) with new capabilities",
         "Review git diff before commit and push"
     )

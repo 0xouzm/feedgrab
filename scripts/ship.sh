@@ -30,12 +30,12 @@ if [[ -d "$repo_root/skills" ]]; then
   done < <(find "$repo_root/skills" -mindepth 2 -maxdepth 2 -name SKILL.md -print0 2>/dev/null | sort -z)
 fi
 
-required_docs=("DEVLOG.md" "CLAUDE.md" "AGENTS.md" "README.md" "README_EN.md")
+required_docs=("DEVLOG.md" "CLAUDE.md" "AGENTS.md" "README.md" "README_en.md")
 next_actions=(
   "Confirm the feature is finished and tested"
   "Update the top entry in DEVLOG.md"
   "Sync CLAUDE.md and AGENTS.md project notes with the latest code"
-  "Sync README.md and README_EN.md if needed"
+  "Sync README.md and README_en.md if needed"
   "Sync skills/*/SKILL.md (description, platforms, commands) with new capabilities"
   "Review git diff before commit and push"
 )

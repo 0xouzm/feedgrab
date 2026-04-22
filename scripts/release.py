@@ -30,8 +30,8 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CHANGELOG = ROOT / "更新日志.md"
 PLAN = ROOT / "plan.md"
-README_EN = ROOT / "README.md"
-README_ZH = ROOT / "README_zh.md"
+README_EN = ROOT / "README_en.md"
+README_ZH = ROOT / "README.md"
 REPO_URL = "https://github.com/iBigQiang/feedgrab"
 
 
