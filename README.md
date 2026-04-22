@@ -17,9 +17,9 @@
 任意 URL → 平台检测 → 抓取内容 → 统一输出
               ↓                ↓          ↓
          自动识别          文本：Jina Reader    → output/X/作者_日期：标题.md
-         12 平台            视频：InnerTube API → yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
+         17+ 平台           视频：InnerTube API → yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
                            音频：Whisper 转录
-                           API：Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / 飞书 Open API
+                           API：Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / 飞书 Open API / Discourse Topic JSON
                            X/Twitter：GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
 ```
 
@@ -113,6 +113,10 @@ feedgrab https://github.com/nicepkg/aide                          # 仓库首页
 feedgrab https://github.com/nicepkg/aide/blob/main/README.md      # README 文件页
 feedgrab https://github.com/nicepkg/aide/tree/main/src             # 内页（自动回退到仓库级别）
 
+# 抓取 LinuxDo / Discourse 论坛帖子
+feedgrab https://linux.do/t/topic/2032344
+feedgrab login linuxdo                                            # 私有帖或 Cloudflare 严格校验时先登录
+
 # 抓取飞书文档（需要 feedgrab login feishu 或配置 Open API 凭据）
 feedgrab https://xxx.feishu.cn/wiki/ABC123                         # wiki 文档
 feedgrab https://xxx.feishu.cn/docx/ABC123                         # docx 文档
@@ -131,6 +135,7 @@ feedgrab https://url1.com https://url2.com
 
 # 登录某个平台（一次性操作，用于浏览器兜底）
 feedgrab login xhs
+feedgrab login linuxdo
 
 # Chrome CDP 自动提取 Cookie（Chrome 已登录状态下，免去手动登录流程）
 # 前提：Chrome 开启 Remote Debugging（chrome://inspect/#remote-debugging）
@@ -230,6 +235,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | 微信公众号 | Jina → Playwright WeChat JS 提取（单篇 + markdownify 富文本 + 图片防盗链）/ 搜狗搜索（`mpweixin-so`）/ MP 后台 API 按账号批量（`mpweixin-id`）/ 专辑批量（`mpweixin-zhuanji`） | — |
 | GitHub | **REST API**（仓库元数据 + 中文 README 优先（含子目录语言链接搜索）+ 相对图片链接补全 + 摘要提取） | — |
+| LinuxDo / Discourse 论坛 | **Discourse Topic JSON API** → **CDP 复用 Chrome** → **Playwright 页面内 fetch** → Jina（最后兜底；保留楼层、作者、时间、标签与折叠块） | — |
 | 小红书 | **API (xhshow)** → **Pinia Store 注入** → Jina → **Playwright 深度抓取** (单篇 + **作者批量** + **搜索批量** + **关键词搜索 `xhs-so`**) | — |
 | 飞书/Lark | **Open API** → **CDP 直连** → **Playwright PageMain** → Jina（单篇 + **知识库批量 `feishu-wiki`** + 嵌入表格 + 图片下载；支持懒加载 Sheet 预热、`/sheet/block` 合并、重复单元格不再错列） | — |
 | 金山文档/KDocs | **Playwright ProseMirror DOM** 提取（虚拟滚动 + 代码块 + 图片 shapes API + CDP 直连） | — |
@@ -639,6 +645,8 @@ cp .env.example .env
 | `FEISHU_CUSTOM_DOMAINS` | 否 | 私有化部署域名（逗号分隔，如 `feishu.mycompany.cn`） |
 | `FEISHU_PAGE_LOAD_TIMEOUT` | 否 | Playwright 页面元素等待超时毫秒（默认：`5000`） |
 | `FEISHU_CDP_ENABLED` | 否 | CDP 直连已打开的 Chrome 抓取飞书（需 `--remote-debugging-port=9222`，默认：`false`） |
+| `LINUXDO_CDP_ENABLED` | 否 | LinuxDo 优先复用已运行 Chrome 的 Cookie / Cloudflare 会话抓取 JSON（默认：`true`） |
+| `LINUXDO_PAGE_LOAD_TIMEOUT` | 否 | LinuxDo 浏览器页面等待超时毫秒（默认：`15000`） |
 | `CHROME_CDP_LOGIN` | 否 | 启用 CDP Cookie 提取，`feedgrab login` 优先从运行中的 Chrome 提取（默认：`false`） |
 | `CHROME_CDP_PORT` | 否 | Chrome CDP 端口（默认：`9222`） |
 | `X_DOWNLOAD_MEDIA` | 否 | Twitter 图片/视频下载到本地 `attachments/` 子目录（默认：`false`） |
@@ -669,6 +677,7 @@ feedgrab/
 │   │   ├── bilibili.py        # B 站 API
 │   │   ├── youtube.py         # yt-dlp 字幕提取
 │   │   ├── github.py          # GitHub REST API（仓库元数据 + 中文 README 优先 + 子目录搜索 + 图片链接补全）
+│   │   ├── linuxdo.py         # LinuxDo / Discourse 论坛抓取（JSON API → CDP → 浏览器 → Jina）
 │   │   ├── rss.py             # RSS 解析（feedparser）
 │   │   ├── telegram.py        # Telegram 频道（Telethon）
 │   │   ├── twitter.py         # X/Twitter 六级兜底调度器

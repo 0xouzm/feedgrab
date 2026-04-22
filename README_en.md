@@ -17,9 +17,9 @@ Give it a URL (article, video, podcast, tweet), get back structured content. Wor
 Any URL → Platform Detection → Fetch Content → Unified Output
               ↓                      ↓                ↓
          auto-detect           text: Jina Reader    → output/X/Author_Date：Title.md
-         12 platforms          video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
+         17+ platforms         video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
                                audio: Whisper transcription
-                               API: Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / Feishu Open API
+                               API: Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / Feishu Open API / Discourse Topic JSON
                                X/Twitter: GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
 ```
 
@@ -101,11 +101,16 @@ feedgrab https://github.com/nicepkg/aide                          # Repo homepag
 feedgrab https://github.com/nicepkg/aide/blob/main/README.md      # README file page
 feedgrab https://github.com/nicepkg/aide/tree/main/src             # Sub-page (auto fallback to repo level)
 
+# Fetch a LinuxDo / Discourse topic
+feedgrab https://linux.do/t/topic/2032344
+feedgrab login linuxdo                                            # Login first if the topic is private or CF is stricter
+
 # Fetch multiple URLs
 feedgrab https://url1.com https://url2.com
 
 # Login to a platform (one-time, for browser fallback)
 feedgrab login xhs
+feedgrab login linuxdo
 
 # Chrome CDP auto-extract cookies (from already logged-in Chrome, no manual login needed)
 # Prerequisite: enable Remote Debugging in Chrome (chrome://inspect/#remote-debugging)
@@ -204,8 +209,9 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) / Album batch (`mpweixin-zhuanji`) | — |
 | GitHub | **REST API** (repo metadata + Chinese README priority (incl. subdirectory language link search) + relative image URL resolution + summary extraction) | — |
+| LinuxDo / Discourse forum | **Discourse Topic JSON API** → **CDP Chrome reuse** → **Playwright in-page fetch** → Jina (last resort; preserves replies, authors, timestamps, tags, and collapsible blocks) | — |
 | Xiaohongshu (小红书) | **API (xhshow)** → **Pinia Store injection** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
-| Feishu/Lark (飞书) | **Open API** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
+| Feishu/Lark (飞书) | **Open API** → **CDP direct connect** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
 | KDocs (金山文档) | **Playwright ProseMirror DOM** extraction (virtual scroll + code blocks + image shapes API + CDP direct connect) | — |
 | Youdao Note (有道云笔记) | **JSON API** (zero dependency) → Playwright iframe DOM → Jina (single doc + image download) | — |
 | Zhihu (知乎) | **API v4** → **Playwright CDP/DOM** → Jina (single Q&A top 3 answers + articles + **keyword search `zhihu-so`**) | — |
@@ -220,7 +226,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 >
 > YouTube Whisper transcription requires `GROQ_API_KEY` — get a free key from [Groq](https://console.groq.com/keys)
 
-### X/Twitter Five-Tier Fallback
+### X/Twitter Six-Tier Fallback
 
 feedgrab uses an advanced six-tier strategy for X/Twitter content:
 
@@ -551,6 +557,8 @@ cp .env.example .env
 | `MPWEIXIN_ZHUANJI_DELAY` | No | Album batch: delay between article fetches in seconds (default: `3.0`) |
 | `MPWEIXIN_FETCH_COMMENTS` | No | Fetch article comments (experimental, default: `false`, requires WeChat client session) |
 | `MPWEIXIN_MAX_COMMENTS` | No | Max comments to fetch per article (default: `100`) |
+| `LINUXDO_CDP_ENABLED` | No | Prefer reusing a running Chrome session for LinuxDo JSON fetches (default: `true`) |
+| `LINUXDO_PAGE_LOAD_TIMEOUT` | No | LinuxDo browser page wait timeout in milliseconds (default: `15000`) |
 | `CHROME_CDP_LOGIN` | No | Enable CDP cookie extraction from running Chrome (default: `false`) |
 | `CHROME_CDP_PORT` | No | Chrome CDP port (default: `9222`) |
 | `X_DOWNLOAD_MEDIA` | No | Download Twitter images/videos to local `attachments/` subdirectory (default: `false`) |
@@ -582,6 +590,7 @@ feedgrab/
 │   │   ├── bilibili.py        # Bilibili API
 │   │   ├── youtube.py         # yt-dlp subtitle extraction
 │   │   ├── github.py          # GitHub REST API (repo metadata + Chinese README priority + subdirectory search + image URL resolution)
+│   │   ├── linuxdo.py         # LinuxDo / Discourse topic fetcher (JSON API → CDP → browser → Jina)
 │   │   ├── rss.py             # RSS (feedparser)
 │   │   ├── telegram.py        # Telegram (Telethon)
 │   │   ├── twitter.py         # X/Twitter six-tier dispatcher
