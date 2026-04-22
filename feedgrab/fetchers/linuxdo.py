@@ -131,6 +131,15 @@ def _looks_like_not_found(text: str) -> bool:
     return any(hint in snippet for hint in _NOT_FOUND_HINTS)
 
 
+def _clean_linuxdo_title(title: str) -> str:
+    """Strip Discourse emoji shortcodes from topic titles."""
+    if not title:
+        return ""
+    cleaned = re.sub(r":[a-z0-9_+-]+:", " ", title, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
 def _html_to_markdown(html: str) -> str:
     """Convert Discourse cooked HTML to Markdown."""
     if not html:
@@ -408,7 +417,7 @@ def _parse_topic_payload(payload: Dict[str, Any], url: str) -> Dict[str, Any]:
 
     content = "\n".join(lines).strip()
     return {
-        "title": payload.get("title", "") or "Untitled",
+        "title": _clean_linuxdo_title(payload.get("title", "")) or "Untitled",
         "content": content,
         "url": canonical_url,
         "author": author,

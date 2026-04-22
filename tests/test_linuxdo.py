@@ -171,6 +171,13 @@ def test_linuxdo_html_to_markdown_filters_shortcode_emoji_images():
     assert "好耶，我最喜欢的省钱CC系列又更新了" in md
 
 
+def test_parse_topic_payload_cleans_discourse_shortcode_title():
+    payload = _sample_topic_payload()
+    payload["title"] = ":fire: 【省钱系列12】关于买尼区信用卡+Claude Code Max"
+    data = _parse_topic_payload(payload, "https://linux.do/t/topic/2032561")
+    assert data["title"] == "【省钱系列12】关于买尼区信用卡+Claude Code Max"
+
+
 def test_linuxdo_html_to_markdown_uses_callout_for_simple_details():
     html = (
         "<p>折叠前提示</p>"
