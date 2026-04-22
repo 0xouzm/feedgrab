@@ -2,6 +2,47 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-22 · v0.18.0 · LinuxDo / Discourse 平台支持 + 折叠块混合渲染
+
+### 背景
+
+用户执行通用网页抓取 `feedgrab https://linux.do/t/topic/2023688` 时，旧的 generic/Jina 兜底会把论坛错误页保存成 `Manual/Page Not Found` 一类无效 Markdown，帖子本身的楼层、作者、时间、分类、标签等结构化信息全部丢失。另一方面，LinuxDo 帖子中的 `<details><summary>点我展开</summary>` 折叠块在 Markdown 导出后容易失效，要么无法折叠，要么直接平铺显示，影响 Obsidian 阅读体验。
+
+### 方案决策
+
+- **新增 Discourse 专用链路**：LinuxDo 不再走 generic/Jina 主路径，而是采用 `游客 JSON API → 已登录 Cookie / Cloudflare Cookie 的 CDP 页面内 fetch → Stealth Playwright 页面内 fetch → Jina 最后兜底`
+- **终止错误页下沉**：对明确的 404 / 私有帖 / 需登录场景提前终止，不再继续 Jina，避免把错误页当正文写入 `Manual/`
+- **折叠块混合渲染**：
+  - 简单折叠块输出 Obsidian collapsible callout：`> [!feedgrab-fold]-`
+  - 复杂折叠块输出纯 HTML：`<details class="feedgrab-fold ...">`，保留真实折叠能力与跨 Markdown 工具的兼容性
+- **论坛帖专属输出**：新增 `SourceType.LINUXDO`、`LinuxDo/` 输出目录、论坛 front matter 和文件名规则，让作者、时间、分类、楼层统计直接进入 Obsidian 索引
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/linuxdo.py` | 新增 | LinuxDo / Discourse 专用抓取器（JSON-first + CDP/浏览器/Jina 多级兜底 + 折叠块 HTML/Callout 混合渲染） |
+| `feedgrab/reader.py` | 修改 | 新增 `linuxdo` 平台识别、路由分发和去重平台映射 |
+| `feedgrab/schema.py` | 修改 | 新增 `SourceType.LINUXDO` 与 `from_linuxdo()` 工厂 |
+| `feedgrab/utils/storage.py` | 修改 | 新增 `LinuxDo` 目录映射、ISO 时间格式化、front matter 字段与文件名规则 |
+| `feedgrab/config.py` | 修改 | 新增 `LINUXDO_CDP_ENABLED` / `LINUXDO_PAGE_LOAD_TIMEOUT` 配置读取 |
+| `feedgrab/login.py` | 修改 | `feedgrab login linuxdo` + CDP Cookie 域名识别 |
+| `tests/test_linuxdo.py` | 新增 | URL 解析、Markdown 转换、折叠块渲染、平台识别、UnifiedContent 映射回归测试 |
+
+### 验证结果
+
+- ✅ `pytest -q tests/test_linuxdo.py` → 通过
+- ✅ `pytest -q tests/test_linuxdo.py tests/test_p1_platforms.py tests/test_paywall.py` → 通过
+- ✅ 实抓 `python -m feedgrab.cli "https://linux.do/t/topic/2032561"` 成功，生成 `LinuxDo/` Markdown
+- ✅ 实抓 `python -m feedgrab.cli "https://linux.do/t/topic/2032344"` 成功，`点我展开` 折叠块在导出 Markdown 中保留可折叠效果
+- ✅ 实抓 `python -m feedgrab.cli "https://linux.do/t/topic/2023688"` 现在会明确报错“帖子不存在或无权访问”，不再保存错误页 Markdown
+
+### 状态
+
+已完成 ✅
+
+---
+
 ## 2026-04-19 · v0.17.0 · 小宇宙 / 喜马拉雅 / B 站字幕（P1 三平台支持）
 
 ### 背景
