@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ from feedgrab.config import (
     get_data_dir,
 )
 from feedgrab.fetchers.feishu import (
+    _clean_feishu_title,
     _decode_sheet_client_vars,
     _merge_sheet_snapshot_blocks,
     _fetch_document_blocks,
@@ -42,6 +44,9 @@ from feedgrab.utils.storage import save_to_markdown
 from feedgrab.schema import from_feishu
 
 logger = logging.getLogger(__name__)
+
+_FEISHU_WIKI_TOKEN_RE = re.compile(r"(?:^|[?&])wikiToken=([A-Za-z0-9]+)")
+_FEISHU_WIKI_URL_RE = re.compile(r"/wiki/([A-Za-z0-9]+)")
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +77,58 @@ def _clear_progress(token: str):
     p = _progress_path(token)
     if p.exists():
         p.unlink()
+
+
+def _extract_wiki_token(node_uid: str = "", url: str = "") -> str:
+    """Extract a Feishu wiki token from a tree-node uid or wiki URL."""
+    if node_uid:
+        match = _FEISHU_WIKI_TOKEN_RE.search(node_uid)
+        if match:
+            return match.group(1)
+    if url:
+        match = _FEISHU_WIKI_URL_RE.search(url)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _normalize_sidebar_nodes(
+    raw_nodes: List[Dict[str, Any]],
+    base_url: str,
+) -> List[Dict[str, str]]:
+    """Normalize sidebar DOM records into ordered wiki links."""
+    base_url = base_url.rstrip("/")
+    links: List[Dict[str, str]] = []
+    seen: set[str] = set()
+
+    for raw in raw_nodes or []:
+        node_uid = str(raw.get("node_uid") or raw.get("uid") or "").strip()
+        raw_url = str(raw.get("url") or "").strip()
+        token = str(raw.get("token") or "").strip() or _extract_wiki_token(
+            node_uid=node_uid,
+            url=raw_url,
+        )
+        if not token or token in seen:
+            continue
+
+        title = _clean_feishu_title(
+            str(raw.get("title") or raw.get("text") or raw.get("label") or "")
+        )
+        title = title or token
+        url = raw_url
+        if url.startswith("/"):
+            url = f"{base_url}{url}"
+        if not url:
+            url = f"{base_url}/wiki/{token}"
+
+        seen.add(token)
+        links.append({
+            "title": title,
+            "url": url,
+            "token": token,
+        })
+
+    return links
 
 
 # ---------------------------------------------------------------------------
@@ -285,32 +342,178 @@ async def _fetch_wiki_via_api(
 # ---------------------------------------------------------------------------
 
 FEISHU_WIKI_SIDEBAR_JS = """
-(() => {
-  // Extract all wiki page links from the left sidebar navigation
-  const links = [];
-  const sidebar = document.querySelector('.wiki-sidebar-tree')
-    || document.querySelector('[class*="catalogue"]')
-    || document.querySelector('[class*="tree-node"]')?.closest('[class*="sidebar"]')
-    || document.querySelector('nav');
+(
+  async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  if (!sidebar) return { error: 'Sidebar not found', links: [] };
+    const getTreeRoot = () =>
+      document.querySelector('#TOC-ROOT')
+      || document.querySelector('.wiki-tree-inner-container[role="list"]')
+      || document.querySelector('.wiki-space-detail-directory-tree [role="list"]');
 
-  const anchors = sidebar.querySelectorAll('a[href*="/wiki/"]');
-  const seen = new Set();
-  anchors.forEach(a => {
-    const href = a.href;
-    const match = href.match(/\\/wiki\\/([A-Za-z0-9]+)/);
-    if (match && !seen.has(match[1])) {
-      seen.add(match[1]);
-      links.push({
-        title: (a.textContent || '').trim(),
-        url: href,
-        token: match[1]
+    const getScroller = () =>
+      document.querySelector('.wiki-space-detail-directory-tree-wrapper .workspace-scroll-area')
+      || document.querySelector('.sidebar-styled__ScrollableContainer-czoANO')
+      || document.querySelector('.workspace-scroll-area');
+
+    const ensureTreeVisible = async () => {
+      let treeRoot = getTreeRoot();
+      if (treeRoot) return treeRoot;
+
+      const directoryToggle = document.querySelector(
+        '[data-e2e="wiki-space-detail-tree-expand-btn"][role="button"]'
+      );
+      if (directoryToggle) {
+        directoryToggle.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true })
+        );
+        await sleep(400);
+      }
+      return getTreeRoot();
+    };
+
+    const extractVisibleNodes = () => {
+      const root = getTreeRoot();
+      if (!root) return [];
+
+      return Array.from(
+        root.querySelectorAll('.workspace-tree-view-node[data-node-uid]')
+      ).map((node) => {
+        const textEl =
+          node.querySelector('.workspace-tree-view-node-content')
+          || node.querySelector('[role="button"]');
+        const arrow = node.querySelector('.workspace-tree-view-node-expand-arrow');
+        return {
+          text: (textEl?.textContent || node.textContent || '').trim(),
+          node_uid: node.getAttribute('data-node-uid') || '',
+          level: node.getAttribute('data-node-level') || '',
+          indent: node.getAttribute('data-node-indent') || '',
+          expandable: !!(
+            arrow
+            && arrow.className.includes('workspace-tree-view-node-expand-arrow--has-icon')
+          ),
+          expanded: node.classList.contains('workspace-tree-view-node--expanded'),
+        };
       });
+    };
+
+    const visibleCollapsedArrows = () =>
+      Array.from(
+        document.querySelectorAll(
+          '#TOC-ROOT .workspace-tree-view-node-expand-arrow--collapsed.workspace-tree-view-node-expand-arrow--has-icon, '
+          + '.wiki-tree-inner-container .workspace-tree-view-node-expand-arrow--collapsed.workspace-tree-view-node-expand-arrow--has-icon'
+        )
+      );
+
+    const seen = new Map();
+    const remember = (nodes) => {
+      for (const node of nodes) {
+        if (!node?.node_uid || !node?.text) continue;
+        if (!seen.has(node.node_uid)) {
+          seen.set(node.node_uid, node);
+        }
+      }
+    };
+
+    const scrollAndCollectTree = async () => {
+      const treeRoot = await ensureTreeVisible();
+      if (!treeRoot) return false;
+
+      const scroller = getScroller();
+      if (!scroller) {
+        remember(extractVisibleNodes());
+        return seen.size > 0;
+      }
+
+      for (let pass = 0; pass < 8; pass++) {
+        scroller.scrollTop = 0;
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+        await sleep(250);
+
+        let lastSignature = '';
+        let stableSteps = 0;
+
+        for (let step = 0; step < 160; step++) {
+          remember(extractVisibleNodes());
+
+          const arrows = visibleCollapsedArrows();
+          let expandedThisStep = false;
+          for (const arrow of arrows) {
+            arrow.dispatchEvent(
+              new MouseEvent('click', { bubbles: true, cancelable: true })
+            );
+            expandedThisStep = true;
+            await sleep(220);
+            remember(extractVisibleNodes());
+          }
+
+          const maxScrollTop = Math.max(
+            0,
+            scroller.scrollHeight - scroller.clientHeight
+          );
+          const signature = `${seen.size}:${visibleCollapsedArrows().length}:${scroller.scrollTop}:${maxScrollTop}`;
+          if (!expandedThisStep && signature === lastSignature) {
+            stableSteps += 1;
+          } else {
+            stableSteps = 0;
+          }
+          lastSignature = signature;
+
+          if (scroller.scrollTop >= maxScrollTop - 2) {
+            if (!expandedThisStep || stableSteps >= 2) {
+              break;
+            }
+          } else {
+            const stepSize = Math.max(
+              200,
+              Math.floor(scroller.clientHeight * 0.7)
+            );
+            scroller.scrollTop = Math.min(maxScrollTop, scroller.scrollTop + stepSize);
+            scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+            await sleep(250);
+          }
+        }
+
+        if (!visibleCollapsedArrows().length) break;
+      }
+
+      return seen.size > 0;
+    };
+
+    const treeFound = await scrollAndCollectTree();
+    if (treeFound) {
+      return {
+        source: 'tree',
+        nodes: Array.from(seen.values()),
+      };
     }
-  });
-  return { links };
-})()
+
+    const sidebar = document.querySelector('.wiki-sidebar-tree')
+      || document.querySelector('[class*="catalogue"]')
+      || document.querySelector('[class*="tree-node"]')?.closest('[class*="sidebar"]')
+      || document.querySelector('nav');
+
+    if (!sidebar) return { error: 'Sidebar not found', nodes: [] };
+
+    const anchors = sidebar.querySelectorAll('a[href*="/wiki/"]');
+    const fallback = [];
+    const fallbackSeen = new Set();
+    anchors.forEach((a) => {
+      const href = a.href;
+      const match = href.match(/\\/wiki\\/([A-Za-z0-9]+)/);
+      if (match && !fallbackSeen.has(match[1])) {
+        fallbackSeen.add(match[1]);
+        fallback.push({
+          title: (a.textContent || '').trim(),
+          url: href,
+          token: match[1],
+        });
+      }
+    });
+
+    return { source: 'anchors', nodes: fallback };
+  }
+)()
 """
 
 
@@ -324,13 +527,10 @@ async def _fetch_wiki_via_playwright(
     then falls back to launching a new browser instance.
     """
     from feedgrab.fetchers.browser import (
-        evaluate_feishu_doc,
         get_session_path,
         get_stealth_context_options,
         _connect_feishu_cdp,
-        FEISHU_DOC_JS_EVALUATE,
-        FEISHU_SHEET_FETCH_JS,
-        _find_sheet_tokens,
+        _evaluate_feishu_doc_on_page,
     )
 
     # ── Try CDP direct connect first ─────────────────────────
@@ -417,6 +617,19 @@ async def _fetch_wiki_via_playwright(
         # Navigate to wiki root
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_timeout(3000)  # Wait for sidebar to render
+        try:
+            await page.wait_for_function(
+                """
+                () => !!(
+                    document.querySelector('#TOC-ROOT .workspace-tree-view-node[data-node-uid]')
+                    || document.querySelector('.wiki-tree-inner-container .workspace-tree-view-node[data-node-uid]')
+                    || document.querySelector('a[href*="/wiki/"]')
+                )
+                """,
+                timeout=10000,
+            )
+        except Exception:
+            pass
 
         # Extract sidebar links
         sidebar_data = await page.evaluate(FEISHU_WIKI_SIDEBAR_JS)
@@ -425,8 +638,11 @@ async def _fetch_wiki_via_playwright(
                 f"Sidebar extraction failed: {sidebar_data.get('error', 'unknown')}"
             )
 
-        links = sidebar_data.get("links", [])
-        wiki_title = (await page.title()).replace(" - 飞书云文档", "").strip()
+        links = _normalize_sidebar_nodes(
+            sidebar_data.get("nodes") or sidebar_data.get("links") or [],
+            base_url=url.rsplit("/wiki/", 1)[0],
+        )
+        wiki_title = _clean_feishu_title(await page.title())
         print(f"📂 Wiki: {wiki_title}")
         print(f"📄 Found {len(links)} pages in sidebar")
 
@@ -467,98 +683,21 @@ async def _fetch_wiki_via_playwright(
             print(f"  [{i}/{len(links)}] {title}")
 
             try:
-                # Clear per-page sheet data
-                sheet_cv_data.clear()
-                sheet_block_data.clear()
-
-                # Navigate to each page
-                await page.goto(link_url, wait_until="domcontentloaded", timeout=30000)
-
-                # Wait for editor — use author selector as full-render signal
+                doc_page = await page.context.new_page()
                 try:
-                    await page.wait_for_function(
-                        "() => window.PageMain?.blockManager?.rootBlockModel != null"
-                        " || document.querySelector('div[role=\"document\"]') != null",
-                        timeout=10000,
+                    data = await _evaluate_feishu_doc_on_page(
+                        link_url,
+                        doc_page,
+                        skip_warmup=True,
                     )
-                except Exception:
-                    pass
+                finally:
+                    try:
+                        await doc_page.close()
+                    except Exception:
+                        pass
 
-                try:
-                    await page.wait_for_selector(
-                        ".docs-info-avatar-name-text, .docs-info-avatar-name",
-                        timeout=feishu_page_load_timeout(),
-                    )
-                except Exception:
-                    await page.wait_for_timeout(2000)
-
-                data = await page.evaluate(FEISHU_DOC_JS_EVALUATE)
                 if not data or data.get("error"):
                     raise RuntimeError(data.get("error", "extraction failed"))
-
-                # Sheet processing: intercepted data + active fetch
-                sheet_tokens = _find_sheet_tokens(data.get("blockTree"))
-                merged_sheet_data = dict(sheet_cv_data)
-                if sheet_tokens:
-                    logger.info(
-                        f"[Feishu Wiki PW] Preloading {len(sheet_tokens)} embedded sheet(s) via stepped scroll"
-                    )
-                    try:
-                        await page.evaluate(
-                            """async () => {
-                                const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-                                const doc = document.documentElement;
-                                const total = Math.max(doc?.scrollHeight || 0, document.body?.scrollHeight || 0);
-                                const step = Math.max(Math.floor((window.innerHeight || 800) * 0.8), 640);
-                                window.scrollTo(0, 0);
-                                await sleep(250);
-                                for (let y = 0; y <= total; y += step) {
-                                    window.scrollTo(0, y);
-                                    await sleep(450);
-                                }
-                                window.scrollTo(0, 0);
-                                await sleep(250);
-                                return true;
-                            }"""
-                        )
-                        await page.wait_for_timeout(2000)
-                    except Exception as e:
-                        logger.debug(f"[Feishu Wiki PW] Sheet preload scroll failed: {e}")
-
-                    merged_sheet_data = dict(sheet_cv_data)
-                    missing_tokens = sorted(
-                        tk for tk in sheet_tokens if tk not in merged_sheet_data
-                    )
-                    if merged_sheet_data:
-                        logger.info(
-                            f"[Feishu Wiki PW] Intercepted "
-                            f"{len(merged_sheet_data)}/{len(sheet_tokens)} "
-                            f"sheet(s); missing {len(missing_tokens)}"
-                        )
-                    if missing_tokens:
-                        logger.info(
-                            f"[Feishu Wiki PW] Fetching {len(missing_tokens)} "
-                            f"missing sheet(s) via internal API: "
-                            f"{missing_tokens}"
-                        )
-                        fetched_sheets = await page.evaluate(
-                            FEISHU_SHEET_FETCH_JS, missing_tokens
-                        )
-                        if fetched_sheets:
-                            merged_sheet_data.update(fetched_sheets)
-                            still_missing = sorted(
-                                tk for tk in sheet_tokens
-                                if tk not in merged_sheet_data
-                            )
-                            logger.info(
-                                f"[Feishu Wiki PW] Active fetch got "
-                                f"{len(fetched_sheets)} sheet(s); "
-                                f"still missing {len(still_missing)}"
-                            )
-                if merged_sheet_data:
-                    data["sheet_client_vars"] = merged_sheet_data
-                if sheet_block_data:
-                    data["sheet_blocks"] = dict(sheet_block_data)
 
                 # Populate sheet cache for blocks_to_markdown()
                 _PLAYWRIGHT_SHEET_CACHE.clear()
@@ -602,56 +741,12 @@ async def _fetch_wiki_via_playwright(
 
                 _PLAYWRIGHT_SHEET_CACHE.clear()
 
-                # Pre-download images via JS fetch (page security context)
-                if images_list and feishu_download_images():
-                    img_tokens = [
-                        img.get("token", "") for img in images_list
-                        if img.get("token")
-                    ]
-                    if img_tokens:
-                        from feedgrab.fetchers.browser import (
-                            _FEISHU_IMAGE_CDN_DISCOVER_JS,
-                            _FEISHU_IMAGE_FETCH_JS,
-                        )
-                        try:
-                            cdn_info = await page.evaluate(
-                                _FEISHU_IMAGE_CDN_DISCOVER_JS
-                            )
-                            if cdn_info:
-                                import base64 as _b64
-                                batch_size = 10
-                                for s in range(
-                                    0, len(img_tokens), batch_size
-                                ):
-                                    batch = img_tokens[s:s + batch_size]
-                                    fetched_imgs = await page.evaluate(
-                                        _FEISHU_IMAGE_FETCH_JS,
-                                        {
-                                            "tokens": batch,
-                                            "cdn": cdn_info["cdn"],
-                                            "mount_token": cdn_info[
-                                                "mount_token"
-                                            ],
-                                        },
-                                    )
-                                    if not fetched_imgs:
-                                        continue
-                                    for img_info in images_list:
-                                        tk = img_info.get("token", "")
-                                        b64 = fetched_imgs.get(tk, "")
-                                        if (b64
-                                                and not b64.startswith(
-                                                    "error:")):
-                                            try:
-                                                raw = _b64.b64decode(b64)
-                                                if len(raw) > 100:
-                                                    img_info["_bytes"] = raw
-                                            except Exception:
-                                                pass
-                        except Exception as e:
-                            logger.debug(
-                                f"[Feishu Wiki PW] JS image fetch: {e}"
-                            )
+                pre_bytes = data.get("_image_bytes", {})
+                if pre_bytes:
+                    for img_info in images_list:
+                        tk = img_info.get("token", "")
+                        if tk and tk in pre_bytes:
+                            img_info["_bytes"] = pre_bytes[tk]
 
                 doc_data = {
                     "title": title or data.get("title", ""),

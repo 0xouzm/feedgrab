@@ -394,6 +394,10 @@ def _resolve_block_type(block) -> str:
         t = block.get("type", "")
         if isinstance(t, int):
             return _BLOCK_TYPE_MAP.get(t, f"unknown_{t}")
+        if t == "fallback":
+            snap = block.get("snapshot")
+            if isinstance(snap, dict) and snap.get("type") == "code":
+                return "code"
         return str(t)
     return "unknown"
 
@@ -440,11 +444,7 @@ def _block_to_md(
     if btype == "code":
         text = _get_code_text(block)
         lang = _get_code_lang(block)
-        # Use longer fence if content contains triple backticks (CommonMark spec)
-        fence = "```"
-        longest = max((len(m.group()) for m in re.finditer(r"`+", text)), default=0)
-        if longest >= 3:
-            fence = "`" * (longest + 1)
+        fence = "````"
         return f"{fence}{lang}\n{text}\n{fence}"
 
     if btype in ("quote", "quote_container"):
@@ -693,6 +693,12 @@ def _get_code_text(block) -> str:
         return "".join(
             el.get("text_run", {}).get("content", "") for el in els
         )
+    if isinstance(block, dict):
+        snap = block.get("snapshot")
+        if isinstance(snap, dict) and snap.get("type") == "code":
+            text = _get_snapshot_plain_text(snap)
+            if text:
+                return text.rstrip("\n")
     return _get_zone_text(block)
 
 
@@ -711,7 +717,49 @@ def _get_code_lang(block) -> str:
         lang = style.get("language", "")
         if isinstance(lang, int):
             return _CODE_LANG_MAP.get(lang, "")
-        return str(lang)
+        return _normalize_code_lang(lang)
+    if isinstance(block, dict):
+        snap = block.get("snapshot")
+        if isinstance(snap, dict) and snap.get("type") == "code":
+            return _normalize_code_lang(snap.get("language", ""))
+    return ""
+
+
+def _normalize_code_lang(lang: Any) -> str:
+    """Normalize code language names for Markdown fences."""
+    if isinstance(lang, int):
+        return _CODE_LANG_MAP.get(lang, "")
+    if not isinstance(lang, str):
+        return ""
+    normalized = re.sub(r"\s+", "", lang.strip().lower())
+    if normalized in ("", "text", "plaintext", "plaintextplain"):
+        return "plaintext" if normalized else ""
+    if normalized == "plain":
+        return "plaintext"
+    return normalized
+
+
+def _get_snapshot_plain_text(snapshot: dict) -> str:
+    """Extract concatenated text payload from a serialized Feishu snapshot."""
+    text_obj = snapshot.get("text")
+    if not isinstance(text_obj, dict):
+        return ""
+    initial = text_obj.get("initialAttributedTexts")
+    if not isinstance(initial, dict):
+        return ""
+    text_map = initial.get("text")
+    if isinstance(text_map, dict):
+        def _sort_key(value: str):
+            sval = str(value)
+            return (0, int(sval)) if sval.isdigit() else (1, sval)
+        parts = []
+        for key in sorted(text_map.keys(), key=_sort_key):
+            value = text_map.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+        return "".join(parts)
+    if isinstance(text_map, list):
+        return "".join(v for v in text_map if isinstance(v, str))
     return ""
 
 
@@ -1613,12 +1661,15 @@ def _render_table(block) -> str:
     col_count = rows_prop.get("column_size", 0)
 
     if not row_count or not col_count:
-        # Heuristic: treat children as cells in order
-        # Assume the first row determines column count
-        if not children:
-            return ""
-        col_count = col_count or len(children)
-        row_count = row_count or 1
+        if row_count and not col_count:
+            col_count = max(1, (len(children) + row_count - 1) // row_count)
+        elif col_count and not row_count:
+            row_count = max(1, (len(children) + col_count - 1) // col_count)
+        else:
+            # Final fallback: preserve the previous heuristic instead of
+            # guessing a multi-row layout without explicit snapshot metadata.
+            col_count = len(children)
+            row_count = 1
 
     # Build cell texts row by row
     rows: List[List[str]] = []
@@ -1627,13 +1678,7 @@ def _render_table(block) -> str:
         for j in range(col_count):
             idx = i * col_count + j
             if idx < len(children):
-                cell_text = _elements_text(children[idx]).replace("\n", " ").strip()
-                # Also try rendering child blocks inside the cell
-                if not cell_text:
-                    cell_children = _get_children(children[idx])
-                    if cell_children:
-                        cell_text = blocks_to_markdown(cell_children, _is_root=False).replace("\n", " ").strip()
-                row_cells.append(cell_text or "")
+                row_cells.append(_render_table_cell(children[idx]))
             else:
                 row_cells.append("")
         rows.append(row_cells)
@@ -1651,6 +1696,15 @@ def _render_table(block) -> str:
     return "\n".join(lines)
 
 
+def _render_table_cell(block) -> str:
+    cell_text = _elements_text(block).strip()
+    if not cell_text:
+        cell_children = _get_children(block)
+        if cell_children:
+            cell_text = blocks_to_markdown(cell_children, _is_root=False).strip()
+    return cell_text.replace("|", "\\|").replace("\n", "<br>")
+
+
 def _get_table_property(block) -> dict:
     obj = getattr(block, "table", None)
     if obj is not None:
@@ -1660,10 +1714,20 @@ def _get_table_property(block) -> dict:
         }
     if isinstance(block, dict) and "table" in block:
         t = block["table"]
+        snapshot = block.get("snapshot", {}) if isinstance(block.get("snapshot"), dict) else {}
+        row_size = t.get("row_size", 0) or len(snapshot.get("rows_id") or [])
+        column_size = t.get("column_size", 0) or len(snapshot.get("columns_id") or [])
         return {
-            "row_size": t.get("row_size", 0),
-            "column_size": t.get("column_size", 0),
+            "row_size": row_size,
+            "column_size": column_size,
         }
+    if isinstance(block, dict):
+        snapshot = block.get("snapshot", {})
+        if isinstance(snapshot, dict):
+            return {
+                "row_size": len(snapshot.get("rows_id") or []),
+                "column_size": len(snapshot.get("columns_id") or []),
+            }
     return {}
 
 
