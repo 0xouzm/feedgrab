@@ -354,7 +354,7 @@ def _html_to_markdown(html: str) -> str:
         lang, code_text = code_blocks[idx]
         placeholder = f"WECHAT-CODEBLOCK-{idx}"
         # Ensure newlines around fences — markdownify may strip placeholder padding
-        fence = f"\n\n```{lang}\n{code_text}\n```\n\n"
+        fence = f"\n\n````{lang}\n{code_text}\n````\n\n"
         md = md.replace(placeholder, fence)
 
     # Clean up whitespace

@@ -124,7 +124,7 @@ def _render_article_body(article: dict) -> str:
         elif btype == "unordered-list-item":
             parts.append(f"- {text}")
         elif btype == "code-block":
-            parts.append(f"```\n{text}\n```")
+            parts.append(f"````\n{text}\n````")
         else:
             # unstyled = normal paragraph
             parts.append(text)

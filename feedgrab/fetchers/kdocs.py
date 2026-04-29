@@ -110,9 +110,9 @@ def _blocks_to_markdown(
             if lang in ("plain text", "plaintext", "text"):
                 lang = ""
             code = block.get("text", "")
-            lines.append(f"\n```{lang}")
+            lines.append(f"\n````{lang}")
             lines.append(code)
-            lines.append("```\n")
+            lines.append("````\n")
 
         elif btype == "image":
             src = block.get("src", "")

@@ -2288,7 +2288,7 @@ def _render_article_body(article: dict) -> str:
                 parts.append(f"> {line}")
             list_counter = 0
         elif btype == "code-block":
-            parts.append(f"```\n{text}\n```")
+            parts.append(f"````\n{text}\n````")
             list_counter = 0
         else:
             # unstyled → regular paragraph
