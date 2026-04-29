@@ -37,6 +37,7 @@ class SourceType(str, Enum):
     YOUDAO = "youdao"
     ZHIHU = "zhihu"
     LINUXDO = "linuxdo"
+    IDCFLARE = "idcflare"
     XIAOYUZHOU = "xiaoyuzhou"
     XIMALAYA = "ximalaya"
     WEB = "web"
@@ -578,6 +579,37 @@ def from_linuxdo(data: dict) -> UnifiedContent:
             "category_id": data.get("category_id", 0),
             "posts_count": data.get("posts_count", 0),
             "reply_count": data.get("reply_count", 0),
+            "reply_mode": data.get("reply_mode", "author"),
+            "rendered_reply_count": data.get("rendered_reply_count", 0),
+            "like_count": data.get("like_count", 0),
+            "views": data.get("views", 0),
+            "created_at": data.get("created_at", ""),
+            "last_posted_at": data.get("last_posted_at", ""),
+            "cover_image": data.get("cover_image", ""),
+            "post_count_loaded": data.get("post_count_loaded", 0),
+        },
+    )
+
+
+def from_idcflare(data: dict) -> UnifiedContent:
+    """Convert IDCFlare / Discourse topic dict to UnifiedContent."""
+    return UnifiedContent(
+        source_type=SourceType.IDCFLARE,
+        source_name=data.get("author", "") or "idcflare.com",
+        title=data.get("title", ""),
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        category=data.get("category", ""),
+        tags=data.get("tags", []),
+        extra={
+            "topic_id": data.get("topic_id", ""),
+            "topic_slug": data.get("topic_slug", ""),
+            "category": data.get("category", ""),
+            "category_id": data.get("category_id", 0),
+            "posts_count": data.get("posts_count", 0),
+            "reply_count": data.get("reply_count", 0),
+            "reply_mode": data.get("reply_mode", "author"),
+            "rendered_reply_count": data.get("rendered_reply_count", 0),
             "like_count": data.get("like_count", 0),
             "views": data.get("views", 0),
             "created_at": data.get("created_at", ""),

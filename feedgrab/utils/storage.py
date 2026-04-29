@@ -160,6 +160,7 @@ PLATFORM_FOLDER_MAP = {
     SourceType.YOUDAO: "NoteYouDao",
     SourceType.ZHIHU: "Zhihu",
     SourceType.LINUXDO: "LinuxDo",
+    SourceType.IDCFLARE: "IDCFlare",
     SourceType.XIAOYUZHOU: "Xiaoyuzhou",
     SourceType.XIMALAYA: "Ximalaya",
     SourceType.TELEGRAM: "Telegram",
@@ -287,7 +288,7 @@ def _generate_filename(item: UnifiedContent) -> str:
             raw = f"{owner}_{repo}：{raw_title}" if raw_title else f"{owner}_{repo}"
         else:
             raw = raw_title
-    elif item.source_type == SourceType.LINUXDO:
+    elif item.source_type in (SourceType.LINUXDO, SourceType.IDCFLARE):
         author_display = (item.source_name or "").strip()
         published = _format_iso_datetime(extra.get("created_at", ""), with_time=False)
 
@@ -350,7 +351,7 @@ def _format_markdown(item: UnifiedContent) -> str:
         published = extra["publish_date"]
     elif extra.get("create_time") and item.source_type in (SourceType.FEISHU, SourceType.KDOCS, SourceType.YOUDAO):
         published = extra["create_time"][:10]  # YYYY-MM-DD
-    elif item.source_type == SourceType.LINUXDO and extra.get("created_at"):
+    elif item.source_type in (SourceType.LINUXDO, SourceType.IDCFLARE) and extra.get("created_at"):
         published = _format_iso_datetime(extra["created_at"])
     fetched_date = item.fetched_at[:10] if item.fetched_at else ""
 
@@ -528,8 +529,8 @@ def _format_markdown(item: UnifiedContent) -> str:
             fm_lines.append(f"published: {extra['publish_date'][:10]}")
 
     # LinuxDo / Discourse extras
-    is_linuxdo = item.source_type == SourceType.LINUXDO
-    if is_linuxdo:
+    is_discourse = item.source_type in (SourceType.LINUXDO, SourceType.IDCFLARE)
+    if is_discourse:
         if extra.get("topic_id"):
             fm_lines.append(f'topic_id: "{extra["topic_id"]}"')
         if extra.get("topic_slug"):
@@ -540,6 +541,9 @@ def _format_markdown(item: UnifiedContent) -> str:
             fm_lines.append(f"category_id: {extra['category_id']}")
         fm_lines.append(f"posts_count: {extra.get('posts_count', 0)}")
         fm_lines.append(f"reply_count: {extra.get('reply_count', 0)}")
+        if extra.get("reply_mode"):
+            fm_lines.append(f'reply_mode: "{extra["reply_mode"]}"')
+        fm_lines.append(f"rendered_reply_count: {extra.get('rendered_reply_count', 0)}")
         fm_lines.append(f"likes: {extra.get('like_count', 0)}")
         fm_lines.append(f"views: {extra.get('views', 0)}")
         if extra.get("last_posted_at"):

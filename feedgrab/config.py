@@ -813,6 +813,31 @@ def linuxdo_page_load_timeout() -> int:
         return 15000
 
 
+def linuxdo_reply_mode() -> str:
+    """Reply rendering mode for LinuxDo: author | all | none. Default author."""
+    raw = os.getenv("LINUXDO_REPLY_MODE", "author").strip().lower()
+    return raw if raw in {"author", "all", "none"} else "author"
+
+
+def idcflare_cdp_enabled() -> bool:
+    """Connect to running Chrome via CDP for IDCFlare. Default true."""
+    return os.getenv("IDCFLARE_CDP_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def idcflare_page_load_timeout() -> int:
+    """Playwright page element wait timeout in ms. Default 15000."""
+    try:
+        return int(os.getenv("IDCFLARE_PAGE_LOAD_TIMEOUT", "15000"))
+    except ValueError:
+        return 15000
+
+
+def idcflare_reply_mode() -> str:
+    """Reply rendering mode for IDCFlare: author | all | none. Default author."""
+    raw = os.getenv("IDCFLARE_REPLY_MODE", "author").strip().lower()
+    return raw if raw in {"author", "all", "none"} else "author"
+
+
 def zhihu_search_days() -> int:
     """Search within recent N days. Default 30."""
     try:

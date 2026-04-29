@@ -34,6 +34,7 @@ PLATFORM_URLS = {
     "kdocs": "https://www.kdocs.cn",
     "zhihu": "https://www.zhihu.com",
     "linuxdo": "https://linux.do/",
+    "idcflare": "https://idcflare.com/",
 }
 
 
@@ -199,6 +200,7 @@ _CDP_COOKIE_DOMAINS = {
     "kdocs": [".kdocs.cn", ".wps.cn"],
     "zhihu": [".zhihu.com"],
     "linuxdo": [".linux.do"],
+    "idcflare": [".idcflare.com"],
 }
 
 # URLs to pass to Network.getCookies (legacy WebSocket mode)
@@ -210,6 +212,7 @@ _CDP_COOKIE_URLS = {
     "kdocs": ["https://www.kdocs.cn"],
     "zhihu": ["https://www.zhihu.com"],
     "linuxdo": ["https://linux.do"],
+    "idcflare": ["https://idcflare.com"],
 }
 
 

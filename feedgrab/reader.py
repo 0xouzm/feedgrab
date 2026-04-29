@@ -15,7 +15,7 @@ from feedgrab.schema import (
     UnifiedContent, SourceType,
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
-    from_github, from_feishu, from_kdocs, from_youdao, from_linuxdo, from_web,
+    from_github, from_feishu, from_kdocs, from_youdao, from_linuxdo, from_idcflare, from_web,
     from_xiaoyuzhou, from_ximalaya,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
@@ -92,6 +92,8 @@ class UniversalReader:
         # LinuxDo / Discourse topic pages
         if ("linux.do" in domain or domain.endswith(".linux.do")) and path.startswith("/t/"):
             return "linuxdo"
+        if ("idcflare.com" in domain or domain.endswith(".idcflare.com")) and path.startswith("/t/"):
+            return "idcflare"
         # Feishu / Lark
         from feedgrab.fetchers.feishu import is_feishu_url
         if is_feishu_url(url):
@@ -269,6 +271,7 @@ class UniversalReader:
                     SourceType.FEISHU: "Feishu",
                     SourceType.YOUDAO: "NoteYouDao",
                     SourceType.LINUXDO: "LinuxDo",
+                    SourceType.IDCFLARE: "IDCFlare",
                 }
                 plat = _dedup_plat_map.get(content.source_type, "X")
                 index = load_index(platform=plat)
@@ -342,6 +345,11 @@ class UniversalReader:
             from feedgrab.fetchers.linuxdo import fetch_linuxdo
             data = await fetch_linuxdo(url)
             return from_linuxdo(data)
+
+        if platform == "idcflare":
+            from feedgrab.fetchers.idcflare import fetch_idcflare
+            data = await fetch_idcflare(url)
+            return from_idcflare(data)
 
         if platform == "xiaoyuzhou":
             from feedgrab.config import xiaoyuzhou_enabled
