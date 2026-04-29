@@ -104,6 +104,12 @@ feedgrab https://github.com/nicepkg/aide/tree/main/src             # Sub-page (a
 # Fetch a LinuxDo / Discourse topic
 feedgrab https://linux.do/t/topic/2032344
 feedgrab login linuxdo                                            # Login first if the topic is private or CF is stricter
+LINUXDO_REPLY_MODE=all feedgrab https://linux.do/t/topic/2032344  # Capture the full thread
+
+# Fetch a IDCFlare / Discourse topic
+feedgrab https://idcflare.com/t/topic/44294
+feedgrab login idcflare                                           # Login first if the topic is private or CF is stricter
+IDCFLARE_REPLY_MODE=none feedgrab https://idcflare.com/t/topic/44294  # OP only
 
 # Fetch multiple URLs
 feedgrab https://url1.com https://url2.com
@@ -209,9 +215,10 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | X / Twitter | **GraphQL** → **FxTwitter** → **Syndication** → oEmbed → Jina → Playwright | — |
 | WeChat (微信公众号) | Jina → Playwright WeChat JS extraction (single + markdownify + image anti-hotlink) / Sogou search (`mpweixin-so`) / MP backend API batch by account (`mpweixin-id`) / Album batch (`mpweixin-zhuanji`) | — |
 | GitHub | **REST API** (repo metadata + Chinese README priority (incl. subdirectory language link search) + relative image URL resolution + summary extraction) | — |
-| LinuxDo / Discourse forum | **Discourse Topic JSON API** → **CDP Chrome reuse** → **Playwright in-page fetch** → Jina (last resort; preserves replies, authors, timestamps, tags, and collapsible blocks) | — |
+| LinuxDo / Discourse forum | **Discourse Topic JSON API** → **CDP Chrome reuse** → **Playwright in-page fetch** → Jina (last resort; saves OP + author follow-up replies by default, switchable to full thread) | — |
+| IDCFlare / Discourse forum | **Discourse Topic JSON API** → **CDP Chrome reuse** → **Playwright in-page fetch** → Jina (last resort; saves OP + author follow-up replies by default, switchable to full thread) | — |
 | Xiaohongshu (小红书) | **API (xhshow)** → **Pinia Store injection** → Jina → **Playwright deep fetch** (single + **author batch** + **search batch** + **keyword search `xhs-so`**) | — |
-| Feishu/Lark (飞书) | **Open API** → **CDP direct connect** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download) | — |
+| Feishu/Lark (飞书) | **Open API** → **CDP direct connect** → **Playwright PageMain** → Jina (single + **wiki batch `feishu-wiki`** + embedded sheets + image download; virtual tree traversal + table-layout fix) | — |
 | KDocs (金山文档) | **Playwright ProseMirror DOM** extraction (virtual scroll + code blocks + image shapes API + CDP direct connect) | — |
 | Youdao Note (有道云笔记) | **JSON API** (zero dependency) → Playwright iframe DOM → Jina (single doc + image download) | — |
 | Zhihu (知乎) | **API v4** → **Playwright CDP/DOM** → Jina (single Q&A top 3 answers + articles + **keyword search `zhihu-so`**) | — |
@@ -559,6 +566,10 @@ cp .env.example .env
 | `MPWEIXIN_MAX_COMMENTS` | No | Max comments to fetch per article (default: `100`) |
 | `LINUXDO_CDP_ENABLED` | No | Prefer reusing a running Chrome session for LinuxDo JSON fetches (default: `true`) |
 | `LINUXDO_PAGE_LOAD_TIMEOUT` | No | LinuxDo browser page wait timeout in milliseconds (default: `15000`) |
+| `LINUXDO_REPLY_MODE` | No | LinuxDo reply capture mode: `author` (default, OP + topic author replies only) / `all` (full thread) / `none` (OP only) |
+| `IDCFLARE_CDP_ENABLED` | No | Prefer reusing a running Chrome session for IDCFlare JSON fetches (default: `true`) |
+| `IDCFLARE_PAGE_LOAD_TIMEOUT` | No | IDCFlare browser page wait timeout in milliseconds (default: `15000`) |
+| `IDCFLARE_REPLY_MODE` | No | IDCFlare reply capture mode: `author` (default, OP + topic author replies only) / `all` (full thread) / `none` (OP only) |
 | `CHROME_CDP_LOGIN` | No | Enable CDP cookie extraction from running Chrome (default: `false`) |
 | `CHROME_CDP_PORT` | No | Chrome CDP port (default: `9222`) |
 | `X_DOWNLOAD_MEDIA` | No | Download Twitter images/videos to local `attachments/` subdirectory (default: `false`) |
@@ -591,6 +602,7 @@ feedgrab/
 │   │   ├── youtube.py         # yt-dlp subtitle extraction
 │   │   ├── github.py          # GitHub REST API (repo metadata + Chinese README priority + subdirectory search + image URL resolution)
 │   │   ├── linuxdo.py         # LinuxDo / Discourse topic fetcher (JSON API → CDP → browser → Jina)
+│   │   ├── idcflare.py        # IDCFlare / Discourse topic fetcher (JSON API → CDP → browser → Jina)
 │   │   ├── rss.py             # RSS (feedparser)
 │   │   ├── telegram.py        # Telegram (Telethon)
 │   │   ├── twitter.py         # X/Twitter six-tier dispatcher
@@ -614,7 +626,7 @@ feedgrab/
 │   │   ├── xhs_user_notes.py  # XHS author batch fetch (API → Pinia → browser 3-tier strategy)
 │   │   ├── xhs_search_notes.py # XHS search batch fetch (xhs-so API/Pinia search + scroll + deep fetch)
 │   │   ├── feishu.py          # Feishu single doc (Open API → Playwright PageMain → Jina + Block→MD + image download)
-│   │   ├── feishu_wiki.py     # Feishu wiki batch (Open API recursive + Playwright fallback + resume)
+│   │   ├── feishu_wiki.py     # Feishu wiki batch (Open API recursive + virtual-tree/Playwright fallback + resume)
 │   │   ├── kdocs.py           # KDocs (WPS) single doc (Playwright ProseMirror DOM + virtual scroll + CDP)
 │   │   └── youdao.py          # Youdao Note single doc (JSON API + Playwright iframe DOM + Jina 3-tier fallback)
 │   └── utils/

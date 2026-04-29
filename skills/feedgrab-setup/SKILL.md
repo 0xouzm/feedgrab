@@ -78,6 +78,9 @@ feedgrab login feishu
 # LinuxDo / Discourse — opens browser for login
 feedgrab login linuxdo
 
+# IDCFlare / Discourse — opens browser for login
+feedgrab login idcflare
+
 # KDocs (金山文档) — opens browser for login
 feedgrab login kdocs
 
@@ -150,6 +153,12 @@ FEISHU_CDP_ENABLED=false
 # LinuxDo / Discourse
 LINUXDO_CDP_ENABLED=true
 LINUXDO_PAGE_LOAD_TIMEOUT=15000
+LINUXDO_REPLY_MODE=author
+
+# IDCFlare / Discourse
+IDCFLARE_CDP_ENABLED=true
+IDCFLARE_PAGE_LOAD_TIMEOUT=15000
+IDCFLARE_REPLY_MODE=author
 
 # KDocs (金山文档)
 KDOCS_CDP_ENABLED=false

@@ -1,6 +1,6 @@
 ---
 name: feedgrab
-description: Universal content grabber — fetch any URL and return structured Markdown. Supports X/Twitter, WeChat, Xiaohongshu, YouTube, GitHub, LinuxDo/Discourse, Feishu/Lark, KDocs, Youdao Note, Zhihu, Bilibili (with subtitle transcription), Xiaoyuzhou podcasts, Ximalaya podcasts, Telegram, RSS, 300+ paywall news sites, and any web page. Use when user provides a URL and wants its content extracted.
+description: Universal content grabber — fetch any URL and return structured Markdown. Supports X/Twitter, WeChat, Xiaohongshu, YouTube, GitHub, LinuxDo/IDCFlare/Discourse, Feishu/Lark, KDocs, Youdao Note, Zhihu, Bilibili (with subtitle transcription), Xiaoyuzhou podcasts, Ximalaya podcasts, Telegram, RSS, 300+ paywall news sites, and any web page. Use when user provides a URL and wants its content extracted.
 ---
 
 # feedgrab — Universal Content Grabber
@@ -42,6 +42,7 @@ Then stop — do not proceed without feedgrab.
 | YouTube | `youtube.com/watch?v=*`, `youtu.be/*`, Shorts | InnerTube API → yt-dlp subtitles → Groq Whisper |
 | GitHub | `github.com/*/*` | REST API (Chinese README priority + subdirectory scan) |
 | LinuxDo / Discourse | `linux.do/t/*` | Discourse topic JSON API → CDP → Playwright in-page fetch → Jina |
+| IDCFlare / Discourse | `idcflare.com/t/*` | Discourse topic JSON API → CDP → Playwright in-page fetch → Jina |
 | Feishu/Lark (飞书) | `feishu.cn/docx/*`, `feishu.cn/wiki/*` | Open API → CDP → Playwright PageMain → Jina |
 | KDocs (金山文档) | `kdocs.cn/l/*` | Playwright ProseMirror DOM (virtual scroll + CDP) |
 | Youdao Note (有道云笔记) | `share.note.youdao.com/*` | JSON API → Playwright iframe → Jina |
@@ -73,6 +74,7 @@ feedgrab saves output to `OUTPUT_DIR` (default: `./output/`). Check the CLI outp
 - `output/YouTube/author_date：title.md`
 - `output/GitHub/author_date：title.md`
 - `output/LinuxDo/author_date：title.md`
+- `output/IDCFlare/author_date：title.md`
 - `output/Feishu/author_date：title.md`
 - `output/KDocs/author_date：title.md`
 - `output/NoteYouDao/author_date：title.md`
@@ -116,6 +118,8 @@ This reads the URL from the system clipboard.
 - For **Xiaohongshu**: `pip install xhshow` for API mode (faster, no browser needed)
 - For **GitHub**: set `GITHUB_TOKEN` for higher rate limits (5000/hr vs 60/hr)
 - For **LinuxDo / Discourse**: `feedgrab login linuxdo` if the topic is private or the site requires a browser session / Cloudflare cookie
+- For **IDCFlare / Discourse**: `feedgrab login idcflare` if the topic is private or the site requires a browser session / Cloudflare cookie
+- For **Discourse forums**: default reply mode is OP + topic-author follow-up replies only; switch with `LINUXDO_REPLY_MODE` / `IDCFLARE_REPLY_MODE` (`author` / `all` / `none`)
 - For **Feishu**: set `FEISHU_APP_ID` + `FEISHU_APP_SECRET` for Open API access
 - For **KDocs**: `feedgrab login kdocs` to save session (or enable `KDOCS_CDP_ENABLED=true` to reuse running Chrome)
 - For **Zhihu**: `feedgrab login zhihu` to save session (enables full answer content)

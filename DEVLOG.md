@@ -2,6 +2,61 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-04-30 · v0.19.0 · IDCFlare 平台支持 + 飞书知识库目录/表格修复
+
+### 背景
+
+LinuxDo 的 Discourse 专用链路落地后，用户继续提出两类实际问题：
+
+- **Discourse 扩展诉求**：希望把 `idcflare.com` 也纳入和 LinuxDo 同级的专用抓取链路，而不是退回 generic/Jina；同时论坛类帖子默认不应抓完整楼层，而应以“主贴 + 楼主自回”为主，并保留可切换配置。
+- **飞书知识库回归问题**：`feishu-wiki` 在部分新知识库页面中拿不到左侧虚拟树目录，导致只抓到当前页；另外飞书代码块和表格在知识库/单篇混合链路下出现回归，表现为 fallback code 丢内容、代码围栏嵌套失配、以及表格被压成一行导致单元格错位。
+
+### 方案决策
+
+- **新增 IDCFlare / Discourse 专用抓取器**：延续 LinuxDo 的 JSON-first 思路，采用 `游客 topic JSON → CDP 复用 Chrome → Stealth Playwright 页面内 fetch → Jina 最后兜底`，避免游客错误页和 DOM 结构抖动污染正文。
+- **Discourse 回复改为三态配置**：新增 `LINUXDO_REPLY_MODE` / `IDCFLARE_REPLY_MODE`，支持 `author`（默认，仅主贴 + 楼主自回）/ `all`（完整楼层）/ `none`（仅主贴），并把 `reply_mode`、`rendered_reply_count` 写入 front matter，保证可追溯。
+- **会话预热改为本地 session 优先**：LinuxDo / IDCFlare 在抓取前先尝试 `CDP Cookie 同步 → 浏览器访客态 seed`，首次成功后落地 `sessions/{platform}.json`，后续抓取直接复用，不再每次依赖 CDP 在线。
+- **飞书知识库目录改抓虚拟树节点**：不再只扫 sidebar anchor，而是优先读取树节点 `data-node-uid` / `wikiToken`，支持展开虚拟滚动树、去重重复节点、清理零宽字符标题，确保 `feishu-wiki` 能真正枚举整库文档。
+- **飞书 Markdown 渲染统一修复**：
+  - fallback snapshot 中 `type=code` 的 block 直接按真实代码块渲染
+  - 代码块统一使用 4 个反引号围栏，规避正文中内嵌三反引号导致的 fence 提前闭合
+  - 表格优先读取 `snapshot.rows_id / columns_id` 推断行列，修复知识库文档中整表被压成一行的问题
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/idcflare.py` | 新增 | IDCFlare / Discourse 专用抓取器（JSON-first + CDP/浏览器/Jina 多级兜底 + 会话预热 + 楼主回复筛选） |
+| `feedgrab/fetchers/linuxdo.py` | 修改 | 新增 `reply_mode` 三态筛选、session warmup、登录引导增强、代码块/表情图过滤修复 |
+| `feedgrab/fetchers/feishu.py` | 修改 | fallback code snapshot 渲染、四反引号围栏、表格维度识别改读 `rows_id/columns_id` |
+| `feedgrab/fetchers/feishu_wiki.py` | 修改 | 改为虚拟目录树抓取、复用 `_evaluate_feishu_doc_on_page()`、统一文档页图片预下载与标题清理 |
+| `feedgrab/config.py` | 修改 | 新增 `IDCFLARE_*` 配置项 + `LINUXDO_REPLY_MODE` / `IDCFLARE_REPLY_MODE` |
+| `feedgrab/login.py` | 修改 | `feedgrab login idcflare` + CDP Cookie 域名识别 |
+| `feedgrab/reader.py` | 修改 | 新增 `idcflare` 平台识别、路由、去重目录映射 |
+| `feedgrab/schema.py` | 修改 | 新增 `SourceType.IDCFLARE`、`from_idcflare()`，并扩展 Discourse front matter 元数据 |
+| `feedgrab/utils/storage.py` | 修改 | 新增 `IDCFlare/` 输出目录、文件名规则、Discourse `reply_mode/rendered_reply_count` front matter |
+| `feedgrab/fetchers/kdocs.py` | 修改 | 代码块统一使用四反引号围栏 |
+| `feedgrab/fetchers/wechat_search.py` | 修改 | 代码块统一使用四反引号围栏 |
+| `feedgrab/fetchers/twitter_fxtwitter.py` | 修改 | Article code-block 统一使用四反引号围栏 |
+| `feedgrab/fetchers/twitter_graphql.py` | 修改 | Article code-block 统一使用四反引号围栏 |
+| `tests/test_linuxdo.py` | 修改 | 新增楼主回复模式、session warmup、blockquote 代码块、贴纸 GIF 过滤回归测试 |
+| `tests/test_idcflare.py` | 新增 | IDCFlare URL/Markdown/JSON/回复模式/session warmup 回归测试 |
+| `tests/test_feishu_wiki.py` | 新增 | 飞书知识库目录节点归一化、fallback code、四反引号、`rows_id/columns_id` 表格维度回归测试 |
+
+### 验证结果
+
+- ✅ `pytest tests/test_feishu_wiki.py tests/test_feishu_sheet_decode.py tests/test_linuxdo.py tests/test_idcflare.py -q` → 通过
+- ✅ 实抓 `python -m feedgrab.cli "https://linux.do/t/topic/1959236"` 成功，默认输出主贴 + 楼主自回模式
+- ✅ 实抓 `python -m feedgrab.cli "https://idcflare.com/t/topic/44294"` 成功，走 IDCFlare 专用链路而非 generic/Jina
+- ✅ 实抓 `python -m feedgrab.cli "https://ycnj2htgnvdy.feishu.cn/wiki/RSabw1BDWiCVQVkR6LKcyABznvd"` 成功，表格不再整行错位
+- ✅ 实抓 `python -m feedgrab.cli "https://ycnj2htgnvdy.feishu.cn/wiki/WtREwKEJXiYPJ3k9xabcyWfmnDd"` 成功，表格恢复为正常行列
+
+### 状态
+
+已完成 ✅
+
+---
+
 ## 2026-04-22 · v0.18.0 · LinuxDo / Discourse 平台支持 + 折叠块混合渲染
 
 ### 背景
