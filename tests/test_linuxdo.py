@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """LinuxDo / Discourse topic parsing tests."""
 
+import asyncio
+from pathlib import Path
+
 from feedgrab.fetchers.linuxdo import (
     _extract_first_image,
     _html_to_markdown,
     _parse_topic_payload,
+    _warmup_linuxdo_session_from_cdp,
     is_linuxdo_url,
     parse_linuxdo_url,
 )
@@ -171,6 +175,27 @@ def test_linuxdo_html_to_markdown_filters_shortcode_emoji_images():
     assert "好耶，我最喜欢的省钱CC系列又更新了" in md
 
 
+def test_linuxdo_html_to_markdown_filters_custom_sticker_gif():
+    html = (
+        '<p><img src="https://cdn3.ldstatic.com/original/4X/5/f/1/5f11f27d7ec1ad2818db9a10b1a8a318ae0dffc2.gif" '
+        'alt="快做啊,哈雷" width="398" height="376" class="animated"></p>'
+        "<p>不是，今天怎么发这么多次帖…(⊙_⊙;)…</p>"
+    )
+    md = _html_to_markdown(html)
+    assert "5f11f27d7ec1ad2818db9a10b1a8a318ae0dffc2.gif" not in md
+    assert "快做啊,哈雷" not in md
+    assert "不是，今天怎么发这么多次帖" in md
+
+
+def test_linuxdo_html_to_markdown_keeps_content_gif_with_filename_like_alt():
+    html = (
+        '<p><img src="https://cdn3.ldstatic.com/original/4X/f/1/a/f1aab7cf304e037dc060a30e2f22555a06a83a24.gif" '
+        'alt="640 (5)" width="690" height="393" class="animated"></p>'
+    )
+    md = _html_to_markdown(html)
+    assert '![640 (5)](https://cdn3.ldstatic.com/original/4X/f/1/a/f1aab7cf304e037dc060a30e2f22555a06a83a24.gif)' in md
+
+
 def test_parse_topic_payload_cleans_discourse_shortcode_title():
     payload = _sample_topic_payload()
     payload["title"] = ":fire: 【省钱系列12】关于买尼区信用卡+Claude Code Max"
@@ -206,7 +231,46 @@ def test_linuxdo_html_to_markdown_preserves_complex_details_blocks():
     assert "<p>折叠正文</p>" in md
 
 
-def test_parse_topic_payload_builds_thread_markdown():
+def test_linuxdo_html_to_markdown_keeps_code_fence_inside_blockquote():
+    html = (
+        "<blockquote><p>引用说明</p>"
+        '<pre><code class="lang-bash">echo hi</code></pre>'
+        "<p>引用收尾</p></blockquote>"
+        "<p>尾部正文</p>"
+    )
+    md = _html_to_markdown(html)
+    assert "> ````bash" in md
+    assert "> echo hi" in md
+    assert "> ````" in md
+    assert "\n> 引用收尾" in md
+    assert md.rstrip().endswith("尾部正文")
+
+
+def test_parse_topic_payload_defaults_to_author_replies_only(monkeypatch):
+    payload = _sample_topic_payload()
+    payload["post_stream"]["posts"].append(
+        {
+            "id": 17077235,
+            "username": "gekvap60",
+            "name": "",
+            "created_at": "2026-04-22T14:40:00.000Z",
+            "post_number": 3,
+            "reply_to_post_number": 2,
+            "cooked": "<p>这是楼主补充。</p>",
+        }
+    )
+    monkeypatch.setattr("feedgrab.config.linuxdo_reply_mode", lambda: "author")
+    data = _parse_topic_payload(payload, "https://linux.do/t/topic/2032561")
+    assert "## 楼主回复 (1)" in data["content"]
+    assert "### [3楼] gekvap60" in data["content"]
+    assert "这是楼主补充。" in data["content"]
+    assert "### [2楼] Reply User" not in data["content"]
+    assert data["reply_mode"] == "author"
+    assert data["rendered_reply_count"] == 1
+
+
+def test_parse_topic_payload_supports_all_reply_mode(monkeypatch):
+    monkeypatch.setattr("feedgrab.config.linuxdo_reply_mode", lambda: "all")
     data = _parse_topic_payload(
         _sample_topic_payload(),
         "https://linux.do/t/topic/2032561",
@@ -218,9 +282,24 @@ def test_parse_topic_payload_builds_thread_markdown():
     assert "这是首帖正文。" in data["content"]
     assert "## 回复 (1)" in data["content"]
     assert "### [2楼] Reply User" in data["content"]
-    assert "```python" in data["content"]
+    assert "````python" in data["content"]
     assert "https://linux.do/uploads/default/original/1X/demo.png" in data["content"]
     assert data["tags"] == ["快问快答", "人工智能"]
+    assert data["reply_mode"] == "all"
+    assert data["rendered_reply_count"] == 1
+
+
+def test_parse_topic_payload_supports_none_reply_mode(monkeypatch):
+    monkeypatch.setattr("feedgrab.config.linuxdo_reply_mode", lambda: "none")
+    data = _parse_topic_payload(
+        _sample_topic_payload(),
+        "https://linux.do/t/topic/2032561",
+    )
+    assert "## 回复" not in data["content"]
+    assert "## 楼主回复" not in data["content"]
+    assert "### [2楼]" not in data["content"]
+    assert data["reply_mode"] == "none"
+    assert data["rendered_reply_count"] == 0
 
 
 def test_extract_first_image_prefers_lightbox_original():
@@ -242,6 +321,8 @@ def test_extract_first_image_prefers_lightbox_original():
 
 
 def test_from_linuxdo_builds_unified_content():
+    from feedgrab.config import linuxdo_reply_mode
+
     uc = from_linuxdo(
         _parse_topic_payload(
             _sample_topic_payload(),
@@ -253,7 +334,38 @@ def test_from_linuxdo_builds_unified_content():
     assert uc.source_name == "gekvap60"
     assert uc.extra["topic_id"] == "2032561"
     assert uc.extra["views"] == 45
+    assert uc.extra["reply_mode"] == linuxdo_reply_mode()
 
 
 def test_platform_folder_map_covers_linuxdo():
     assert PLATFORM_FOLDER_MAP[SourceType.LINUXDO] == "LinuxDo"
+
+
+def test_warmup_linuxdo_session_syncs_once(monkeypatch):
+    session_file = Path.cwd() / "sessions" / "_test_linuxdo_warmup.json"
+    if session_file.exists():
+        session_file.unlink()
+    calls = {"cdp": 0}
+
+    monkeypatch.setattr("feedgrab.fetchers.linuxdo._session_path", lambda: session_file)
+    monkeypatch.setattr("feedgrab.config.linuxdo_cdp_enabled", lambda: True)
+
+    async def _fake_connect():
+        calls["cdp"] += 1
+        session_file.write_text(
+            '{"cookies":[{"name":"_forum_session","value":"ok","domain":".linux.do"}],"origins":[]}',
+            encoding="utf-8",
+        )
+        return None
+
+    monkeypatch.setattr("feedgrab.fetchers.linuxdo._connect_linuxdo_cdp", _fake_connect)
+
+    asyncio.run(_warmup_linuxdo_session_from_cdp())
+    assert calls["cdp"] == 1
+    assert session_file.exists()
+
+    asyncio.run(_warmup_linuxdo_session_from_cdp())
+    assert calls["cdp"] == 1
+
+    if session_file.exists():
+        session_file.unlink()

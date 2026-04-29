@@ -121,6 +121,25 @@ def _cookie_header_from_session() -> str:
     return "; ".join(p for p in pairs if p and "=" in p)
 
 
+def _has_linuxdo_session_cookie() -> bool:
+    return bool(_cookie_header_from_session().strip())
+
+
+def _with_linuxdo_login_guidance(message: str) -> str:
+    """Append actionable login/CDP guidance for access-related failures."""
+    if not message:
+        return message
+    if "请先运行 feedgrab login linuxdo" in message:
+        return message + "（也可设置 CHROME_CDP_LOGIN=true 后执行 feedgrab login linuxdo 直接复用已登录 Chrome）"
+    if "无权访问" in message or "需要登录" in message:
+        return (
+            message
+            + " 请先运行 feedgrab login linuxdo 保存会话，"
+            + "或设置 CHROME_CDP_LOGIN=true 后再执行 feedgrab login linuxdo。"
+        )
+    return message
+
+
 def _looks_like_challenge(text: str) -> bool:
     snippet = (text or "").lower()
     return any(hint in snippet for hint in _CF_CHALLENGE_HINTS)
@@ -138,6 +157,22 @@ def _clean_linuxdo_title(title: str) -> str:
     cleaned = re.sub(r":[a-z0-9_+-]+:", " ", title, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
+
+
+def _replace_multiline_placeholder(result: str, token: str, block: str) -> str:
+    """Preserve blockquote prefixes when a placeholder expands into multiple lines."""
+    pattern = re.compile(rf"(?m)^(?P<prefix>(?:>\s*)+){re.escape(token)}$")
+
+    def _repl(match: re.Match[str]) -> str:
+        prefix = match.group("prefix")
+        blank_prefix = prefix.rstrip()
+        return "\n".join(
+            f"{prefix}{line}" if line else blank_prefix
+            for line in block.splitlines()
+        )
+
+    result = pattern.sub(_repl, result)
+    return result.replace(token, block)
 
 
 def _html_to_markdown(html: str) -> str:
@@ -207,7 +242,7 @@ def _html_to_markdown(html: str) -> str:
             if cls.startswith("language-"):
                 lang = cls[9:]
                 break
-        fence = f"```{lang}\n{text.rstrip()}\n```"
+        fence = f"````{lang}\n{text.rstrip()}\n````"
         placeholder = f"\n\nFEEDGRABCODEBLOCK{idx}TOKEN\n\n"
         code_blocks.append(fence)
         pre.replace_with(soup.new_string(placeholder))
@@ -221,7 +256,11 @@ def _html_to_markdown(html: str) -> str:
     for idx, block in enumerate(details_blocks):
         result = result.replace(f"FEEDGRABDETAILSBLOCK{idx}TOKEN", block)
     for idx, block in enumerate(code_blocks):
-        result = result.replace(f"FEEDGRABCODEBLOCK{idx}TOKEN", block)
+        result = _replace_multiline_placeholder(
+            result,
+            f"FEEDGRABCODEBLOCK{idx}TOKEN",
+            block,
+        )
     result = re.sub(r"\n{3,}", "\n\n", result).strip()
     return result
 
@@ -242,6 +281,9 @@ def _remove_noise_images(soup) -> None:
             image.decompose()
             continue
         if shortcode_pattern.match(alt) or shortcode_pattern.match(title):
+            image.decompose()
+            continue
+        if _is_discourse_sticker_image(image, src, alt, title, classes):
             image.decompose()
 
 
@@ -268,6 +310,29 @@ def _simplify_lightbox_images(soup) -> None:
             clean_img["alt"] = alt_text
 
         anchor.replace_with(clean_img)
+
+
+def _is_discourse_sticker_image(image, src: str, alt: str, title: str, classes: List[str]) -> bool:
+    """Filter custom sticker-like GIFs while keeping regular uploaded content GIFs."""
+    if "animated" not in classes:
+        return False
+    if not src.endswith(".gif"):
+        return False
+    if "/original/" not in src:
+        return False
+    if image.find_parent("a", class_="lightbox"):
+        return False
+
+    label = (alt or title or "").strip()
+    if not label:
+        return False
+
+    # Filename-like labels such as "640 (5)" or "demo_01" are usually real content assets.
+    if re.fullmatch(r"[A-Za-z0-9 _().-]{1,40}", label):
+        return False
+
+    # Short human-readable Chinese labels are usually forum sticker/custom emoji uploads.
+    return bool(re.search(r"[\u4e00-\u9fff]", label)) and len(label) <= 16
 
 
 def _is_simple_details_block(details, inner_md: str) -> bool:
@@ -320,6 +385,32 @@ def _format_post_author(post: Dict[str, Any]) -> str:
     return (post.get("name") or "").strip() or (post.get("username") or "").strip() or "匿名"
 
 
+def _is_same_discourse_author(root_post: Dict[str, Any], post: Dict[str, Any]) -> bool:
+    """Match replies from the original topic author as robustly as possible."""
+    root_user_id = root_post.get("user_id")
+    post_user_id = post.get("user_id")
+    if root_user_id and post_user_id:
+        return root_user_id == post_user_id
+
+    root_username = (root_post.get("username") or "").strip().lower()
+    post_username = (post.get("username") or "").strip().lower()
+    if root_username and post_username:
+        return root_username == post_username
+
+    root_name = (root_post.get("name") or "").strip()
+    post_name = (post.get("name") or "").strip()
+    return bool(root_name and post_name and root_name == post_name)
+
+
+def _select_replies(posts: List[Dict[str, Any]], root_post: Dict[str, Any], reply_mode: str) -> List[Dict[str, Any]]:
+    replies = posts[1:]
+    if reply_mode == "none":
+        return []
+    if reply_mode == "all":
+        return replies
+    return [post for post in replies if _is_same_discourse_author(root_post, post)]
+
+
 def _format_iso_dt(raw: str) -> str:
     if not raw:
         return ""
@@ -362,12 +453,15 @@ def _extract_first_image(payload: Dict[str, Any]) -> str:
 
 def _parse_topic_payload(payload: Dict[str, Any], url: str) -> Dict[str, Any]:
     """Normalize Discourse topic JSON into feedgrab's internal dict."""
+    from feedgrab.config import linuxdo_reply_mode
+
     posts = payload.get("post_stream", {}).get("posts", [])
     if not posts:
         raise RuntimeError("LinuxDo topic JSON 中没有 posts 数据")
 
     canonical_url = _canonical_topic_url(url)
     op = posts[0]
+    reply_mode = linuxdo_reply_mode()
     author = _format_post_author(op)
     category_name = payload.get("category_name", "") or ""
     tags = []
@@ -403,9 +497,10 @@ def _parse_topic_payload(payload: Dict[str, Any], url: str) -> Dict[str, Any]:
 
     lines.append(_html_to_markdown(op.get("cooked", "")))
 
-    replies = posts[1:]
+    replies = _select_replies(posts, op, reply_mode)
     if replies:
-        lines.extend(["", "---", "", f"## 回复 ({len(replies)})", ""])
+        section_title = "楼主回复" if reply_mode == "author" else "回复"
+        lines.extend(["", "---", "", f"## {section_title} ({len(replies)})", ""])
         for post in replies:
             header = f"### [{post.get('post_number', '?')}楼] {_format_post_author(post)}"
             post_time = _format_iso_dt(post.get("created_at", ""))
@@ -434,6 +529,8 @@ def _parse_topic_payload(payload: Dict[str, Any], url: str) -> Dict[str, Any]:
         "last_posted_at": payload.get("last_posted_at", ""),
         "cover_image": _extract_first_image(payload),
         "post_count_loaded": len(posts),
+        "reply_mode": reply_mode,
+        "rendered_reply_count": len(replies),
     }
 
 
@@ -532,6 +629,108 @@ async def _save_linuxdo_cookies(cookies: List[Dict[str, Any]]) -> None:
         os.chmod(str(session_path), 0o600)
     except OSError:
         pass
+
+
+async def _seed_linuxdo_session_via_browser() -> bool:
+    """Best-effort seed of linuxdo.json via a short browser visit."""
+    pw = browser = context = page = None
+    try:
+        pw, browser, context, page = await _launch_linuxdo_browser()
+        home_url = "https://linux.do/"
+        await page.goto(
+            home_url,
+            wait_until="domcontentloaded",
+            timeout=20000,
+            referer=generate_referer(home_url),
+        )
+        await page.wait_for_timeout(1200)
+        await context.storage_state(path=str(_session_path()))
+        if _has_linuxdo_session_cookie():
+            return True
+        # Avoid keeping an empty session file that cannot be reused.
+        try:
+            _session_path().unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    except Exception as e:
+        logger.debug(f"[linuxdo] browser session seed failed: {e}")
+        return False
+    finally:
+        try:
+            if page:
+                await page.close()
+        except Exception:
+            pass
+        try:
+            if context:
+                await context.close()
+        except Exception:
+            pass
+        try:
+            if browser:
+                await browser.close()
+        except Exception:
+            pass
+        try:
+            if pw:
+                await pw.stop()
+        except Exception:
+            pass
+
+
+async def _warmup_linuxdo_session_from_cdp() -> bool:
+    """If local session is missing, try CDP sync first, then browser seed."""
+    session_path = _session_path()
+    if session_path.exists() and _has_linuxdo_session_cookie():
+        return True
+    if session_path.exists() and not _has_linuxdo_session_cookie():
+        try:
+            session_path.unlink()
+        except OSError:
+            pass
+
+    from feedgrab.config import linuxdo_cdp_enabled
+
+    if linuxdo_cdp_enabled():
+        logger.info("[linuxdo] session warmup: linuxdo.json missing, trying CDP cookie sync")
+        pw = browser = page = None
+        try:
+            cdp = await _connect_linuxdo_cdp()
+            if not cdp:
+                logger.debug("[linuxdo] session warmup: no CDP linux.do context found")
+            else:
+                pw, browser, _ctx, page = cdp
+                if session_path.exists():
+                    return True
+        except Exception as e:
+            logger.debug(f"[linuxdo] session warmup failed: {e}")
+        finally:
+            try:
+                if page:
+                    await page.close()
+            except Exception:
+                pass
+            try:
+                if browser:
+                    await browser.close()
+            except Exception:
+                pass
+            try:
+                if pw:
+                    await pw.stop()
+            except Exception:
+                pass
+        if session_path.exists() and _has_linuxdo_session_cookie():
+            return True
+
+    logger.info("[linuxdo] session warmup: trying browser guest session seed")
+    seeded = await _seed_linuxdo_session_via_browser()
+    if seeded:
+        logger.info("[linuxdo] session warmup: linuxdo.json seeded")
+    else:
+        logger.warning("[linuxdo] session warmup: unable to create linuxdo.json")
+    return session_path.exists() and _has_linuxdo_session_cookie()
 
 
 async def _launch_linuxdo_browser():
@@ -647,6 +846,9 @@ async def fetch_linuxdo(url: str) -> Dict[str, Any]:
     if not is_linuxdo_url(url):
         raise ValueError(f"不是 LinuxDo 链接: {url}")
 
+    # Optional warmup — first successful CDP sync writes linuxdo.json for later reuse.
+    has_local_session = await _warmup_linuxdo_session_from_cdp()
+
     # Tier 0 — HTTP JSON with guest/session cookies
     logger.info("[linuxdo] Tier 0 — Discourse topic JSON")
     data, terminal_error = _http_fetch_topic_json(url)
@@ -673,7 +875,7 @@ async def fetch_linuxdo(url: str) -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"[linuxdo] CDP fetch failed: {e}")
                 if terminal_error:
-                    raise RuntimeError(terminal_error) from e
+                    raise RuntimeError(_with_linuxdo_login_guidance(terminal_error)) from e
             finally:
                 try:
                     if page:
@@ -702,7 +904,7 @@ async def fetch_linuxdo(url: str) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"[linuxdo] Tier 2 failed: {e}")
         if terminal_error:
-            raise RuntimeError(terminal_error) from e
+            raise RuntimeError(_with_linuxdo_login_guidance(terminal_error)) from e
     finally:
         try:
             if context:
@@ -719,6 +921,9 @@ async def fetch_linuxdo(url: str) -> Dict[str, Any]:
                 await pw.stop()
         except Exception:
             pass
+
+    if not has_local_session and terminal_error:
+        raise RuntimeError(_with_linuxdo_login_guidance(terminal_error))
 
     # Tier 3 — Jina fallback only for non-terminal challenge/network failures
     logger.info("[linuxdo] Tier 3 — Jina fallback")
