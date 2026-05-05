@@ -160,6 +160,15 @@ def _extract_filename(url: str, platform: str) -> str:
         if basename:
             return _sanitize(f"{basename}.mp4")
 
+    elif platform == "weibo":
+        # Image: wx1.sinaimg.cn/large/abc123.jpg → abc123.jpg
+        # Video: f.video.weibocdn.com/.../abc123.mp4?label=mp4_hd&Expires=...
+        basename = path.split("/")[-1]
+        if basename and "." in basename:
+            return _sanitize(basename)
+        if basename:
+            return _sanitize(f"{basename}.mp4")
+
     # Generic fallback
     basename = path.split("/")[-1]
     if "." in basename:
@@ -201,6 +210,14 @@ def _download_headers(platform: str) -> dict:
         return {"Referer": "https://www.xiaohongshu.com/"}
     if platform == "wechat":
         return {"Referer": "https://mp.weixin.qq.com/"}
+    if platform == "weibo":
+        # weibocdn requires Referer + UA from m.weibo.cn for the signed URL
+        # to actually return 200; otherwise it 403s even with a fresh URL.
+        from feedgrab.config import get_user_agent
+        return {
+            "Referer": "https://m.weibo.cn/",
+            "User-Agent": get_user_agent(),
+        }
     return {}
 
 

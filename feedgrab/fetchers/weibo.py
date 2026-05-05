@@ -283,16 +283,15 @@ def _build_status_result(mblog: Dict[str, Any]) -> Dict[str, Any]:
     if pic_urls:
         body_parts.append("")
         for u in pic_urls:
-            body_parts.append(f"![image]({u})")
+            body_parts.append(f"![image](<{u}>)")
     if video_url:
         body_parts.append("")
-        # Obsidian renders <video src="..."> inline with native controls.
-        # Plain Markdown ![](url.mp4) breaks for weibocdn URLs because the
-        # query string (Expires/ssig) makes Obsidian's MIME sniffer skip it.
-        body_parts.append(
-            f'<video src="{video_url}" controls preload="metadata" '
-            f'style="max-width:100%;"></video>'
-        )
+        # Use angle-bracket Markdown image syntax. weibocdn URLs are signed
+        # with `?Expires=...&ssig=...&KID=...,video` — bare ![](url) lets
+        # Obsidian misparse the unescaped `&` and `,`, and `<video src="url">`
+        # HTML treats `&` as entity start, both truncating the src. Wrapping
+        # in `<...>` is the CommonMark-standard way to keep raw URLs intact.
+        body_parts.append(f"![video](<{video_url}>)")
 
     # Retweeted status
     retweeted = mblog.get("retweeted_status")
@@ -343,6 +342,8 @@ def _build_status_result(mblog: Dict[str, Any]) -> Dict[str, Any]:
         "source_app": mblog.get("source", "") or "",
         "mblog_type": mblog_type,
         "tags": topics,
+        "images": pic_urls,
+        "videos": [video_url] if video_url else [],
     }
 
 

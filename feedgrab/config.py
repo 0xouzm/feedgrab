@@ -972,6 +972,11 @@ def weibo_user_delay() -> float:
 
 
 def weibo_download_media() -> bool:
+    """Download Weibo images/videos to attachments/. Default false.
+
+    Note: weibocdn URLs are signed (Expires/ssig) and typically expire within
+    hours. Set WEIBO_DOWNLOAD_MEDIA=true to keep a local copy.
+    """
     return os.getenv("WEIBO_DOWNLOAD_MEDIA", "false").lower() in ("true", "1", "yes")
 
 

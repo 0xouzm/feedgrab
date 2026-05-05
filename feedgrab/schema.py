@@ -710,6 +710,8 @@ def from_weibo(data: dict) -> UnifiedContent:
             "reposts": data.get("reposts", 0),
             "source_app": data.get("source_app", ""),
             "mblog_type": data.get("mblog_type", "status"),
+            "images": data.get("images", []),
+            "videos": data.get("videos", []),
         },
     )
 
