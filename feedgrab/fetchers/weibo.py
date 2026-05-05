@@ -308,10 +308,16 @@ def _build_status_result(mblog: Dict[str, Any]) -> Dict[str, Any]:
 
     mid = str(mblog.get("id") or mblog.get("mid") or "")
     bid = mblog.get("bid", "") or mblog.get("mblogid", "")
-    title_raw = (text_raw or "").strip().split("\n", 1)[0]
+    # Title: prefer text_raw; otherwise strip tags from HTML to a plain string
+    # (avoid text_md which still carries Markdown link syntax for # / @).
+    raw_for_title = mblog.get("text_raw") or ""
+    if not raw_for_title and text_html:
+        import html as _html
+        raw_for_title = _html.unescape(_TAG_RE.sub("", text_html))
+    title_raw = (raw_for_title or "").strip().split("\n", 1)[0]
     title = title_raw[:50] or f"weibo {mid}"
 
-    topics = _extract_topics(text_raw)
+    topics = _extract_topics(raw_for_title)
     is_repost = "mblog_type" in mblog
     mblog_type = "repost" if retweeted else "status"
 
