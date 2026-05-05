@@ -2,9 +2,41 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
-# feedgrab DEVLOG
+## 2026-05-06 · v0.20.1 · 修复长 thread 被误判为 Article 导致 quoted tweet 丢失
 
-开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
+### 背景
+
+用户实测一条长 thread（root 推文 700+ 字符 + 2 条带 quoted tweet 的自回复）落盘后，发现两个引用推文的内容、作者、链接全部丢失。Markdown 里只剩下三段裸文本，引用块完全没渲染。
+
+### 根因
+
+`feedgrab/schema.py → from_twitter()` 旧逻辑用启发式判断 Article：
+
+```python
+is_article = len(root_text) > 500 and len(tweets) <= 3
+```
+
+只看 root 文本长度 + thread 数量，不看 GraphQL/Jina 是否真的拿到了 Article body。结果上面那个真实 thread（root 长 + 3 条以内）被误判为 Article，走进 article 渲染分支 —— 而 article 分支只处理 `images` / `videos`，**完全不调用 `_render_quoted_tweet()`**，所以引用推文被静默丢弃。
+
+### 方案决策
+
+- **判定权威化**：改用 `_has_article_body(article_data)` —— 只有当 `article_data["body"]` 实际内容超过 200 字符（GraphQL 的 `content_state` 原生渲染或 Jina 兜底真的产出了 Article 正文）时，才认定为 Article。其他情况一律按 thread 处理。
+- **统一渲染路径**：抽出 `_render_twitter_tweet_part(t, prefix)` 处理单条推文（文本 + 媒体 + 引用推文），article 和 thread 共用一套循环。article 模式下，第一条推文用 `article_body` 替换文本，但媒体、引用推文、自回复仍按正常流程渲染 —— 真正的 Article（带封面图、长正文、几条简短自回复）能拿到完整内容，假的 Article（被误判的长 thread）也能保住引用块。
+- **回归测试**：新增 `tests/test_twitter_rendering.py::test_long_thread_with_quoted_tweet_is_not_misclassified_as_article`，用真实 thread 形态（root 700+ 字符 + 2 条带 quoted tweet 自回复 + `article_data: {}`）断言两个引用推文文本和作者标记都出现在最终 Markdown 里。
+
+### 改动范围
+
+- `feedgrab/schema.py`：新增 `_render_twitter_tweet_part()` / `_has_article_body()`；重写 `from_twitter()` 中的 thread 渲染分支（30 行净减少，逻辑更扁平）。
+- `tests/test_twitter_rendering.py`：新增回归测试 1 个。
+- `pyproject.toml`：版本 0.20.0 → 0.20.1。
+- `CLAUDE.md`：当前版本号 + 迭代历史摘要表新增 v0.20.1 行。
+
+### 验证结果
+
+- ✅ `pytest tests/test_twitter_rendering.py -v` 通过（1 passed in 0.02s）。
+- ✅ 真实 thread 形态：root 长文 + 2 条带 quoted tweet 自回复 → 两个引用块完整渲染（`> **作者** (@handle)` + 引用文本）。
+- ✅ 真正 Article 形态（`article_data.body` 非空 + 封面图）：cover image 仍在最顶部，正文用 article_body 替换，引用推文 + 媒体仍保留。
+- ✅ 单条推文 / 短 thread / 带 quoted tweet 普通推文：行为不变。
 
 ## 2026-05-05 · v0.20.0 · 五平台扩展（HackerNews / Medium / Reddit / Weibo / Douyin）
 

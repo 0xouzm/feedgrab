@@ -219,6 +219,31 @@ def _render_quoted_tweet(qt: dict) -> str:
     return "\n".join(lines)
 
 
+def _render_twitter_tweet_part(t: dict, prefix: str = "") -> str:
+    """Render one tweet dict including text, media, and quoted tweet."""
+    text = (t.get("text") or "").strip()
+    part = f"{prefix}{text}" if text else prefix.rstrip()
+    # Inline images
+    for img_url in t.get("images", []):
+        if img_url:
+            part += f"\n\n![image]({img_url})"
+    # Inline videos
+    for video_url in t.get("videos", []):
+        if video_url:
+            part += f"\n\n[▶ video]({video_url})"
+    # Quoted tweet — full blockquote with media
+    qt_block = _render_quoted_tweet(t.get("quoted_tweet"))
+    if qt_block:
+        part += f"\n\n{qt_block}"
+    return part.strip()
+
+
+def _has_article_body(article_data: dict) -> bool:
+    """True only when GraphQL/Jina supplied real Article body content."""
+    body = (article_data or {}).get("body", "")
+    return bool(body and len(body.strip()) > 200)
+
+
 def from_twitter(data: dict) -> UnifiedContent:
     # If thread data is present, assemble rich content from all tweets
     tweets = data.get("thread_tweets", [])
@@ -226,58 +251,29 @@ def from_twitter(data: dict) -> UnifiedContent:
     is_article = False
 
     if tweets:
-        root_text = tweets[0].get("text", "")
-        # Detect Article: root tweet text is long (Jina-fetched body), don't wrap in [1/N]
-        is_article = len(root_text) > 500 and len(tweets) <= 3
-        if is_article:
-            content = root_text
-            # Append author replies as footnotes if any
-            if len(tweets) > 1:
-                replies = []
-                for t in tweets[1:]:
-                    reply_text = t.get("text", "").strip()
-                    if reply_text:
-                        replies.append(reply_text)
-                if replies:
-                    content += "\n\n---\n\n" + "\n\n".join(replies)
-            # Article: append images at the end
-            for t in tweets:
-                for img_url in t.get("images", []):
-                    content += f"\n\n![image]({img_url})"
-            # Article: append videos
-            for t in tweets:
-                for video_url in t.get("videos", []):
-                    if video_url:
-                        content += f"\n\n[▶ video]({video_url})"
-            # Article: prepend cover image at the top
-            article_cover = article_data.get("cover_image", "")
-            if article_cover:
-                content = f"![cover]({article_cover})\n\n{content}"
-        else:
-            parts = []
-            rest_count = len(tweets) - 1
-            for i, t in enumerate(tweets):
-                text = t.get('text', '')
-                # First tweet (main post): no prefix
-                # Subsequent tweets: [1/N]...[N/N]
-                if len(tweets) > 1 and i > 0:
-                    part = f"**[{i}/{rest_count}]** {text}"
-                else:
-                    part = text
-                # Inline images
-                for img_url in t.get("images", []):
-                    part += f"\n\n![image]({img_url})"
-                # Inline videos
-                for video_url in t.get("videos", []):
-                    if video_url:
-                        part += f"\n\n[▶ video]({video_url})"
-                # Quoted tweet — full blockquote with media
-                qt = t.get("quoted_tweet")
-                qt_block = _render_quoted_tweet(qt)
-                if qt_block:
-                    part += f"\n\n{qt_block}"
+        article_body = (article_data or {}).get("body", "")
+        is_article = _has_article_body(article_data)
+        parts = []
+        rest_count = len(tweets) - 1
+        for i, t in enumerate(tweets):
+            # Article body is authoritative for the root tweet only. Everything
+            # else that GraphQL captured (self-replies, quoted tweets, media)
+            # still belongs in the final Markdown.
+            tweet_to_render = dict(t)
+            if i == 0 and is_article:
+                tweet_to_render["text"] = article_body
+            prefix = ""
+            if len(tweets) > 1 and i > 0:
+                prefix = f"**[{i}/{rest_count}]** "
+            part = _render_twitter_tweet_part(tweet_to_render, prefix=prefix)
+            if part:
                 parts.append(part)
-            content = "\n\n---\n\n".join(parts)
+        content = "\n\n---\n\n".join(parts)
+
+        # Article: prepend cover image at the top
+        article_cover = article_data.get("cover_image", "") if is_article else ""
+        if article_cover:
+            content = f"![cover]({article_cover})\n\n{content}"
     else:
         content = data.get("text", "")
 
