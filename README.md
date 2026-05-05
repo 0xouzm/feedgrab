@@ -154,6 +154,24 @@ X_DOWNLOAD_MEDIA=true feedgrab https://x.com/user/status/123
 XHS_DOWNLOAD_MEDIA=true feedgrab https://www.xiaohongshu.com/explore/xxx
 MPWEIXIN_DOWNLOAD_MEDIA=true feedgrab https://mp.weixin.qq.com/s/xxx
 
+# === HackerNews / Medium / Reddit / Weibo / Douyin（v0.20.0 新增）===
+feedgrab https://news.ycombinator.com/item?id=44627001        # HN 单条 + 评论
+feedgrab hn top --limit 30                                     # HN top stories 批量
+feedgrab hn ask --limit 20                                     # HN Ask HN 批量
+
+feedgrab https://medium.com/@dotey/some-article-abc123         # Medium 单篇
+feedgrab medium-user @dotey --limit 20                         # Medium 用户主页（RSS + 单篇 Tier 链）
+feedgrab medium-pub better-programming --limit 20              # Medium 出版物主页
+
+feedgrab https://www.reddit.com/r/MachineLearning/comments/<id>/foo/  # Reddit 单帖 + Top 50 评论
+feedgrab reddit-sub MachineLearning --sort hot --limit 25      # Reddit 子版块批量
+
+feedgrab https://m.weibo.cn/status/4857881961438732            # 微博单条
+feedgrab weibo-user 1234567890 --limit 20                      # 微博用户主页
+
+feedgrab https://www.douyin.com/video/7234567890123456789     # 抖音单视频
+feedgrab https://v.douyin.com/iL3xpDe/                         # 抖音短链（自动 302 解析）
+
 # 自动检测本机 Chrome UA 并写入 .env（推荐首次部署时运行）
 feedgrab detect-ua
 
@@ -252,6 +270,11 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | RSS | feedparser | — |
 | 小宇宙播客 | 见上方「小宇宙」行 | Groq Whisper 自动转录 |
 | Apple Podcasts | — | 通过 Claude Code 技能 |
+| **HackerNews** | **Hacker News Firebase API v0**（0 Cookie / 0 反爬，单条 item + 一层评论 + `hn top/new/best/ask/show/jobs` 列表批量） | — |
+| **Medium** | **Jina Reader** → JSON-LD articleBody → Stealth Browser；用户/出版物批量走 RSS feed (`medium-user @<handle>` / `medium-pub <slug>`) | — |
+| **Reddit** | **old.reddit.com .json + 自报 UA** → CDP 复用 Chrome → Stealth Playwright + saved session → Jina（单帖含 Top 50 评论 + `reddit-sub` 子版块批量，hot/new/top/best/rising 五种排序） | — |
+| **Weibo** | m.weibo.cn 移动端 API（show + container/getIndex）+ SSR `$render_data` 兜底（单条 + `weibo-user` 用户主页批量；SUB Cookie 可选） | — |
+| **Douyin** | **CDP 复用 Chrome** → Stealth Playwright + saved session → SSR `RENDER_DATA` 解析 → Jina（不破解签名，依赖浏览器内执行；短链自动 302 解析 aweme_id） | — |
 | **付费新闻网站**（NYT/WSJ/FT/Economist/Bloomberg/SCMP 等 300+ 站） | **7 级 Tier 付费墙绕过**（JSON-LD 探测 + Googlebot/Bingbot UA + AMP 页面 + archive.today + Google Cache） | — |
 | 任意网页 | **JSON-LD 前置** → Jina 兜底 | — |
 

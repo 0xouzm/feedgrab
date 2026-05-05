@@ -47,4 +47,9 @@ debug_*_output.json
 
 # Iteration research notes (kept local only)
 迭代方案调研报告/
+开发及迭代方案调研报告/
+
+# Smoke test outputs
+output_*test*/
+output_smoke/
 

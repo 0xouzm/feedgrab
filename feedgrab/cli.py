@@ -16,6 +16,7 @@ import subprocess
 import time
 import asyncio
 from pathlib import Path
+from typing import Optional
 
 # Fix Windows console encoding — force UTF-8 instead of GBK
 if sys.platform == "win32":
@@ -1089,6 +1090,244 @@ def _youtube_resolve_meta(url: str) -> dict:
     }
 
 
+def cmd_hackernews_list(args: list):
+    """Fetch HackerNews list stories and save each item as Markdown."""
+    import asyncio
+
+    category = args[0].strip().lower()
+    if category == "newest":
+        category = "new"
+
+    limit = None
+    if "--limit" in args:
+        idx = args.index("--limit")
+        if idx + 1 >= len(args):
+            print("❌ --limit requires a number")
+            sys.exit(1)
+        try:
+            limit = int(args[idx + 1])
+        except ValueError:
+            print("❌ --limit must be a number")
+            sys.exit(1)
+    elif "-n" in args:
+        idx = args.index("-n")
+        if idx + 1 >= len(args):
+            print("❌ -n requires a number")
+            sys.exit(1)
+        try:
+            limit = int(args[idx + 1])
+        except ValueError:
+            print("❌ -n must be a number")
+            sys.exit(1)
+
+    async def run():
+        from feedgrab.config import hn_enabled, hn_list_limit
+        if not hn_enabled():
+            raise RuntimeError("HackerNews 抓取已禁用，请设置 HN_ENABLED=true")
+        from feedgrab.fetchers.hackernews import fetch_hackernews_list
+        from feedgrab.schema import from_hackernews
+        from feedgrab.utils.storage import save_to_markdown
+
+        actual_limit = limit or hn_list_limit()
+        print(f"\n📰 HackerNews {category}: fetching {actual_limit} items...")
+        items = await fetch_hackernews_list(category, limit=actual_limit)
+        saved = 0
+        for data in items:
+            content = from_hackernews(data)
+            content.category = category
+            path = save_to_markdown(content)
+            if path:
+                saved += 1
+        print(f"✅ HackerNews {category}: saved {saved}/{len(items)} items")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n⏹ Cancelled")
+    except Exception as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+
+
+def _parse_named_int(args: list, name: str) -> Optional[int]:
+    if name in args:
+        idx = args.index(name)
+        if idx + 1 >= len(args):
+            print(f"❌ {name} requires a number")
+            sys.exit(1)
+        try:
+            return int(args[idx + 1])
+        except ValueError:
+            print(f"❌ {name} must be a number")
+            sys.exit(1)
+    return None
+
+
+def _parse_named_str(args: list, name: str) -> Optional[str]:
+    if name in args:
+        idx = args.index(name)
+        if idx + 1 >= len(args):
+            print(f"❌ {name} requires a value")
+            sys.exit(1)
+        return args[idx + 1]
+    return None
+
+
+def cmd_medium_user(args: list):
+    """Fetch a Medium user's recent articles via RSS + tier chain."""
+    import asyncio
+    handle = args[0].strip()
+    limit = _parse_named_int(args, "--limit") or _parse_named_int(args, "-n")
+
+    async def run():
+        from feedgrab.config import medium_enabled, medium_user_limit
+        if not medium_enabled():
+            raise RuntimeError("Medium 抓取已禁用，请设置 MEDIUM_ENABLED=true")
+        from feedgrab.fetchers.medium import fetch_medium_user
+        from feedgrab.schema import from_medium
+        from feedgrab.utils.storage import save_to_markdown
+
+        n = limit or medium_user_limit()
+        print(f"\n📰 Medium 用户 {handle}: 抓取 {n} 篇...")
+        items = await fetch_medium_user(handle, limit=n)
+        saved = 0
+        category = handle.lstrip("@")
+        for data in items:
+            content = from_medium(data)
+            content.category = f"user_{category}"
+            path = save_to_markdown(content)
+            if path is None:
+                continue
+            saved += 1
+        print(f"✅ Medium 用户 {handle}: 保存 {saved}/{len(items)} 篇")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n⏹ Cancelled")
+    except Exception as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+
+def cmd_medium_pub(args: list):
+    """Fetch a Medium publication's recent articles via RSS + tier chain."""
+    import asyncio
+    slug = args[0].strip().strip("/")
+    limit = _parse_named_int(args, "--limit") or _parse_named_int(args, "-n")
+
+    async def run():
+        from feedgrab.config import medium_enabled, medium_user_limit
+        if not medium_enabled():
+            raise RuntimeError("Medium 抓取已禁用，请设置 MEDIUM_ENABLED=true")
+        from feedgrab.fetchers.medium import fetch_medium_publication
+        from feedgrab.schema import from_medium
+        from feedgrab.utils.storage import save_to_markdown
+
+        n = limit or medium_user_limit()
+        print(f"\n📰 Medium 出版物 {slug}: 抓取 {n} 篇...")
+        items = await fetch_medium_publication(slug, limit=n)
+        saved = 0
+        for data in items:
+            content = from_medium(data)
+            content.category = f"pub_{slug}"
+            path = save_to_markdown(content)
+            if path is None:
+                continue
+            saved += 1
+        print(f"✅ Medium 出版物 {slug}: 保存 {saved}/{len(items)} 篇")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n⏹ Cancelled")
+    except Exception as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+
+def cmd_reddit_sub(args: list):
+    """Fetch posts from a subreddit."""
+    import asyncio
+    sub = args[0].strip().lstrip("r/").strip("/")
+    sort = (_parse_named_str(args, "--sort") or "hot").lower()
+    if sort not in {"hot", "new", "top", "best", "rising"}:
+        print(f"❌ 不支持的 sort: {sort}（可选 hot/new/top/best/rising）")
+        sys.exit(1)
+    limit = _parse_named_int(args, "--limit") or _parse_named_int(args, "-n")
+
+    async def run():
+        from feedgrab.config import reddit_enabled, reddit_sub_limit
+        if not reddit_enabled():
+            raise RuntimeError("Reddit 抓取已禁用，请设置 REDDIT_ENABLED=true")
+        from feedgrab.fetchers.reddit import fetch_reddit_subreddit
+        from feedgrab.schema import from_reddit
+        from feedgrab.utils.storage import save_to_markdown
+
+        n = limit or reddit_sub_limit()
+        print(f"\n📰 Reddit r/{sub} ({sort}): 抓取 {n} 条...")
+        items = await fetch_reddit_subreddit(sub, sort=sort, limit=n)
+        saved = 0
+        for data in items:
+            content = from_reddit(data)
+            content.category = f"r_{sub}_{sort}"
+            path = save_to_markdown(content)
+            if path is None:
+                continue
+            saved += 1
+        print(f"✅ Reddit r/{sub}: 保存 {saved}/{len(items)} 条")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n⏹ Cancelled")
+    except Exception as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+
+def cmd_weibo_user(args: list):
+    """Fetch a Weibo user's recent posts."""
+    import asyncio
+    uid = args[0].strip()
+    limit = _parse_named_int(args, "--limit") or _parse_named_int(args, "-n")
+
+    async def run():
+        from feedgrab.config import weibo_enabled, weibo_user_limit
+        if not weibo_enabled():
+            raise RuntimeError("Weibo 抓取已禁用，请设置 WEIBO_ENABLED=true")
+        from feedgrab.fetchers.weibo import fetch_weibo_user
+        from feedgrab.schema import from_weibo
+        from feedgrab.utils.storage import save_to_markdown
+
+        n = limit or weibo_user_limit()
+        print(f"\n📰 Weibo 用户 {uid}: 抓取 {n} 条...")
+        items, screen_name = await fetch_weibo_user(uid, limit=n)
+        saved = 0
+        category_name = f"user_{uid}"
+        if screen_name:
+            from feedgrab.utils.storage import _sanitize_filename
+            safe = _sanitize_filename(screen_name) or screen_name
+            category_name = f"user_{uid}_{safe}"
+        for data in items:
+            content = from_weibo(data)
+            content.category = category_name
+            path = save_to_markdown(content)
+            if path is None:
+                continue
+            saved += 1
+        print(f"✅ Weibo 用户 {uid}: 保存 {saved}/{len(items)} 条")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n⏹ Cancelled")
+    except Exception as e:
+        print(f"❌ {e}")
+        sys.exit(1)
+
+
 def cmd_feishu_wiki(url: str):
     """Batch-fetch all documents in a Feishu wiki space."""
     import asyncio
@@ -1892,6 +2131,38 @@ Examples:
         import os
         os.environ["FEISHU_WIKI_BATCH_ENABLED"] = "true"
         cmd_feishu_wiki(sys.argv[2])
+    elif cmd == "hn":
+        if len(sys.argv) < 3:
+            print("❌ Usage: feedgrab hn <category> [--limit N]")
+            print("   Categories: top | new | best | ask | show | jobs")
+            print("   Example: feedgrab hn top --limit 30")
+            print("            feedgrab hn ask")
+            sys.exit(1)
+        cmd_hackernews_list(sys.argv[2:])
+    elif cmd == "medium-user":
+        if len(sys.argv) < 3:
+            print("❌ Usage: feedgrab medium-user <@username> [--limit N]")
+            print("   Example: feedgrab medium-user @dotey --limit 20")
+            sys.exit(1)
+        cmd_medium_user(sys.argv[2:])
+    elif cmd == "medium-pub":
+        if len(sys.argv) < 3:
+            print("❌ Usage: feedgrab medium-pub <publication-slug> [--limit N]")
+            print("   Example: feedgrab medium-pub better-programming --limit 20")
+            sys.exit(1)
+        cmd_medium_pub(sys.argv[2:])
+    elif cmd == "reddit-sub":
+        if len(sys.argv) < 3:
+            print("❌ Usage: feedgrab reddit-sub <subreddit> [--sort hot|new|top|best] [--limit N]")
+            print("   Example: feedgrab reddit-sub MachineLearning --sort hot --limit 25")
+            sys.exit(1)
+        cmd_reddit_sub(sys.argv[2:])
+    elif cmd == "weibo-user":
+        if len(sys.argv) < 3:
+            print("❌ Usage: feedgrab weibo-user <uid> [--limit N]")
+            print("   Example: feedgrab weibo-user 1234567890 --limit 20")
+            sys.exit(1)
+        cmd_weibo_user(sys.argv[2:])
     elif cmd.startswith("http") or cmd.startswith("www.") or "." in cmd:
         urls = [arg for arg in sys.argv[1:] if arg.startswith(("http", "www.")) or "." in arg]
         cmd_fetch(urls)

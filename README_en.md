@@ -134,6 +134,24 @@ X_DOWNLOAD_MEDIA=true feedgrab https://x.com/user/status/123
 XHS_DOWNLOAD_MEDIA=true feedgrab https://www.xiaohongshu.com/explore/xxx
 MPWEIXIN_DOWNLOAD_MEDIA=true feedgrab https://mp.weixin.qq.com/s/xxx
 
+# === HackerNews / Medium / Reddit / Weibo / Douyin (new in v0.20.0) ===
+feedgrab https://news.ycombinator.com/item?id=44627001        # HN single item + comments
+feedgrab hn top --limit 30                                     # HN top stories batch
+feedgrab hn ask --limit 20                                     # HN Ask HN batch
+
+feedgrab https://medium.com/@dotey/some-article-abc123         # Medium single article
+feedgrab medium-user @dotey --limit 20                         # Medium user (RSS + tier chain)
+feedgrab medium-pub better-programming --limit 20              # Medium publication
+
+feedgrab https://www.reddit.com/r/MachineLearning/comments/<id>/foo/  # Reddit post + Top 50 comments
+feedgrab reddit-sub MachineLearning --sort hot --limit 25      # Reddit subreddit batch
+
+feedgrab https://m.weibo.cn/status/4857881961438732            # Weibo single post
+feedgrab weibo-user 1234567890 --limit 20                      # Weibo user profile batch
+
+feedgrab https://www.douyin.com/video/7234567890123456789     # Douyin single video
+feedgrab https://v.douyin.com/iL3xpDe/                         # Douyin short link (auto 302 resolve)
+
 # Auto-detect local Chrome UA and write to .env (recommended on first setup)
 feedgrab detect-ua
 
@@ -226,6 +244,11 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | RSS | feedparser | — |
 | 小宇宙 (Xiaoyuzhou) | see Xiaoyuzhou row above | Groq Whisper auto-transcribe |
 | Apple Podcasts | — | via Claude Code skill |
+| **HackerNews** | **Hacker News Firebase API v0** (0 cookie / 0 anti-bot, single item + first-level comments + `hn top/new/best/ask/show/jobs` list batch) | — |
+| **Medium** | **Jina Reader** → JSON-LD articleBody → Stealth Browser; user/publication batch via RSS feed (`medium-user @<handle>` / `medium-pub <slug>`) | — |
+| **Reddit** | **old.reddit.com .json + self-identifying UA** → CDP reuse Chrome → Stealth Playwright + saved session → Jina (single post with Top 50 comments + `reddit-sub` subreddit batch, hot/new/top/best/rising sorts) | — |
+| **Weibo (微博)** | m.weibo.cn mobile API (show + container/getIndex) + SSR `$render_data` fallback (single + `weibo-user` profile batch; SUB cookie optional) | — |
+| **Douyin (抖音)** | **CDP reuse Chrome** → Stealth Playwright + saved session → SSR `RENDER_DATA` parse → Jina (no signature cracking, relies on browser-internal execution; short links auto-resolve via 302) | — |
 | **Paywalled news sites** (NYT/WSJ/FT/Economist/Bloomberg/SCMP, 300+) | **7-tier paywall bypass** (JSON-LD probe + Googlebot/Bingbot UA + AMP pages + archive.today + Google Cache) | — |
 | Any web page | **JSON-LD probe** → Jina fallback | — |
 

@@ -163,6 +163,11 @@ PLATFORM_FOLDER_MAP = {
     SourceType.IDCFLARE: "IDCFlare",
     SourceType.XIAOYUZHOU: "Xiaoyuzhou",
     SourceType.XIMALAYA: "Ximalaya",
+    SourceType.HACKERNEWS: "HackerNews",
+    SourceType.MEDIUM: "Medium",
+    SourceType.REDDIT: "Reddit",
+    SourceType.WEIBO: "Weibo",
+    SourceType.DOUYIN: "Douyin",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",
     SourceType.WEB: "Web",
@@ -298,6 +303,54 @@ def _generate_filename(item: UnifiedContent) -> str:
             raw = f"{author_display}：{raw_title}"
         else:
             raw = raw_title
+    elif item.source_type == SourceType.HACKERNEWS:
+        author_display = (item.source_name or "").strip()
+        # HN created_at is "YYYY-MM-DD HH:MM" — keep date only
+        published = (extra.get("created_at") or "")[:10]
+
+        if author_display and published:
+            raw = f"{author_display}_{published}：{raw_title}"
+        elif author_display:
+            raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
+    elif item.source_type == SourceType.MEDIUM:
+        author_display = (item.source_name or "").strip()
+        # Medium published may be RFC822 ("Wed, 02 Apr 2026 10:11:12 GMT") or ISO 8601
+        published = _format_iso_datetime(extra.get("published_at", ""), with_time=False)
+
+        if author_display and published:
+            raw = f"{author_display}_{published}：{raw_title}"
+        elif author_display:
+            raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
+    elif item.source_type == SourceType.REDDIT:
+        sub = (extra.get("subreddit") or "").strip()
+        published = (extra.get("created_at") or "")[:10]
+        prefix = f"r_{sub}" if sub else "reddit"
+        if published:
+            raw = f"{prefix}_{published}：{raw_title}"
+        else:
+            raw = f"{prefix}：{raw_title}"
+    elif item.source_type == SourceType.WEIBO:
+        author_display = (item.source_name or "").strip()
+        published = (extra.get("created_at") or "")[:10]
+        if author_display and published:
+            raw = f"{author_display}_{published}：{raw_title}"
+        elif author_display:
+            raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
+    elif item.source_type == SourceType.DOUYIN:
+        author_display = (item.source_name or "").strip()
+        published = (extra.get("created_at") or "")[:10]
+        if author_display and published:
+            raw = f"{author_display}_{published}：{raw_title}"
+        elif author_display:
+            raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
     else:
         raw = raw_title
 
@@ -353,6 +406,13 @@ def _format_markdown(item: UnifiedContent) -> str:
         published = extra["create_time"][:10]  # YYYY-MM-DD
     elif item.source_type in (SourceType.LINUXDO, SourceType.IDCFLARE) and extra.get("created_at"):
         published = _format_iso_datetime(extra["created_at"])
+    elif item.source_type == SourceType.HACKERNEWS and extra.get("created_at"):
+        # HN already formatted as "YYYY-MM-DD HH:MM"
+        published = extra["created_at"][:10]
+    elif item.source_type == SourceType.MEDIUM and extra.get("published_at"):
+        published = _format_iso_datetime(extra["published_at"], with_time=False)
+    elif item.source_type in (SourceType.REDDIT, SourceType.WEIBO, SourceType.DOUYIN) and extra.get("created_at"):
+        published = _format_iso_datetime(extra["created_at"], with_time=False)
     fetched_date = item.fetched_at[:10] if item.fetched_at else ""
 
     # --- Title (escape quotes for YAML) ---
@@ -549,6 +609,79 @@ def _format_markdown(item: UnifiedContent) -> str:
         if extra.get("last_posted_at"):
             fm_lines.append(f'last_posted_at: "{_format_iso_datetime(extra["last_posted_at"])}"')
 
+    # HackerNews extras
+    is_hn = item.source_type == SourceType.HACKERNEWS
+    if is_hn:
+        if extra.get("hn_id"):
+            fm_lines.append(f'hn_id: "{extra["hn_id"]}"')
+        if extra.get("hn_type"):
+            fm_lines.append(f'hn_type: "{extra["hn_type"]}"')
+        fm_lines.append(f"score: {extra.get('score', 0)}")
+        fm_lines.append(f"comment_count: {extra.get('comment_count', 0)}")
+        if extra.get("linked_url"):
+            fm_lines.append(f'linked_url: "{extra["linked_url"]}"')
+
+    # Medium extras
+    is_medium = item.source_type == SourceType.MEDIUM
+    if is_medium:
+        if extra.get("cover_image"):
+            fm_lines.append(f'cover_image: "{extra["cover_image"]}"')
+        fm_lines.append(f"is_member_only: {str(bool(extra.get('is_member_only', False))).lower()}")
+
+    # Reddit extras
+    is_reddit = item.source_type == SourceType.REDDIT
+    if is_reddit:
+        if extra.get("reddit_id"):
+            fm_lines.append(f'reddit_id: "{extra["reddit_id"]}"')
+        if extra.get("subreddit"):
+            fm_lines.append(f'subreddit: "{extra["subreddit"]}"')
+        if extra.get("flair"):
+            fm_lines.append(f'flair: "{extra["flair"]}"')
+        fm_lines.append(f"score: {extra.get('score', 0)}")
+        if extra.get("upvote_ratio"):
+            fm_lines.append(f"upvote_ratio: {extra['upvote_ratio']}")
+        fm_lines.append(f"comment_count: {extra.get('comment_count', 0)}")
+        fm_lines.append(f"is_self: {str(bool(extra.get('is_self', True))).lower()}")
+        if extra.get("linked_url"):
+            fm_lines.append(f'linked_url: "{extra["linked_url"]}"')
+
+    # Weibo extras
+    is_weibo = item.source_type == SourceType.WEIBO
+    if is_weibo:
+        if extra.get("mid"):
+            fm_lines.append(f'mid: "{extra["mid"]}"')
+        if extra.get("uid"):
+            fm_lines.append(f'author_uid: "{extra["uid"]}"')
+        fm_lines.append(f"likes: {extra.get('likes', 0)}")
+        fm_lines.append(f"comments: {extra.get('comments', 0)}")
+        fm_lines.append(f"reposts: {extra.get('reposts', 0)}")
+        if extra.get("source_app"):
+            fm_lines.append(f'source_app: "{extra["source_app"]}"')
+        if extra.get("mblog_type"):
+            fm_lines.append(f'mblog_type: "{extra["mblog_type"]}"')
+
+    # Douyin extras
+    is_douyin = item.source_type == SourceType.DOUYIN
+    if is_douyin:
+        if extra.get("aweme_id"):
+            fm_lines.append(f'aweme_id: "{extra["aweme_id"]}"')
+        if extra.get("aweme_type"):
+            fm_lines.append(f'aweme_type: "{extra["aweme_type"]}"')
+        if extra.get("author_sec_uid"):
+            fm_lines.append(f'author_sec_uid: "{extra["author_sec_uid"]}"')
+        fm_lines.append(f"plays: {extra.get('plays', 0)}")
+        fm_lines.append(f"likes: {extra.get('likes', 0)}")
+        fm_lines.append(f"comments: {extra.get('comments', 0)}")
+        fm_lines.append(f"shares: {extra.get('shares', 0)}")
+        if extra.get("duration_seconds"):
+            fm_lines.append(f"duration_seconds: {extra['duration_seconds']}")
+        if extra.get("music_title"):
+            fm_lines.append(f'music_title: "{extra["music_title"]}"')
+        if extra.get("music_author"):
+            fm_lines.append(f'music_author: "{extra["music_author"]}"')
+        if extra.get("cover_image"):
+            fm_lines.append(f'cover_image: "{extra["cover_image"]}"')
+
     # Tags (from tweet hashtags or other sources)
     if item.tags:
         # XHS: only top 3 tags in front matter (full list goes in body)
@@ -652,7 +785,7 @@ def _format_markdown(item: UnifiedContent) -> str:
         # WeChat / YouTube / GitHub / Feishu: skip title heading
         # (Feishu content already includes the document title from block tree)
         is_youtube = item.source_type == SourceType.YOUTUBE
-        if not is_wechat and not is_youtube and not is_github and not is_feishu and not is_kdocs and not is_youdao and not is_zhihu and item.title and item.title.strip():
+        if not is_wechat and not is_youtube and not is_github and not is_feishu and not is_kdocs and not is_youdao and not is_zhihu and not is_hn and item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
 
@@ -745,6 +878,9 @@ def save_to_markdown(item: UnifiedContent, filepath: str = None):
 
     Each item becomes one ``.md`` file.  Re-fetching the same URL
     overwrites the existing file (update in place).
+
+    Returns the resolved file path (str) on success, or None when the
+    output directory is not configured.
     """
     if filepath:
         # Caller provided an explicit path — write directly (legacy compat)
@@ -753,7 +889,7 @@ def save_to_markdown(item: UnifiedContent, filepath: str = None):
         with open(path, 'w', encoding='utf-8') as f:
             f.write(_format_markdown(item))
         logger.info(f"Saved to Markdown: {path}")
-        return
+        return str(path)
 
     # Determine base output directory
     vault_path = os.getenv("OBSIDIAN_VAULT", "")
@@ -764,7 +900,7 @@ def save_to_markdown(item: UnifiedContent, filepath: str = None):
     elif output_dir:
         base_dir = Path(output_dir)
     else:
-        return
+        return None
 
     # Platform subdirectory
     folder = PLATFORM_FOLDER_MAP.get(item.source_type, "Other")

@@ -2,6 +2,49 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+# feedgrab DEVLOG
+
+开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
+
+## 2026-05-05 · v0.20.0 · 五平台扩展（HackerNews / Medium / Reddit / Weibo / Douyin）
+
+### 背景
+
+经 [TOP 5 ROI 对比技术方案](开发及迭代方案调研报告/20260505-AI-agent-浏览器与采集工具对比技术方案.md) 与 [v0.20.0 需求规格](开发及迭代方案调研报告/20260505-v0.20.0-五平台需求规格.md) 评审，按"由易到难、覆盖中英文+海外+短视频"原则，一次性补齐 5 个高 ROI 平台。所有决策点（4 个范围决策 + 3 个工程决策）已与用户确认，发版策略 A（一次性 v0.20.0 集中发布）。
+
+### 方案决策
+
+- **HackerNews**：使用 [Hacker News Firebase API v0](https://github.com/HackerNews/API)，0 Cookie / 0 反爬，单条 item + 一层评论（默认 50），支持 `feedgrab hn top|new|best|ask|show|jobs --limit N` 列表批量。
+- **Medium**：单篇 `Tier 0 Jina Reader → Tier 1 JSON-LD articleBody → Tier 2 Stealth Browser`；用户/出版物批量直接走 `medium.com/feed/<@username|publication-slug>` RSS + 单篇 Tier 链补全；member-only 文章在 Jina 输出检测后优雅降级，front matter 标 `is_member_only`。
+- **Reddit**：`Tier 0 old.reddit.com .json + 自报 UA → Tier 1 CDP 复用 Chrome reddit.com cookie → Tier 2 Stealth Playwright + sessions/reddit.json → Tier 3 Jina`，浏览器内 `fetch(json_url)` 复用登录态；评论按 score 排序取首屏 50 条；`reddit-sub` 支持 hot/new/top/best/rising 五种排序。
+- **Weibo**：m.weibo.cn 移动端 API（`/statuses/show?id=<mid>` + `/api/container/getIndex`），SUB Cookie 走 `WEIBO_COOKIE` env 或 `sessions/weibo.json`，无 SUB 时仍可拿基础公开数据；SSR 兜底解析 `$render_data`；转发链路保留原微博引用块。
+- **Douyin**：`Tier 0 CDP 复用 Chrome → Tier 1 Stealth Playwright launch + sessions/douyin.json → Tier 2 SSR RENDER_DATA 解析 → Tier 3 Jina`；明确决策**不破解** a_bogus / X-Bogus / msToken（签名算法每月变），依赖浏览器内执行自动签名（与 XHS Pinia Store 注入同思路）；短链 `v.douyin.com/<code>` 走 302 解析 aweme_id。
+- **跨模块约定**：`schema.SourceType` 新增 5 个枚举值（全小写命名）；`storage.PLATFORM_FOLDER_MAP` 注册 5 个目录（首字母大写：HackerNews / Medium / Reddit / Weibo / Douyin）；`reader.UniversalReader._detect_platform` 加 5 段域名识别；`save_to_markdown` 改为返回路径字符串（向后兼容，原先无人依赖返回值）。
+
+### 改动范围
+
+- 新增 fetcher：`feedgrab/fetchers/hackernews.py`（~360 行）、`medium.py`（~310 行）、`reddit.py`（~430 行）、`weibo.py`（~340 行）、`douyin.py`（~310 行）。
+- 集成层：`schema.py`（5 个 `from_*` 工厂函数 + 5 个 SourceType 枚举值）、`reader.py`（域名识别 + 5 个 dispatch 分支）、`config.py`（5 平台配置函数共 ~120 行）、`utils/storage.py`（PLATFORM_FOLDER_MAP + 文件名规则 + front matter 扩展字段 + published 解析分支）。
+- CLI 子命令：`hn <category> --limit N` / `medium-user @<handle> --limit N` / `medium-pub <slug> --limit N` / `reddit-sub <sub> --sort hot|new|top|best --limit N` / `weibo-user <uid> --limit N`。
+- 配置：`.env.example` 追加 5 个平台配置段；`pyproject.toml` 版本升 0.20.0。
+
+### 关键决策细节
+
+- **HN created_at 用 ISO 8601** (`YYYY-MM-DDTHH:MM:SSZ`) — 让现有 `parse_twitter_date_local` 直接解析，无需改 storage.py 主分支；显示头另用 `_format_unix_time_display` 渲染人类可读时间。
+- **Reddit 默认 UA** = `feedgrab/0.20.0 (+https://github.com/iBigQiang/feedgrab)`，自报身份合规，`REDDIT_USER_AGENT` 留空时使用。
+- **微博 created_at** 走 `email.utils.parsedate_to_datetime` 解析 RFC 2822（`Sun Mar 17 12:34:56 +0800 2024`），统一转为 ISO 8601。
+- **Reddit 评论树**：MVP 仅首屏顶层 50 条，过滤 stickied，不展开 "load more comments"；`REDDIT_FETCH_ALL_COMMENTS` 留作 v0.21+ 占位。
+- **保留 SourceType.WEB 不动**：自定义域名 Medium / 未识别页面继续走付费墙 + Jina 兜底，避免 v0.20.0 触动 generic 分支造成回归。
+
+### 验证结果
+
+- ✅ HackerNews：实抓 `news.ycombinator.com/item?id=1`（"Y Combinator", pg, 2006-10-09, 57 分 / 3 评论）成功；`feedgrab hn top --limit 2` 实跑两条 top story 落盘成功。
+- ✅ URL 检测：5 个新平台 + redd.it 短链 + v.douyin.com 短链 + medium.com / *.medium.com 子域名 + weibo.com / weibo.cn 多域名 全部正确归类。
+- ✅ Medium URL 解析：`@user/article` / `@user` 主页 / `subdomain.medium.com/article` / `publication/article` / `publication` 主页 5 种形态分类正确。
+- ✅ Reddit Tier 链：直接 .json 403 → 浏览器 fetch 自动接管 → 失败下沉 Jina；端到端调用链贯通。
+- ✅ 回归测试：113 个既有测试全部通过（feishu / linuxdo / idcflare / paywall / p1_platforms）。
+- ⏳ Weibo / Douyin / Medium / Reddit 完整真实抓取留作 v0.20.0 发布后用户实跑反馈。
+
 ## 2026-04-30 · v0.19.0 · IDCFlare 平台支持 + 飞书知识库目录/表格修复
 
 ### 背景

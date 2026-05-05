@@ -838,6 +838,172 @@ def idcflare_reply_mode() -> str:
     return raw if raw in {"author", "all", "none"} else "author"
 
 
+# ----- HackerNews -----
+
+def hn_enabled() -> bool:
+    """HackerNews fetcher master switch. Default true (no dependencies)."""
+    return os.getenv("HN_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def hn_max_comments() -> int:
+    """Max top-level comments rendered per HN item. Default 50."""
+    try:
+        return int(os.getenv("HN_MAX_COMMENTS", "50"))
+    except ValueError:
+        return 50
+
+
+def hn_fetch_all_comments() -> bool:
+    """Recursively fetch the full comment tree (v0.21+). Default false."""
+    return os.getenv("HN_FETCH_ALL_COMMENTS", "false").lower() in ("true", "1", "yes")
+
+
+def hn_list_limit() -> int:
+    """Default item count for hn top/best/... list commands. Default 30."""
+    try:
+        return int(os.getenv("HN_LIST_LIMIT", "30"))
+    except ValueError:
+        return 30
+
+
+# ----- Medium -----
+
+def medium_enabled() -> bool:
+    return os.getenv("MEDIUM_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def medium_use_jina() -> bool:
+    return os.getenv("MEDIUM_USE_JINA", "true").lower() in ("true", "1", "yes")
+
+
+def medium_use_browser_fallback() -> bool:
+    return os.getenv("MEDIUM_USE_BROWSER_FALLBACK", "true").lower() in ("true", "1", "yes")
+
+
+def medium_user_limit() -> int:
+    try:
+        return int(os.getenv("MEDIUM_USER_LIMIT", "20"))
+    except ValueError:
+        return 20
+
+
+def medium_user_delay() -> float:
+    try:
+        return float(os.getenv("MEDIUM_USER_DELAY", "2.0"))
+    except ValueError:
+        return 2.0
+
+
+# ----- Reddit -----
+
+def reddit_enabled() -> bool:
+    return os.getenv("REDDIT_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def reddit_cdp_enabled() -> bool:
+    return os.getenv("REDDIT_CDP_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def reddit_page_load_timeout() -> int:
+    try:
+        return int(os.getenv("REDDIT_PAGE_LOAD_TIMEOUT", "15000"))
+    except ValueError:
+        return 15000
+
+
+def reddit_max_comments() -> int:
+    try:
+        return int(os.getenv("REDDIT_MAX_COMMENTS", "50"))
+    except ValueError:
+        return 50
+
+
+def reddit_fetch_all_comments() -> bool:
+    return os.getenv("REDDIT_FETCH_ALL_COMMENTS", "false").lower() in ("true", "1", "yes")
+
+
+def reddit_user_agent() -> str:
+    raw = os.getenv("REDDIT_USER_AGENT", "").strip()
+    if raw:
+        return raw
+    return "feedgrab/0.20.0 (+https://github.com/iBigQiang/feedgrab)"
+
+
+def reddit_sub_limit() -> int:
+    try:
+        return int(os.getenv("REDDIT_SUB_LIMIT", "25"))
+    except ValueError:
+        return 25
+
+
+def reddit_sub_delay() -> float:
+    try:
+        return float(os.getenv("REDDIT_SUB_DELAY", "2.0"))
+    except ValueError:
+        return 2.0
+
+
+# ----- Weibo -----
+
+def weibo_enabled() -> bool:
+    return os.getenv("WEIBO_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def weibo_cookie() -> str:
+    return os.getenv("WEIBO_COOKIE", "").strip()
+
+
+def weibo_use_visitor() -> bool:
+    return os.getenv("WEIBO_USE_VISITOR", "true").lower() in ("true", "1", "yes")
+
+
+def weibo_user_limit() -> int:
+    try:
+        return int(os.getenv("WEIBO_USER_LIMIT", "20"))
+    except ValueError:
+        return 20
+
+
+def weibo_user_delay() -> float:
+    try:
+        return float(os.getenv("WEIBO_USER_DELAY", "2.0"))
+    except ValueError:
+        return 2.0
+
+
+def weibo_download_media() -> bool:
+    return os.getenv("WEIBO_DOWNLOAD_MEDIA", "false").lower() in ("true", "1", "yes")
+
+
+def weibo_fetch_comments() -> bool:
+    return os.getenv("WEIBO_FETCH_COMMENTS", "false").lower() in ("true", "1", "yes")
+
+
+# ----- Douyin -----
+
+def douyin_enabled() -> bool:
+    return os.getenv("DOUYIN_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def douyin_cdp_enabled() -> bool:
+    return os.getenv("DOUYIN_CDP_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def douyin_page_load_timeout() -> int:
+    try:
+        return int(os.getenv("DOUYIN_PAGE_LOAD_TIMEOUT", "15000"))
+    except ValueError:
+        return 15000
+
+
+def douyin_download_media() -> bool:
+    return os.getenv("DOUYIN_DOWNLOAD_MEDIA", "false").lower() in ("true", "1", "yes")
+
+
+def douyin_fetch_comments() -> bool:
+    return os.getenv("DOUYIN_FETCH_COMMENTS", "false").lower() in ("true", "1", "yes")
+
+
 def zhihu_search_days() -> int:
     """Search within recent N days. Default 30."""
     try:

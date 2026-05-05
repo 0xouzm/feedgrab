@@ -1,6 +1,6 @@
 [project]
 name = "feedgrab"
-version = "0.2.0"
+version = "0.20.0"
 description = "Universal content reader — fetch, normalize, and digest content from 7+ platforms"
 readme = "README.md"
 license = {text = "MIT"}

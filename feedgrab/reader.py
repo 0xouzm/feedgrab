@@ -16,7 +16,7 @@ from feedgrab.schema import (
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
     from_github, from_feishu, from_kdocs, from_youdao, from_linuxdo, from_idcflare, from_web,
-    from_xiaoyuzhou, from_ximalaya,
+    from_xiaoyuzhou, from_ximalaya, from_hackernews, from_medium, from_reddit, from_weibo, from_douyin,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.utils.url_validator import validate_url
@@ -94,6 +94,25 @@ class UniversalReader:
             return "linuxdo"
         if ("idcflare.com" in domain or domain.endswith(".idcflare.com")) and path.startswith("/t/"):
             return "idcflare"
+        # HackerNews
+        if "news.ycombinator.com" in domain:
+            return "hackernews"
+        # Reddit
+        if ("reddit.com" in domain or domain.endswith(".reddit.com")
+                or domain == "redd.it" or domain.endswith(".redd.it")):
+            return "reddit"
+        # Medium (medium.com, *.medium.com)
+        from feedgrab.fetchers.medium import is_medium_url
+        if is_medium_url(url):
+            return "medium"
+        # Weibo
+        if ("weibo.com" in domain or "weibo.cn" in domain
+                or domain.endswith(".weibo.com") or domain.endswith(".weibo.cn")):
+            return "weibo"
+        # Douyin
+        if ("douyin.com" in domain or domain.endswith(".douyin.com")
+                or "iesdouyin.com" in domain or domain.endswith(".iesdouyin.com")):
+            return "douyin"
         # Feishu / Lark
         from feedgrab.fetchers.feishu import is_feishu_url
         if is_feishu_url(url):
@@ -350,6 +369,46 @@ class UniversalReader:
             from feedgrab.fetchers.idcflare import fetch_idcflare
             data = await fetch_idcflare(url)
             return from_idcflare(data)
+
+        if platform == "hackernews":
+            from feedgrab.config import hn_enabled
+            if not hn_enabled():
+                raise RuntimeError("HackerNews 抓取已禁用，请设置 HN_ENABLED=true")
+            from feedgrab.fetchers.hackernews import fetch_hackernews
+            data = await fetch_hackernews(url)
+            return from_hackernews(data)
+
+        if platform == "medium":
+            from feedgrab.config import medium_enabled
+            if not medium_enabled():
+                raise RuntimeError("Medium 抓取已禁用，请设置 MEDIUM_ENABLED=true")
+            from feedgrab.fetchers.medium import fetch_medium
+            data = await fetch_medium(url)
+            return from_medium(data)
+
+        if platform == "reddit":
+            from feedgrab.config import reddit_enabled
+            if not reddit_enabled():
+                raise RuntimeError("Reddit 抓取已禁用，请设置 REDDIT_ENABLED=true")
+            from feedgrab.fetchers.reddit import fetch_reddit
+            data = await fetch_reddit(url)
+            return from_reddit(data)
+
+        if platform == "weibo":
+            from feedgrab.config import weibo_enabled
+            if not weibo_enabled():
+                raise RuntimeError("Weibo 抓取已禁用，请设置 WEIBO_ENABLED=true")
+            from feedgrab.fetchers.weibo import fetch_weibo
+            data = await fetch_weibo(url)
+            return from_weibo(data)
+
+        if platform == "douyin":
+            from feedgrab.config import douyin_enabled
+            if not douyin_enabled():
+                raise RuntimeError("Douyin 抓取已禁用，请设置 DOUYIN_ENABLED=true")
+            from feedgrab.fetchers.douyin import fetch_douyin
+            data = await fetch_douyin(url)
+            return from_douyin(data)
 
         if platform == "xiaoyuzhou":
             from feedgrab.config import xiaoyuzhou_enabled

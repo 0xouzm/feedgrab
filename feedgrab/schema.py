@@ -40,6 +40,11 @@ class SourceType(str, Enum):
     IDCFLARE = "idcflare"
     XIAOYUZHOU = "xiaoyuzhou"
     XIMALAYA = "ximalaya"
+    HACKERNEWS = "hackernews"
+    MEDIUM = "medium"
+    REDDIT = "reddit"
+    WEIBO = "weibo"
+    DOUYIN = "douyin"
     WEB = "web"
     MANUAL = "manual"
 
@@ -616,6 +621,122 @@ def from_idcflare(data: dict) -> UnifiedContent:
             "last_posted_at": data.get("last_posted_at", ""),
             "cover_image": data.get("cover_image", ""),
             "post_count_loaded": data.get("post_count_loaded", 0),
+        },
+    )
+
+
+def from_hackernews(data: dict) -> UnifiedContent:
+    """Build UnifiedContent from a HackerNews fetcher result dict."""
+    return UnifiedContent(
+        source_type=SourceType.HACKERNEWS,
+        source_name=data.get("author", "") or "hackernews",
+        title=data.get("title", "") or "Untitled",
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "hn_id": data.get("id", ""),
+            "hn_type": data.get("type", "story"),
+            "score": data.get("score", 0),
+            "comment_count": data.get("comment_count", 0),
+            "linked_url": data.get("linked_url", ""),
+            "created_at": data.get("created_at", ""),
+            "author_name": data.get("author", ""),
+        },
+    )
+
+
+def from_medium(data: dict) -> UnifiedContent:
+    """Build UnifiedContent from a Medium fetcher result dict."""
+    author_handle = data.get("author", "") or "medium"
+    return UnifiedContent(
+        source_type=SourceType.MEDIUM,
+        source_name=author_handle,
+        title=data.get("title", "") or "Untitled",
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "author_name": data.get("author_name", "") or author_handle,
+            "published_at": data.get("published", ""),
+            "cover_image": data.get("image", ""),
+            "is_member_only": bool(data.get("is_member_only", False)),
+        },
+    )
+
+
+def from_reddit(data: dict) -> UnifiedContent:
+    """Build UnifiedContent from a Reddit fetcher result dict."""
+    author = data.get("author", "") or "reddit"
+    return UnifiedContent(
+        source_type=SourceType.REDDIT,
+        source_name=author if author.startswith("u/") or author == "reddit" else f"u/{author}",
+        title=data.get("title", "") or "Untitled",
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "reddit_id": data.get("id", ""),
+            "subreddit": data.get("subreddit", ""),
+            "flair": data.get("flair", ""),
+            "score": data.get("score", 0),
+            "upvote_ratio": data.get("upvote_ratio", 0.0),
+            "comment_count": data.get("comment_count", 0),
+            "is_self": bool(data.get("is_self", True)),
+            "linked_url": data.get("linked_url", ""),
+            "created_at": data.get("created_at", ""),
+            "author_name": data.get("author_name", "") or author,
+        },
+    )
+
+
+def from_weibo(data: dict) -> UnifiedContent:
+    """Build UnifiedContent from a Weibo fetcher result dict."""
+    return UnifiedContent(
+        source_type=SourceType.WEIBO,
+        source_name=data.get("author", "") or "weibo",
+        title=data.get("title", "") or "Untitled",
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "mid": data.get("mid", ""),
+            "bid": data.get("bid", ""),
+            "uid": data.get("uid", ""),
+            "author_name": data.get("author_name", ""),
+            "created_at": data.get("created_at", ""),
+            "likes": data.get("likes", 0),
+            "comments": data.get("comments", 0),
+            "reposts": data.get("reposts", 0),
+            "source_app": data.get("source_app", ""),
+            "mblog_type": data.get("mblog_type", "status"),
+        },
+    )
+
+
+def from_douyin(data: dict) -> UnifiedContent:
+    """Build UnifiedContent from a Douyin fetcher result dict."""
+    return UnifiedContent(
+        source_type=SourceType.DOUYIN,
+        source_name=data.get("author", "") or "douyin",
+        title=data.get("title", "") or "Untitled",
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "aweme_id": data.get("aweme_id", ""),
+            "aweme_type": data.get("aweme_type", "video"),
+            "author_name": data.get("author_name", ""),
+            "author_sec_uid": data.get("author_sec_uid", ""),
+            "created_at": data.get("created_at", ""),
+            "plays": data.get("plays", 0),
+            "likes": data.get("likes", 0),
+            "comments": data.get("comments", 0),
+            "shares": data.get("shares", 0),
+            "duration_seconds": data.get("duration_seconds", 0),
+            "music_title": data.get("music_title", ""),
+            "music_author": data.get("music_author", ""),
+            "cover_image": data.get("cover_image", ""),
         },
     )
 
