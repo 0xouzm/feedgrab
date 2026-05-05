@@ -286,7 +286,13 @@ def _build_status_result(mblog: Dict[str, Any]) -> Dict[str, Any]:
             body_parts.append(f"![image]({u})")
     if video_url:
         body_parts.append("")
-        body_parts.append(f"[▶ 视频]({video_url})")
+        # Obsidian renders <video src="..."> inline with native controls.
+        # Plain Markdown ![](url.mp4) breaks for weibocdn URLs because the
+        # query string (Expires/ssig) makes Obsidian's MIME sniffer skip it.
+        body_parts.append(
+            f'<video src="{video_url}" controls preload="metadata" '
+            f'style="max-width:100%;"></video>'
+        )
 
     # Retweeted status
     retweeted = mblog.get("retweeted_status")

@@ -785,7 +785,7 @@ def _format_markdown(item: UnifiedContent) -> str:
         # WeChat / YouTube / GitHub / Feishu: skip title heading
         # (Feishu content already includes the document title from block tree)
         is_youtube = item.source_type == SourceType.YOUTUBE
-        if not is_wechat and not is_youtube and not is_github and not is_feishu and not is_kdocs and not is_youdao and not is_zhihu and not is_hn and item.title and item.title.strip():
+        if not is_wechat and not is_youtube and not is_github and not is_feishu and not is_kdocs and not is_youdao and not is_zhihu and not is_hn and not is_weibo and item.title and item.title.strip():
             fm_lines.append(f"# {item.title.strip()}")
             fm_lines.append("")
 
