@@ -42,12 +42,26 @@ class UniversalReader:
             # Bookmark URLs: x.com/i/bookmarks or x.com/i/bookmarks/{folderId}
             if "/i/bookmarks" in path:
                 return "twitter_bookmarks"
-            # List URLs: x.com/i/lists/{listId}
+            # v0.22.0: List members / subscribers — must come BEFORE list-tweets check
+            if re.match(r'^/i/lists/\d+/members/?$', path):
+                return "twitter_user_lists"
+            if re.match(r'^/i/lists/\d+/subscribers/?$', path):
+                return "twitter_user_lists"
+            # List tweets timeline: x.com/i/lists/{listId}
             if re.match(r'^/i/lists/\d+', path):
                 return "twitter_list_tweets"
             # Single tweet: x.com/{user}/status/{id}
             if "/status/" in path:
                 return "twitter"
+            # v0.22.0: User-list endpoints (followers/following/verified_followers)
+            if re.match(r'^/[a-zA-Z0-9_]{1,15}/(followers|following|verified_followers)/?$', path):
+                return "twitter_user_lists"
+            # v0.22.0: User likes (x.com/<user>/likes)
+            if re.match(r'^/[a-zA-Z0-9_]{1,15}/likes/?$', path):
+                return "twitter_user_likes"
+            # v0.22.0: User replies (x.com/<user>/with_replies)
+            if re.match(r'^/[a-zA-Z0-9_]{1,15}/with_replies/?$', path):
+                return "twitter_user_replies"
             # Profile URL: x.com/{username} (no /status/ in path)
             # Exclude system paths: /i/, /home, /explore, /search, /settings, /notifications
             if re.match(r'^/[a-zA-Z0-9_]{1,15}(/.*)?$', path):
@@ -178,6 +192,18 @@ class UniversalReader:
         # User tweets batch mode: special flow, returns summary
         if platform == "twitter_user_tweets":
             return await self._read_user_tweets(url)
+
+        # v0.22.0: User-list batch modes (followers/following/list_members/etc)
+        if platform == "twitter_user_lists":
+            return await self._read_user_lists(url)
+
+        # v0.22.0: User likes batch mode
+        if platform == "twitter_user_likes":
+            return await self._read_user_likes(url)
+
+        # v0.22.0: User replies batch mode
+        if platform == "twitter_user_replies":
+            return await self._read_user_replies(url)
 
         # XHS user notes batch mode: special flow, returns summary
         if platform == "xhs_user_notes":
@@ -631,6 +657,117 @@ class UniversalReader:
             source_type=SourceType.TWITTER,
             source_name="user_tweets",
             title=f"账号抓取 {result['fetched']}/{result['total']}",
+            content=summary,
+            url=url,
+        )
+
+    async def _read_user_lists(self, url: str) -> UnifiedContent:
+        """v0.22.0: batch-fetch a Twitter user list.
+
+        Covers: followers / following / blue_verified_followers /
+                list_members / list_subscribers.
+        """
+        from feedgrab.config import x_user_list_enabled
+
+        if not x_user_list_enabled():
+            raise ValueError(
+                "用户列表批量抓取未启用。请在 .env 中设置 X_USER_LIST_ENABLED=true"
+            )
+
+        from feedgrab.fetchers.twitter_user_lists import fetch_user_list
+        from feedgrab.fetchers.twitter_cookies import load_twitter_cookies, has_required_cookies
+
+        cookies = load_twitter_cookies()
+        if not has_required_cookies(cookies):
+            raise RuntimeError(
+                "用户列表抓取需要 Twitter Cookie，请先运行: feedgrab login twitter"
+            )
+
+        result = await fetch_user_list(url, cookies)
+
+        summary = (
+            f"{result.get('owner_display', result['owner'])} 的 {result['mode']} 抓取完成\n"
+            f"总数: {result['total']}\n"
+            f"汇总表: {result.get('summary_path', '')}\n"
+            f"CSV: {result.get('csv_path', '')}"
+        )
+
+        return UnifiedContent(
+            source_type=SourceType.TWITTER,
+            source_name=f"user_list_{result['mode']}",
+            title=f"{result['mode']} '{result['owner']}' {result['total']} 个用户",
+            content=summary,
+            url=url,
+        )
+
+    async def _read_user_likes(self, url: str) -> UnifiedContent:
+        """v0.22.0: batch-fetch a user's liked tweets (x.com/<user>/likes)."""
+        from feedgrab.config import x_user_likes_enabled
+
+        if not x_user_likes_enabled():
+            raise ValueError(
+                "用户喜欢批量抓取未启用。请在 .env 中设置 X_USER_LIKES_ENABLED=true"
+            )
+
+        from feedgrab.fetchers.twitter_user_tweets import fetch_user_tweets
+        from feedgrab.fetchers.twitter_cookies import load_twitter_cookies, has_required_cookies
+
+        cookies = load_twitter_cookies()
+        if not has_required_cookies(cookies):
+            raise RuntimeError(
+                "用户喜欢抓取需要 Twitter Cookie，请先运行: feedgrab login twitter"
+            )
+
+        # mode="likes" tells fetch_user_tweets to use Likes endpoint
+        result = await fetch_user_tweets(url, cookies, mode="likes")
+
+        summary = (
+            f"账号喜欢推文批量抓取完成\n"
+            f"总数: {result['total']}, 成功: {result['fetched']}, "
+            f"跳过: {result['skipped']}, 失败: {result['failed']}\n"
+            f"批量记录: {result.get('list_path', '')}"
+        )
+
+        return UnifiedContent(
+            source_type=SourceType.TWITTER,
+            source_name="user_likes",
+            title=f"喜欢抓取 {result['fetched']}/{result['total']}",
+            content=summary,
+            url=url,
+        )
+
+    async def _read_user_replies(self, url: str) -> UnifiedContent:
+        """v0.22.0: batch-fetch a user's tweets+replies (x.com/<user>/with_replies)."""
+        from feedgrab.config import x_user_replies_enabled
+
+        if not x_user_replies_enabled():
+            raise ValueError(
+                "用户回复批量抓取未启用。请在 .env 中设置 X_USER_REPLIES_ENABLED=true"
+            )
+
+        from feedgrab.fetchers.twitter_user_tweets import fetch_user_tweets
+        from feedgrab.fetchers.twitter_cookies import load_twitter_cookies, has_required_cookies
+
+        cookies = load_twitter_cookies()
+        if not has_required_cookies(cookies):
+            raise RuntimeError(
+                "用户回复抓取需要 Twitter Cookie，请先运行: feedgrab login twitter"
+            )
+
+        # mode="replies" tells fetch_user_tweets to use UserTweetsAndReplies endpoint
+        result = await fetch_user_tweets(url, cookies, mode="replies")
+
+        summary = (
+            f"账号回复批量抓取完成\n"
+            f"总数: {result['total']}, 成功: {result['fetched']}, "
+            f"跳过: {result['skipped']}, 失败: {result['failed']}\n"
+            f"批量记录: {result.get('list_path', '')}"
+        )
+
+        return UnifiedContent(
+            source_type=SourceType.TWITTER,
+            source_name="user_replies",
+            title=f"回复抓取 {result['fetched']}/{result['total']}",
             content=summary,
             url=url,
         )

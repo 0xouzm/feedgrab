@@ -118,13 +118,16 @@ def _save_batch_record(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
+async def fetch_user_tweets(
+    profile_url: str, cookies: dict, mode: str = "tweets"
+) -> dict:
     """
     Batch-fetch all tweets from a user profile and save each as Markdown.
 
     Args:
         profile_url: Profile URL (e.g. https://x.com/iBigQiang)
         cookies: dict with 'auth_token' and 'ct0'
+        mode: "tweets" (default UserTweets) | "likes" | "replies"
 
     Returns:
         dict with: total, fetched, skipped, failed, list_path
@@ -134,6 +137,21 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
     from feedgrab.fetchers.jina import fetch_via_jina
     from feedgrab.schema import from_twitter
     from feedgrab.utils.storage import save_to_markdown
+
+    # v0.22.0: pick page-fetcher by mode
+    from feedgrab.fetchers.twitter_graphql import (
+        fetch_user_likes_page,
+        fetch_user_tweets_and_replies_page,
+    )
+    if mode == "likes":
+        page_fetcher = fetch_user_likes_page
+        mode_label = "Likes"
+    elif mode == "replies":
+        page_fetcher = fetch_user_tweets_and_replies_page
+        mode_label = "Replies"
+    else:
+        page_fetcher = fetch_user_tweets_page
+        mode_label = "UserTweets"
 
     reset_circuit_breaker()
 
@@ -157,8 +175,13 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
 
     # 3. Determine subfolder: author_name/{display_name} or author_name/{screen_name}
     folder_label = _sanitize_folder_name(display_name) if display_name else screen_name
-    subfolder = f"status_author/{folder_label}"
-    logger.info(f"[UserTweets] 保存目录: {subfolder}")
+    if mode == "likes":
+        subfolder = f"likes_author/{folder_label}"
+    elif mode == "replies":
+        subfolder = f"replies_author/{folder_label}"
+    else:
+        subfolder = f"status_author/{folder_label}"
+    logger.info(f"[{mode_label}] 保存目录: {subfolder}")
 
     # 4. Load dedup index
     saved_ids = load_index()
@@ -181,15 +204,15 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
     delay = x_user_tweet_delay()
 
     for page in range(max_pages):
-        logger.info(f"[UserTweets] 获取第 {page + 1} 页...")
+        logger.info(f"[{mode_label}] 获取第 {page + 1} 页...")
 
-        response = fetch_user_tweets_page(user_id, cookies, cursor=cursor)
+        response = page_fetcher(user_id, cookies, cursor=cursor)
         if not response:
             # Retry up to 3 times (handles transient connection resets)
             for retry in range(1, 4):
-                logger.warning(f"[UserTweets] API 返回空响应，5秒后第 {retry}/3 次重试...")
+                logger.warning(f"[{mode_label}] API 返回空响应，5秒后第 {retry}/3 次重试...")
                 time.sleep(5)
-                response = fetch_user_tweets_page(user_id, cookies, cursor=cursor)
+                response = page_fetcher(user_id, cookies, cursor=cursor)
                 if response:
                     break
         if not response:
@@ -198,10 +221,17 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
 
         entries, cursors = parse_user_tweets_entries(response)
         if not entries:
-            logger.info(
-                f"[UserTweets] 第 {page + 1} 页返回空条目，分页结束 "
-                f"（API 服务端限制，累计 {len(all_tweet_entries)} 条）"
-            )
+            # v0.22.0: friendly message for likes/replies when content is private
+            if mode == "likes" and page == 0:
+                logger.warning(
+                    f"[{mode_label}] @{screen_name} 的喜欢列表为空 — "
+                    f"该用户可能将其 Likes 设为私密（Twitter 默认行为）"
+                )
+            else:
+                logger.info(
+                    f"[{mode_label}] 第 {page + 1} 页返回空条目，分页结束 "
+                    f"（API 服务端限制，累计 {len(all_tweet_entries)} 条）"
+                )
             break
 
         # Date filter: check if any tweet on this page is too old
@@ -479,6 +509,11 @@ async def fetch_user_tweets(profile_url: str, cookies: dict) -> dict:
                 time.sleep(delay)
             else:
                 data = _build_single_tweet_data(tweet_data, tweet_url)
+
+            # P0-3: propagate pinned marker into data so from_twitter sees it
+            # (thread/article paths re-fetch fresh data that loses _is_pinned)
+            if tweet_data.get("is_pinned"):
+                data["is_pinned"] = True
 
             # Convert to UnifiedContent and save
             content = from_twitter(data)

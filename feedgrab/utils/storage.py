@@ -456,6 +456,9 @@ def _format_markdown(item: UnifiedContent) -> str:
         fm_lines.append(f'tweet_type: "{extra.get("tweet_type", "status")}"')
         fm_lines.append(f"tweet_count: {extra.get('tweet_count', 1)}")
         fm_lines.append(f"has_thread: {str(extra.get('has_thread', False)).lower()}")
+        # P0-3: pinned tweet marker
+        if extra.get("is_pinned"):
+            fm_lines.append(f"is_pinned: true")
         for metric in ("likes", "retweets", "replies", "bookmarks", "views"):
             fm_lines.append(f"{metric}: {extra.get(metric, 0)}")
         # New: quote_count (被引用次数)

@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.21.0
+- **当前版本**：v0.22.0
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -184,6 +184,7 @@ feedgrab/
 
 | 版本 | 功能 |
 |------|------|
+| v0.22.0 | 融合 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter)：补 5 个高价值 GraphQL operation（Followers / Following / BlueVerifiedFollowers / ListMembers / ListSubscribers / Likes / UserTweetsAndReplies，queryId 取自 fa0311/twitter-openapi）+ 3 个解析鲁棒性增强（TweetTombstone/TweetUnavailable 显式日志 + TimelinePinEntry 置顶提取 + 视频 variant 不过滤 content_type）；新 URL pattern：`/followers` `/following` `/verified_followers` `/likes` `/with_replies` `/i/lists/<id>/members(subscribers)` |
 | v0.21.0 | 新增「知识星球」（Zsxq）平台支持（articles.zsxq.com 长文章 + wx.zsxq.com 短帖 + t.zsxq.com 短链 302 解析）；4 级 Tier 链路（HTTP cookie / CDP / Stealth Browser / Jina）+ 五形态 topic 渲染（含 solution）+ 三态评论筛选 |
 | v0.20.1 | 修复 Twitter 长 thread 被误判为 Article 导致 quoted tweet 丢失（`schema.from_twitter` 改用 `_has_article_body` 看 article_data 实际内容，统一 thread/article 渲染路径） |
 | v0.20.0 | 五平台扩展：HackerNews（Firebase API + 列表批量）/ Medium（Jina + RSS）/ Reddit（.json + CDP 兜底 + reddit-sub）/ Weibo（m.weibo.cn API + weibo-user）/ Douyin（CDP/Launch/SSR 三级 Tier）|

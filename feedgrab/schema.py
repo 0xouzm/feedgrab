@@ -46,6 +46,7 @@ class SourceType(str, Enum):
     WEIBO = "weibo"
     DOUYIN = "douyin"
     ZSXQ = "zsxq"
+    X_USER_LIST = "x_user_list"  # v0.22.0: Twitter user-list exports
     WEB = "web"
     MANUAL = "manual"
 
@@ -326,6 +327,8 @@ def from_twitter(data: dict) -> UnifiedContent:
             "followers_count": data.get("followers_count", 0),
             "statuses_count": data.get("statuses_count", 0),
             "listed_count": data.get("listed_count", 0),
+            # P0-3: pinned tweet marker (TimelinePinEntry instruction)
+            "is_pinned": data.get("is_pinned", False),
         },
     )
 

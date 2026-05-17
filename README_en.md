@@ -61,6 +61,17 @@ feedgrab https://x.com/i/lists/2002743803959300263               # Last 1 day (d
 X_LIST_TWEETS_DAYS=3 feedgrab https://x.com/i/lists/2002743803959300263  # Last 3 days
 X_LIST_TWEETS_SUMMARY=true feedgrab https://x.com/i/lists/...    # Generate summary table (MD + CSV)
 
+# v0.22.0: Batch fetch Twitter user lists (followers/following/list members, outputs MD + CSV)
+feedgrab https://x.com/ai_xiaomu/followers                       # Followers
+feedgrab https://x.com/ai_xiaomu/following                       # Following
+feedgrab https://x.com/ai_xiaomu/verified_followers              # Blue-verified followers
+feedgrab https://x.com/i/lists/2002743803959300263/members       # List members
+feedgrab https://x.com/i/lists/2002743803959300263/subscribers   # List subscribers
+
+# v0.22.0: Batch fetch user replies & likes
+feedgrab https://x.com/ai_xiaomu/with_replies                    # User replies tab (incl. self-replies)
+feedgrab https://x.com/ai_xiaomu/likes                           # User likes (Twitter default = private)
+
 # Batch fetch XHS author notes (requires XHS_USER_NOTES_ENABLED=true + feedgrab login xhs)
 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
 XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...  # Only after date

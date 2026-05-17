@@ -2,6 +2,113 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-05-17 · v0.22.0 · 融合 twitter-web-exporter：补 5 个高价值 GraphQL operation + 3 个解析鲁棒性增强
+
+### 背景
+
+调研 [prinsss/twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter)（2.4k stars 油猴脚本）后发现：feedgrab 在"主动抓取技术"（queryId 4 级 fallback / x-client-transaction-id 签名 / Cookie 多账号轮换 / 6 级容灾）领先 twe 两代，但 **operationName 覆盖**（feedgrab 11 个 vs twe 19 个）和**响应 JSON 解析鲁棒性**有缺口。本次借鉴 twe 把高价值缺口补齐。完整对比报告：`开发及迭代方案调研报告/20260517-twitter-web-exporter-vs-feedgrab对比与融合方案.md`。
+
+### 实施清单
+
+#### A. 解析鲁棒性增强（3 项）
+
+- **A1. `TweetTombstone` / `TweetUnavailable` 显式日志降级**
+  - 来源：twe `utils/api.ts:222-247`
+  - 实现：`extract_tweet_data()` 主推文 + quoted tweet 两处都加 typename 分支
+  - 主推文遇到 tombstone/unavailable → `logger.warning` + 返回 None（不再静默吃掉）
+  - quoted tweet 遇到 tombstone/unavailable → 返回 `{"is_tombstone": True, "tombstone_text": "..."}` 标记
+  - 收益：被删除/隐藏的引用推文不再落地空数据
+
+- **A2. `TimelinePinEntry` 置顶推文单独提取**
+  - 来源：twe `modules/user-tweets/api.ts:48-57`
+  - 实现：`parse_user_tweets_entries()` 在 instruction 循环加 `TimelinePinEntry` 分支
+  - pin entry 标记 `_is_pinned: True` 后插入 entries 头部
+  - `extract_tweet_data()` 把标记传到返回 dict 的 `is_pinned` 字段
+  - `schema.from_twitter()` 透传到 extra，`storage.py` front matter 输出 `is_pinned: true`
+  - `twitter_user_tweets.py` 在 thread/article 路径重新 fetch 时也保留 pinned 标记
+
+- **A3. 视频 variant 不过滤 content_type**
+  - 来源：twe `utils/api.ts:326-339`
+  - 实现：主推文 + quoted 两处都改成"过滤有 bitrate 的 variant，按 bitrate 排序最大"
+  - 旧版仅 `content_type == "video/mp4"`，新版兼容 webm 等未来格式
+  - HLS m3u8 因没有 bitrate 字段自然被过滤掉
+
+#### B. 5 个新 GraphQL operation（按用户优先级排序）
+
+| operationName | queryId（fa0311/twitter-openapi）| 路径 | 模式 |
+|--------------|-------------------------------|------|------|
+| Followers | `IOh4aS6UdGWGJUYTqliQ7Q` | `data.user.result.timeline.timeline.instructions` | 返回 User |
+| Following | `zx6e-TLzRkeDO_a7p4b3JQ` | 同上 | 返回 User |
+| BlueVerifiedFollowers | `GQ1yZjbfSiPfi_5gznKMPw` | 同上 | 返回 User |
+| ListMembers | `EkmM6fQjaFMaQbj2wGFQ9w` | `data.list.members_timeline.timeline.instructions` | 返回 User |
+| ListSubscribers | `_av5eJHyhOzx9nTQkQg0iQ` | `data.list.subscribers_timeline.timeline.instructions` | 返回 User |
+| Likes | `lIDpu_NWL7_VhimGGt0o6A` | `data.user.result.timeline.timeline.instructions` | 返回 Tweet |
+| UserTweetsAndReplies | `6hvhmQQ9zPIR8RZWHFAm4w` | 同上 | 返回 Tweet |
+
+- 4 级 queryId fallback 全员复用（cache → community fa0311 → JS bundle 扫描 → hardcoded）
+- 7 个 op 都加进 `main_ops_missing` set，让 JS bundle 扫描可以覆盖
+- Likes / UserTweetsAndReplies 直接复用 `parse_user_tweets_entries`（响应结构与 UserTweets 兼容）
+- Followers/Following/BlueVerifiedFollowers/ListMembers/ListSubscribers 用新的 `parse_user_timeline_users` + `parse_list_members_users` + `parse_list_subscribers_users`
+- 新文件 `feedgrab/fetchers/twitter_user_lists.py`：统一处理 5 种 user-list 模式（按 followers_count 倒序输出 MD 表 + CSV）
+
+#### C. URL 路由 + 批量分发
+
+- `reader.py` 识别 5 个新 URL pattern：
+  - `/{user}/followers` / `/{user}/following` / `/{user}/verified_followers` → `twitter_user_lists`
+  - `/{user}/likes` → `twitter_user_likes`
+  - `/{user}/with_replies` → `twitter_user_replies`
+  - `/i/lists/<id>/members` / `/i/lists/<id>/subscribers` → `twitter_user_lists`（必须在 list-tweets 检测之前）
+- `_read_user_lists` / `_read_user_likes` / `_read_user_replies` 三个新方法挂在 `read()` 主分支
+- `twitter_user_tweets.fetch_user_tweets(mode=...)` 增加 mode 参数（"tweets"/"likes"/"replies"），按 mode 选不同 page_fetcher 和不同输出 subfolder（`status_author/` / `likes_author/` / `replies_author/`）
+
+#### D. 友好降级
+
+- Likes 端点首次返回空时打 WARNING：`@<user> 的喜欢列表为空 — 该用户可能将其 Likes 设为私密（Twitter 默认行为）`
+- 避免用户面对"总数 0"的沉默输出迷茫
+
+### 实测验证（账号 @ai_xiaomu）
+
+| 场景 | URL | 结果 |
+|------|-----|------|
+| A2 PinEntry 提取 | `/ai_xiaomu`（主页）| ✅ 21 entries，1 个置顶推文 `is_pinned=True` |
+| B1 Followers | `/ai_xiaomu/followers` | ✅ 50 个用户，MD 按 followers_count 倒序 + CSV 17 字段 |
+| B1 Following | `/ai_xiaomu/following` | ✅ 48 个用户 |
+| B4 With_replies | `/ai_xiaomu/with_replies` | ✅ 38 条 / 16 新保存 / 22 跳过（已存在或转推），保存到 `replies_author/黄小木` |
+| D Likes 私密提示 | `/ai_xiaomu/likes` | ✅ WARNING 触发："该用户可能将其 Likes 设为私密" |
+| 全套测试无回归 | `pytest tests/` | ✅ 145/145 通过 |
+
+### 新增单元测试
+
+`tests/test_twitter_p0_enhancements.py`（10 个 case）：
+- TweetTombstone / TweetUnavailable 主推文 + quoted 4 个 case
+- TimelinePinEntry 头部插入 + extract_tweet_data 透传 + 无 pin 不误标 3 个 case
+- 视频 variant：mp4 内最高 bitrate / 跨格式 webm 可选 / 全 HLS 跳过 3 个 case
+
+### 新增 env vars（`.env.example` 已同步）
+
+- `X_USER_LIST_ENABLED` / `X_USER_LIST_MAX_PAGES` / `X_USER_LIST_DELAY` / `X_USER_LIST_PER_PAGE`
+- `X_USER_LIKES_ENABLED`
+- `X_USER_REPLIES_ENABLED`
+
+### P1 增量：sortIndex 稳定排序 + ModeratedTimeline 基础设施
+
+- **P1-2 sortIndex 排序**（twe `utils/api.ts:24-29`）：新增 `_entry_sort_index` + `_sort_entries_by_sortindex` 通用 helper，按 snowflake-id BigInt 倒序。`parse_user_tweets_entries` 和 `_parse_user_list_response` 都接入；置顶推文在 sort 后再插入头部不受排序影响。实测 ai_xiaomu 主页：[PIN] 仍在首位，非置顶推文 sortIndex 严格 desc（4287 → 4286 → 4285 → 4284 → 4282，与预期完全一致）。
+- **P1-3 ModeratedTimeline 基础设施**（twe `tweet-detail_api.ts:58-60`）：新增 `FALLBACK_MODERATED_TIMELINE_QUERY_ID` + `MODERATED_TIMELINE_FEATURES` + `fetch_moderated_timeline_page` + `parse_moderated_timeline_entries`。响应路径 `data.tweet.result.timeline_response.timeline.instructions` 与 TweetDetail 不同。默认未启用（无调用方），等用户场景明确再接入 thread 主路径，避免回归。
+- **新增单元测试**：6 个 sortIndex case（int 解析、BigInt、缺失/空值、desc 排序、out-of-order 输入、pin 头部稳定性）+ 2 个 ModeratedTimeline parser case。
+- **总测试**：145 → 153，全套通过。
+
+### P1-1 通用 helper 重构（推迟到 v0.23.0）
+
+调研报告中的 P1-1（抽出 `_extract_timeline_entries` 通用 helper 替换 6 处重复 instruction 解析）改动面较大、回归风险较高，单独做一个独立版本 v0.23.0 便于 review + 验证。本次 v0.22.0 不实施。
+
+### 关键经验
+
+- **twe 不是抓取技术参考，是字段解析参考**：油猴脚本运行在浏览器内被动拦截 XHR，零反爬负担。feedgrab 在主动签名/Cookie/容灾上领先两代，但 twe 沉淀的 19 个 endpoint 的响应路径和 typename 分支细节值得照搬。
+- **TimelinePinEntry 是 instruction 级别，不是 entry 级别**：必须在 `for instruction in instructions:` 循环里处理，而不是在 `TimelineAddEntries.entries[]` 里找。
+- **Likes API 默认隐私**：Twitter 把 Likes 设为隐私是默认行为，公开 Likes 才是少数。fetcher 必须给出明确日志，不能沉默返回 0。
+- **`content_type` 过滤过紧会失去未来兼容性**：取所有有 bitrate 的 variant 按 bitrate 排序最大才是稳健做法。HLS m3u8 没有 bitrate 字段，自然被排除。
+- **fa0311/twitter-openapi placeholder.json 是 queryId 金矿**：单一 JSON 暴露 80+ 个 operationName 的当前值，配合 feedgrab 已有的 4 级 fallback 机制，新增 op 几乎零运维成本。
+
 ## 2026-05-08 · v0.21.0 · 新增「知识星球」（Zsxq）平台支持
 
 ### 背景

@@ -61,6 +61,17 @@ feedgrab https://x.com/i/lists/2002743803959300263               # 抓取最近 
 X_LIST_TWEETS_DAYS=3 feedgrab https://x.com/i/lists/2002743803959300263  # 抓取最近 3 天
 X_LIST_TWEETS_SUMMARY=true feedgrab https://x.com/i/lists/...    # 生成汇总表格（MD + CSV）
 
+# v0.22.0: 批量抓取 Twitter 用户列表（粉丝/关注/列表成员，输出 MD + CSV）
+feedgrab https://x.com/ai_xiaomu/followers                       # 粉丝列表
+feedgrab https://x.com/ai_xiaomu/following                       # 关注列表
+feedgrab https://x.com/ai_xiaomu/verified_followers              # 蓝V 粉丝
+feedgrab https://x.com/i/lists/2002743803959300263/members       # 列表成员
+feedgrab https://x.com/i/lists/2002743803959300263/subscribers   # 列表订阅者
+
+# v0.22.0: 批量抓取用户的回复推文 & 喜欢推文
+feedgrab https://x.com/ai_xiaomu/with_replies                    # 用户回复 tab（含自回复）
+feedgrab https://x.com/ai_xiaomu/likes                           # 用户喜欢（Twitter 默认私密，仅公开账号可见）
+
 # 批量抓取小红书作者笔记（需要 XHS_USER_NOTES_ENABLED=true + feedgrab login xhs）
 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
 XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...  # 指定日期之后

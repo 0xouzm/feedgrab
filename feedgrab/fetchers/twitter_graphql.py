@@ -47,6 +47,19 @@ FALLBACK_SEARCH_TIMELINE_QUERY_ID = "VhUd6vHVmLBcw0uX-6jMLA"
 FALLBACK_LIST_BY_REST_ID_QUERY_ID = "BpXQqi3VImT8bR7pAf26rg"
 FALLBACK_LIST_LATEST_TWEETS_QUERY_ID = "RlZzktZY_9wJynoepm8ZsA"
 
+# v0.22.0: twe-borrowed operations (fa0311/twitter-openapi placeholder.json)
+FALLBACK_FOLLOWERS_QUERY_ID = "IOh4aS6UdGWGJUYTqliQ7Q"
+FALLBACK_FOLLOWING_QUERY_ID = "zx6e-TLzRkeDO_a7p4b3JQ"
+FALLBACK_BLUE_VERIFIED_FOLLOWERS_QUERY_ID = "GQ1yZjbfSiPfi_5gznKMPw"
+FALLBACK_LIKES_QUERY_ID = "lIDpu_NWL7_VhimGGt0o6A"
+FALLBACK_USER_TWEETS_AND_REPLIES_QUERY_ID = "6hvhmQQ9zPIR8RZWHFAm4w"
+FALLBACK_LIST_MEMBERS_QUERY_ID = "EkmM6fQjaFMaQbj2wGFQ9w"
+FALLBACK_LIST_SUBSCRIBERS_QUERY_ID = "_av5eJHyhOzx9nTQkQg0iQ"
+
+# v0.23.0: ModeratedTimeline — author-hidden replies under their own thread
+# (queryId from fa0311/twitter-openapi; twe modules/tweet-detail/api.ts:48)
+FALLBACK_MODERATED_TIMELINE_QUERY_ID = "T2DTQt8XU3-d2EHWRsxOcw"
+
 # ---------------------------------------------------------------------------
 # Feature switches — per-operation, from baoyu constants.ts
 # ---------------------------------------------------------------------------
@@ -184,6 +197,19 @@ USER_TWEETS_FEATURES = dict(TWEET_DETAIL_FEATURES)
 USER_TWEETS_FEATURES["creator_subscriptions_tweet_preview_api_enabled"] = True
 
 # ---------------------------------------------------------------------------
+# v0.22.0: Followers / Following / BlueVerifiedFollowers / ListMembers /
+# ListSubscribers feature switches (user-list timelines)
+# ---------------------------------------------------------------------------
+
+USER_LIST_FEATURES = dict(USER_BY_SCREEN_NAME_FEATURES)
+# These ops also accept the same minimal feature set used by UserByScreenName.
+# Live feature flags are still updated at runtime via _update_features_from_html.
+
+# Likes & UserTweetsAndReplies — same shape as UserTweets timeline
+USER_LIKES_FEATURES = dict(USER_TWEETS_FEATURES)
+USER_TWEETS_AND_REPLIES_FEATURES = dict(USER_TWEETS_FEATURES)
+
+# ---------------------------------------------------------------------------
 # ListLatestTweetsTimeline feature switches
 # ---------------------------------------------------------------------------
 
@@ -252,6 +278,10 @@ _ALL_FEATURES_DICTS: list = [
     USER_TWEETS_FEATURES,
     LIST_TWEETS_FEATURES,
     SEARCH_TIMELINE_FEATURES,
+    # v0.22.0: twe-borrowed ops
+    USER_LIST_FEATURES,
+    USER_LIKES_FEATURES,
+    USER_TWEETS_AND_REPLIES_FEATURES,
 ]
 
 
@@ -647,6 +677,33 @@ def fetch_user_tweets_page(
     )
 
 
+# ---------------------------------------------------------------------------
+# v0.23.0: sortIndex helper (borrowed from twe utils/api.ts:24-29)
+# ---------------------------------------------------------------------------
+
+def _entry_sort_index(entry: dict) -> int:
+    """Safe BigInt-like extraction of `sortIndex` from a timeline entry.
+
+    Twitter uses snowflake-id strings, so we treat them as big integers.
+    Returns 0 on missing/malformed values.
+    """
+    try:
+        return int(entry.get("sortIndex", "0") or "0")
+    except (TypeError, ValueError):
+        return 0
+
+
+def _sort_entries_by_sortindex(entries: list) -> list:
+    """Sort entries by sortIndex desc in place (newest first).
+
+    Twitter's GraphQL response is usually already sorted, but in batch
+    merges across pages the order can drift. Forcing a descending sort
+    by snowflake id stabilizes the final timeline.
+    """
+    entries.sort(key=_entry_sort_index, reverse=True)
+    return entries
+
+
 def parse_user_tweets_entries(response: Dict[str, Any]) -> tuple:
     """
     Extract tweet entries and pagination cursors from a UserTweets GraphQL response.
@@ -682,9 +739,19 @@ def parse_user_tweets_entries(response: Dict[str, Any]) -> tuple:
 
     entries = []
     cursors = {}
+    pin_entry = None  # P0-3: pinned tweet from TimelinePinEntry instruction
 
     for instruction in instructions:
         inst_type = instruction.get("type", "")
+
+        # P0-3: pinned tweet (top of profile) — twe user-tweets_api.ts L48-57
+        if inst_type == "TimelinePinEntry":
+            pin = instruction.get("entry", {})
+            if pin:
+                # Tag for downstream renderers; insert at the front below.
+                pin["_is_pinned"] = True
+                pin_entry = pin
+            continue
 
         if inst_type == "TimelineAddEntries":
             for entry in instruction.get("entries", []):
@@ -730,6 +797,391 @@ def parse_user_tweets_entries(response: Dict[str, Any]) -> tuple:
                 if item_type == "TimelineTweet":
                     entries.append(item)
 
+    # v0.23.0: stable sort by sortIndex desc (twe utils/api.ts:24-29)
+    # — pinned entry stays at the head, inserted after sort.
+    _sort_entries_by_sortindex(entries)
+
+    # Place pinned tweet first (only on first page — pin entry only appears in cursor=None response)
+    if pin_entry is not None:
+        entries.insert(0, pin_entry)
+
+    return entries, cursors
+
+
+# ---------------------------------------------------------------------------
+# v0.22.0: User list & timeline ops (twe-borrowed)
+#
+# Followers / Following / BlueVerifiedFollowers / ListMembers / ListSubscribers
+#   → return User entries.   parsed by parse_*_users_entries.
+# Likes / UserTweetsAndReplies
+#   → return Tweet entries.  parsed by parse_user_tweets_entries (shared).
+#
+# queryIds bootstrapped from fa0311/twitter-openapi placeholder.json; runtime
+# resolution (cache / community / JS-bundle) overrides hardcoded defaults.
+# ---------------------------------------------------------------------------
+
+
+def _parse_user_list_response(
+    response: Dict[str, Any], instructions_path: List[str]
+) -> tuple:
+    """Generic user-timeline parser.
+
+    Args:
+        response: full GraphQL JSON dict
+        instructions_path: dot-path keys into `data.<...>.timeline.instructions`
+
+    Returns:
+        (entries, cursors) where entries are TimelineUser entries.
+    """
+    if not response or "data" not in response:
+        return [], {}
+
+    node: Any = response["data"]
+    for key in instructions_path:
+        if not isinstance(node, dict):
+            return [], {}
+        node = node.get(key, {})
+
+    instructions = node.get("instructions", []) if isinstance(node, dict) else []
+
+    entries: List[dict] = []
+    cursors: Dict[str, str] = {}
+
+    for instruction in instructions:
+        inst_type = instruction.get("type", "")
+        if inst_type != "TimelineAddEntries":
+            continue
+        for entry in instruction.get("entries", []):
+            entry_id = entry.get("entryId", "")
+            content = entry.get("content", {})
+
+            if entry_id.startswith("cursor-"):
+                ct = content.get("cursorType", "")
+                value = content.get("value", "")
+                if ct == "Top" and value:
+                    cursors["top"] = value
+                elif ct == "Bottom" and value:
+                    cursors["bottom"] = value
+                continue
+
+            if content.get("entryType") == "TimelineTimelineItem":
+                item_type = content.get("itemContent", {}).get("itemType", "")
+                if item_type == "TimelineUser":
+                    entries.append(entry)
+
+    # v0.23.0: stable sort by sortIndex desc (twe utils/api.ts:24-29)
+    _sort_entries_by_sortindex(entries)
+
+    return entries, cursors
+
+
+def extract_user_data(entry: dict) -> Optional[Dict[str, Any]]:
+    """Extract structured user data from a TimelineUser entry.
+
+    Returns:
+        Flat dict with user fields, or None on suspended/deleted/unknown typename.
+    """
+    content = entry.get("content", entry)
+    item_content = content.get("itemContent", {})
+    user_results = item_content.get("user_results", {})
+    result = user_results.get("result", {})
+
+    typename = result.get("__typename")
+    if typename != "User":
+        # twe utils/api.ts:98-110 — log + skip
+        if typename:
+            logger.debug(
+                f"[Twitter] Skipping {typename} entry "
+                f"(likely suspended/deleted)"
+            )
+        return None
+
+    legacy = result.get("legacy", {})
+    core = result.get("core", {})
+
+    screen_name = legacy.get("screen_name", "") or core.get("screen_name", "")
+    name = legacy.get("name", "") or core.get("name", "")
+
+    return {
+        "user_id": result.get("rest_id", ""),
+        "screen_name": screen_name,
+        "name": name,
+        "description": legacy.get("description", ""),
+        "location": legacy.get("location", ""),
+        "url": f"https://x.com/{screen_name}" if screen_name else "",
+        "profile_image_url": (
+            legacy.get("profile_image_url_https", "")
+            or result.get("avatar", {}).get("image_url", "")
+        ),
+        "profile_banner_url": legacy.get("profile_banner_url", ""),
+        "followers_count": legacy.get("followers_count", 0),
+        "friends_count": legacy.get("friends_count", 0),
+        "statuses_count": legacy.get("statuses_count", 0),
+        "listed_count": legacy.get("listed_count", 0),
+        "favourites_count": legacy.get("favourites_count", 0),
+        "verified": legacy.get("verified", False),
+        "is_blue_verified": result.get("is_blue_verified", False),
+        "created_at": legacy.get("created_at", ""),
+        "protected": legacy.get("protected", False),
+    }
+
+
+# --- User-timeline ops returning User entries -------------------------------
+
+def _fetch_user_timeline_op(
+    user_id: str, cookies: dict, cursor: Optional[str], count: int,
+    operation_name: str,
+) -> Optional[Dict[str, Any]]:
+    """Shared helper for Followers / Following / BlueVerifiedFollowers."""
+    query_id = _get_query_id(operation_name)
+    headers = build_graphql_headers(cookies)
+    variables = {
+        "userId": user_id,
+        "count": count,
+        "includePromotedContent": False,
+    }
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name=operation_name,
+        variables=variables,
+        features=dict(USER_LIST_FEATURES),
+        field_toggles={},
+        headers=headers,
+    )
+
+
+def fetch_followers_page(
+    user_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of a user's followers."""
+    return _fetch_user_timeline_op(user_id, cookies, cursor, count, "Followers")
+
+
+def fetch_following_page(
+    user_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of who a user is following."""
+    return _fetch_user_timeline_op(user_id, cookies, cursor, count, "Following")
+
+
+def fetch_blue_verified_followers_page(
+    user_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of a user's Blue-verified followers."""
+    return _fetch_user_timeline_op(
+        user_id, cookies, cursor, count, "BlueVerifiedFollowers"
+    )
+
+
+def parse_user_timeline_users(response: Dict[str, Any]) -> tuple:
+    """Parse Followers / Following / BlueVerifiedFollowers response.
+
+    Response path: data.user.result.timeline.timeline.instructions
+    """
+    return _parse_user_list_response(
+        response, ["user", "result", "timeline", "timeline"]
+    )
+
+
+# --- List-user ops returning User entries -----------------------------------
+
+def _fetch_list_user_op(
+    list_id: str, cookies: dict, cursor: Optional[str], count: int,
+    operation_name: str,
+) -> Optional[Dict[str, Any]]:
+    """Shared helper for ListMembers / ListSubscribers."""
+    query_id = _get_query_id(operation_name)
+    headers = build_graphql_headers(cookies)
+    variables = {
+        "listId": list_id,
+        "count": count,
+        "withSafetyModeUserFields": True,
+    }
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name=operation_name,
+        variables=variables,
+        features=dict(USER_LIST_FEATURES),
+        field_toggles={},
+        headers=headers,
+    )
+
+
+def fetch_list_members_page(
+    list_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of a Twitter List's members."""
+    return _fetch_list_user_op(list_id, cookies, cursor, count, "ListMembers")
+
+
+def fetch_list_subscribers_page(
+    list_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of a Twitter List's subscribers."""
+    return _fetch_list_user_op(list_id, cookies, cursor, count, "ListSubscribers")
+
+
+def parse_list_members_users(response: Dict[str, Any]) -> tuple:
+    """data.list.members_timeline.timeline.instructions"""
+    return _parse_user_list_response(
+        response, ["list", "members_timeline", "timeline"]
+    )
+
+
+def parse_list_subscribers_users(response: Dict[str, Any]) -> tuple:
+    """data.list.subscribers_timeline.timeline.instructions"""
+    return _parse_user_list_response(
+        response, ["list", "subscribers_timeline", "timeline"]
+    )
+
+
+# --- Tweet-timeline ops returning Tweet entries (Likes, UserTweetsAndReplies)
+
+def fetch_user_likes_page(
+    user_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of a user's liked tweets via Likes endpoint."""
+    query_id = _get_query_id("Likes")
+    headers = build_graphql_headers(cookies)
+    variables = {
+        "userId": user_id,
+        "count": count,
+        "includePromotedContent": False,
+        "withClientEventToken": False,
+        "withBirdwatchNotes": False,
+        "withVoice": True,
+        "withV2Timeline": True,
+    }
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name="Likes",
+        variables=variables,
+        features=dict(USER_LIKES_FEATURES),
+        field_toggles=dict(BOOKMARK_FIELD_TOGGLES),
+        headers=headers,
+    )
+
+
+def fetch_user_tweets_and_replies_page(
+    user_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of a user's tweets+replies (with_replies tab)."""
+    query_id = _get_query_id("UserTweetsAndReplies")
+    headers = build_graphql_headers(cookies)
+    variables = {
+        "userId": user_id,
+        "count": count,
+        "includePromotedContent": True,
+        "withCommunity": True,
+        "withVoice": True,
+        "withV2Timeline": True,
+    }
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name="UserTweetsAndReplies",
+        variables=variables,
+        features=dict(USER_TWEETS_AND_REPLIES_FEATURES),
+        field_toggles=dict(BOOKMARK_FIELD_TOGGLES),
+        headers=headers,
+    )
+
+
+# Note: Likes & UserTweetsAndReplies use parse_user_tweets_entries (above) —
+# response shape is identical to UserTweets, just different operationName.
+
+
+# --- v0.23.0: ModeratedTimeline (author-hidden replies under their thread) ---
+
+# ModeratedTimeline reuses the TweetDetail feature set (same scope = thread).
+MODERATED_TIMELINE_FEATURES = dict(TWEET_DETAIL_FEATURES)
+
+
+def fetch_moderated_timeline_page(
+    focal_tweet_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of author-hidden replies under a thread.
+
+    Only the tweet author themselves can typically query this endpoint;
+    others will get an empty timeline. Used as opt-in supplement to
+    fetch_tweet_detail when X_FETCH_MODERATED_REPLIES=true.
+    """
+    query_id = _get_query_id("ModeratedTimeline")
+    headers = build_graphql_headers(cookies)
+    variables = {
+        "rootTweetId": focal_tweet_id,
+        "count": count,
+        "includePromotedContent": False,
+        "withCommunity": False,
+        "withVoice": True,
+    }
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name="ModeratedTimeline",
+        variables=variables,
+        features=dict(MODERATED_TIMELINE_FEATURES),
+        field_toggles=dict(BOOKMARK_FIELD_TOGGLES),
+        headers=headers,
+    )
+
+
+def parse_moderated_timeline_entries(response: Dict[str, Any]) -> tuple:
+    """Parse ModeratedTimeline response.
+
+    Path: data.tweet.result.timeline_response.timeline.instructions (twe L59)
+
+    Returns:
+        (entries, cursors) — entries can be passed to extract_tweet_data().
+    """
+    if not response or "data" not in response:
+        return [], {}
+
+    instructions = (
+        response.get("data", {})
+        .get("tweet", {})
+        .get("result", {})
+        .get("timeline_response", {})
+        .get("timeline", {})
+        .get("instructions", [])
+    )
+
+    entries: List[dict] = []
+    cursors: Dict[str, str] = {}
+
+    for instruction in instructions:
+        inst_type = instruction.get("type", "")
+        if inst_type == "TimelineAddEntries":
+            for entry in instruction.get("entries", []):
+                entry_id = entry.get("entryId", "")
+                content = entry.get("content", {})
+
+                if entry_id.startswith("cursor-"):
+                    ct = content.get("cursorType", "")
+                    value = content.get("value", "")
+                    if ct == "Bottom" and value:
+                        cursors["bottom"] = value
+                    continue
+
+                if content.get("entryType") == "TimelineTimelineItem":
+                    item_type = content.get("itemContent", {}).get("itemType", "")
+                    if item_type == "TimelineTweet":
+                        entries.append(entry)
+
+    _sort_entries_by_sortindex(entries)
     return entries, cursors
 
 
@@ -1194,7 +1646,14 @@ def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
                                 logger.debug(f"Resolved {op}: queryId={qid}")
 
                 # UserByScreenName & UserTweets & List ops — typically in main bundle
-                main_ops_missing = {"UserByScreenName", "UserTweets", "ListByRestId", "ListLatestTweetsTimeline"} - set(result)
+                main_ops_missing = {
+                    "UserByScreenName", "UserTweets", "ListByRestId", "ListLatestTweetsTimeline",
+                    # v0.22.0: twe-borrowed ops also live in main bundle
+                    "Followers", "Following", "BlueVerifiedFollowers", "Likes",
+                    "UserTweetsAndReplies", "ListMembers", "ListSubscribers",
+                    # v0.23.0
+                    "ModeratedTimeline",
+                } - set(result)
                 if main_ops_missing and main_match:
                     chunk_hash = main_match.group(1)
                     chunk_url = f"https://abs.twimg.com/responsive-web/client-web/main.{chunk_hash}a.js"
@@ -1387,6 +1846,9 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
     Returns:
         Flat dict with tweet fields, or None if entry is not a tweet.
     """
+    # P0-3: pinned-tweet marker propagated from parse_user_tweets_entries
+    is_pinned = bool(entry.get("_is_pinned", False))
+
     # Navigate to the tweet result object
     content = entry.get("content", entry)
     item_content = (
@@ -1402,7 +1864,22 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
     if result.get("__typename") == "TweetWithVisibilityResults":
         result = result.get("tweet", {})
 
-    if result.get("__typename") not in ("Tweet",):
+    # P0-2: Explicit typename handling for tombstone/unavailable (twe utils/api.ts:222-247)
+    typename = result.get("__typename")
+    if typename == "TweetTombstone":
+        tombstone_text = (
+            result.get("tombstone", {}).get("text", {}).get("text", "")
+            or "unknown reason"
+        )
+        logger.warning(f"[Twitter] TweetTombstone skipped: {tombstone_text}")
+        return None
+    if typename == "TweetUnavailable":
+        reason = result.get("reason", "") or "likely deleted/protected"
+        logger.warning(f"[Twitter] TweetUnavailable skipped: {reason}")
+        return None
+    if typename != "Tweet":
+        if typename:
+            logger.debug(f"[Twitter] Unknown tweet typename {typename}, skipping entry")
         return None
 
     legacy = result.get("legacy", {})
@@ -1441,11 +1918,12 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
         if media_type == "photo":
             images.append(media.get("media_url_https", ""))
         elif media_type in ("video", "animated_gif"):
-            # Get highest bitrate mp4 variant
+            # P0-4: don't filter by content_type — HLS m3u8 has no bitrate so
+            # it gets excluded naturally; mp4/webm both have bitrate
             variants = media.get("video_info", {}).get("variants", [])
-            mp4_variants = [v for v in variants if v.get("content_type") == "video/mp4"]
-            if mp4_variants:
-                best = max(mp4_variants, key=lambda v: v.get("bitrate", 0))
+            bitrate_variants = [v for v in variants if v.get("bitrate")]
+            if bitrate_variants:
+                best = max(bitrate_variants, key=lambda v: v.get("bitrate", 0))
                 videos.append(best.get("url", ""))
             # Also keep poster image
             images.append(media.get("media_url_https", ""))
@@ -1455,7 +1933,21 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
     quoted_status = result.get("quoted_status_result", {}).get("result", {})
     if quoted_status.get("__typename") == "TweetWithVisibilityResults":
         quoted_status = quoted_status.get("tweet", {})
-    if quoted_status.get("__typename") == "Tweet":
+
+    # P0-2: Log tombstone/unavailable on quoted tweet
+    q_typename = quoted_status.get("__typename")
+    if q_typename == "TweetTombstone":
+        qt_text = (
+            quoted_status.get("tombstone", {}).get("text", {}).get("text", "")
+            or "unknown reason"
+        )
+        logger.warning(f"[Twitter] Quoted TweetTombstone: {qt_text}")
+        quoted_tweet = {"is_tombstone": True, "tombstone_text": qt_text}
+    elif q_typename == "TweetUnavailable":
+        q_reason = quoted_status.get("reason", "") or "likely deleted/protected"
+        logger.warning(f"[Twitter] Quoted TweetUnavailable: {q_reason}")
+        quoted_tweet = {"is_unavailable": True, "tombstone_text": q_reason}
+    elif q_typename == "Tweet":
         q_legacy = quoted_status.get("legacy", {})
         q_user = (
             quoted_status.get("core", {})
@@ -1495,9 +1987,9 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
                 q_images.append(q_media.get("media_url_https", ""))
             elif q_mtype in ("video", "animated_gif"):
                 q_variants = q_media.get("video_info", {}).get("variants", [])
-                q_mp4s = [v for v in q_variants if v.get("content_type") == "video/mp4"]
-                if q_mp4s:
-                    q_best = max(q_mp4s, key=lambda v: v.get("bitrate", 0))
+                q_bitrate_variants = [v for v in q_variants if v.get("bitrate")]
+                if q_bitrate_variants:
+                    q_best = max(q_bitrate_variants, key=lambda v: v.get("bitrate", 0))
                     q_videos.append(q_best.get("url", ""))
                 q_images.append(q_media.get("media_url_https", ""))
 
@@ -1561,6 +2053,8 @@ def extract_tweet_data(entry: dict) -> Optional[Dict[str, Any]]:
         "followers_count": user_legacy.get("followers_count", 0),
         "statuses_count": user_legacy.get("statuses_count", 0),
         "listed_count": user_legacy.get("listed_count", 0),
+        # P0-3: pinned tweet marker (TimelinePinEntry instruction)
+        "is_pinned": is_pinned,
         # Keep raw result for article extraction in later PRs
         "_raw_result": result,
     }
@@ -2013,6 +2507,16 @@ def _fallback_query_ids() -> Dict[str, str]:
         "SearchTimeline": FALLBACK_SEARCH_TIMELINE_QUERY_ID,
         "ListByRestId": FALLBACK_LIST_BY_REST_ID_QUERY_ID,
         "ListLatestTweetsTimeline": FALLBACK_LIST_LATEST_TWEETS_QUERY_ID,
+        # v0.22.0: twe-borrowed
+        "Followers": FALLBACK_FOLLOWERS_QUERY_ID,
+        "Following": FALLBACK_FOLLOWING_QUERY_ID,
+        "BlueVerifiedFollowers": FALLBACK_BLUE_VERIFIED_FOLLOWERS_QUERY_ID,
+        "Likes": FALLBACK_LIKES_QUERY_ID,
+        "UserTweetsAndReplies": FALLBACK_USER_TWEETS_AND_REPLIES_QUERY_ID,
+        "ListMembers": FALLBACK_LIST_MEMBERS_QUERY_ID,
+        "ListSubscribers": FALLBACK_LIST_SUBSCRIBERS_QUERY_ID,
+        # v0.23.0
+        "ModeratedTimeline": FALLBACK_MODERATED_TIMELINE_QUERY_ID,
     }
 
 

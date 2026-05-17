@@ -53,3 +53,6 @@ debug_*_output.json
 output_*test*/
 output_smoke/
 
+# External research source archives (GPL/MIT third-party code kept local only)
+tasks/twe_research/
+

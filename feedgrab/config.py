@@ -302,6 +302,68 @@ def x_search_max_pages_per_chunk() -> int:
 
 
 # ---------------------------------------------------------------------------
+# v0.22.0: User list batch fetch (Followers / Following / List members ...)
+# ---------------------------------------------------------------------------
+
+def x_user_list_enabled() -> bool:
+    """Whether Twitter user-list batch fetching is enabled.
+
+    Covers followers/following/blue_verified_followers/list_members/list_subscribers.
+    """
+    return os.getenv("X_USER_LIST_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def x_user_list_max_pages() -> int:
+    """Maximum user-list pagination pages (default 20, ~400 users)."""
+    try:
+        return int(os.getenv("X_USER_LIST_MAX_PAGES", "20"))
+    except ValueError:
+        return 20
+
+
+def x_user_list_delay() -> float:
+    """Delay in seconds between user-list pagination pages (default 2.0)."""
+    try:
+        return float(os.getenv("X_USER_LIST_DELAY", "2.0"))
+    except ValueError:
+        return 2.0
+
+
+def x_user_list_per_page() -> int:
+    """Per-page count for user-list timelines (default 20)."""
+    try:
+        return int(os.getenv("X_USER_LIST_PER_PAGE", "20"))
+    except ValueError:
+        return 20
+
+
+# ---------------------------------------------------------------------------
+# v0.22.0: User likes batch fetch (Likes)
+# ---------------------------------------------------------------------------
+
+def x_user_likes_enabled() -> bool:
+    """Whether Twitter user-likes batch fetching is enabled."""
+    return os.getenv("X_USER_LIKES_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def x_user_likes_max_pages() -> int:
+    """Maximum pages for user-likes fetcher (default 50)."""
+    try:
+        return int(os.getenv("X_USER_LIKES_MAX_PAGES", "50"))
+    except ValueError:
+        return 50
+
+
+# ---------------------------------------------------------------------------
+# v0.22.0: User replies batch fetch (UserTweetsAndReplies)
+# ---------------------------------------------------------------------------
+
+def x_user_replies_enabled() -> bool:
+    """Whether Twitter user-replies batch fetching is enabled."""
+    return os.getenv("X_USER_REPLIES_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+# ---------------------------------------------------------------------------
 # Twitter/X keyword search (x-so)
 # ---------------------------------------------------------------------------
 
@@ -1210,3 +1272,69 @@ def bilibili_subtitle_whisper() -> bool:
     When enabled, yt-dlp downloads audio → Groq Whisper transcribes.
     """
     return os.getenv("BILIBILI_SUBTITLE_WHISPER", "false").lower() in ("true", "1", "yes")
+
+
+# ---------------------------------------------------------------------------
+# Zsxq (知识星球)
+# ---------------------------------------------------------------------------
+
+def zsxq_enabled() -> bool:
+    """Master switch for Zsxq fetcher. Default true."""
+    return os.getenv("ZSXQ_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def zsxq_cdp_enabled() -> bool:
+    """Connect to running Chrome via CDP for Zsxq. Default true.
+
+    When true, the fetcher reuses the cookies/session of an already-logged-in
+    Chrome instance (via ``CHROME_CDP_PORT``, default 9222) instead of relying
+    only on ``sessions/zsxq.json``.
+    """
+    return os.getenv("ZSXQ_CDP_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def zsxq_page_load_timeout() -> int:
+    """Stealth Playwright page-load timeout for Zsxq, in milliseconds."""
+    try:
+        return int(os.getenv("ZSXQ_PAGE_LOAD_TIMEOUT", "20000"))
+    except ValueError:
+        return 20000
+
+
+def zsxq_comment_mode() -> str:
+    """Comment rendering mode for Zsxq topics: ``none`` | ``all`` | ``author``.
+
+    Default ``none`` — articles seldom benefit from comments and the comment
+    API requires extra HTTP calls. ``author`` keeps replies from the topic
+    owner only (mirrors LinuxDo's ``LINUXDO_REPLY_MODE``).
+    """
+    raw = os.getenv("ZSXQ_COMMENT_MODE", "none").strip().lower()
+    if raw not in ("none", "all", "author"):
+        return "none"
+    return raw
+
+
+def zsxq_max_comments() -> int:
+    """Maximum number of comments rendered when comment_mode != none."""
+    try:
+        return int(os.getenv("ZSXQ_MAX_COMMENTS", "50"))
+    except ValueError:
+        return 50
+
+
+def zsxq_download_media() -> bool:
+    """Download Zsxq images locally to ``attachments/<id>/``. Default false.
+
+    When false, images keep their original ``images.zsxq.com`` URLs which may
+    eventually expire. Enable for archival use cases.
+    """
+    return os.getenv("ZSXQ_DOWNLOAD_MEDIA", "false").lower() in ("true", "1", "yes")
+
+
+def zsxq_api_version() -> str:
+    """``X-Version`` header sent to api.zsxq.com. Bump if 401s persist after login.
+
+    The value reflects the live Zsxq web client and rotates roughly quarterly.
+    Override with ``ZSXQ_API_VERSION`` env if Zsxq tightens the check.
+    """
+    return os.getenv("ZSXQ_API_VERSION", "2.37.0").strip() or "2.37.0"
