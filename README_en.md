@@ -151,6 +151,14 @@ feedgrab weibo-user 1234567890 --limit 20                      # Weibo user prof
 
 feedgrab https://www.douyin.com/video/7234567890123456789     # Douyin single video
 feedgrab https://v.douyin.com/iL3xpDe/                         # Douyin short link (auto 302 resolve)
+# === Zsxq (v0.21.0 new) ===
+# First-time setup (pick one):
+feedgrab login zsxq                                            # Open Chrome, scan QR
+CHROME_CDP_LOGIN=true feedgrab login zsxq                      # Reuse running Chrome session (recommended)
+feedgrab https://articles.zsxq.com/id_sz9kew31q6we.html        # Long article
+feedgrab https://wx.zsxq.com/group/<gid>/topic/<tid>           # Short topic
+feedgrab https://t.zsxq.com/yUX3P                              # Invite short link (auto 302)
+
 
 # Auto-detect local Chrome UA and write to .env (recommended on first setup)
 feedgrab detect-ua

@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.20.1
+- **当前版本**：v0.21.0
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -43,6 +43,7 @@ feedgrab 由两个项目融合升级而来：
 | 小宇宙 | SSR `__NEXT_DATA__` + Groq Whisper 转录 |
 | 喜马拉雅 | Web Revision API + canPlay 降级 + Groq Whisper（免费节目） |
 | RSS | feedparser |
+| 知识星球 | Tier 0 HTTP cookie（articles SSR HTML / topic API JSON）→ Tier 1 CDP 复用 → Tier 2 Stealth Browser → Tier 3 Jina；短链 t.zsxq.com 302 解析；topic 五形态：talk/question+answer/article/solution；评论三态 |
 | 付费新闻（300+） | 7 级 Tier 绕过（JSON-LD → Googlebot/Bingbot UA → AMP → EU IP → archive.today → Google Cache → Jina） |
 | 任意网页 | JSON-LD 前置探测 → Jina 兜底 |
 
@@ -379,12 +380,36 @@ yt-dlp 默认只启用 deno。`_js_runtime_args()` 自动检测 deno/node/bun �
 
 三个 CLI 命令下载视频(MP4)/音频(MP3)/字幕(SRT)到 `{OUTPUT_DIR}/YouTube/` 目录。先通过 API 获取元数据构建统一文件名前缀（`author_date：title`），与 MD 输出保持一致。长链接和 youtu.be 短分享链接都兼容。
 
+### 知识星球抓取（`fetchers/zsxq.py`）
+
+支持 `articles.zsxq.com/id_<hashid>.html` 长文章和 `wx.zsxq.com/group/<gid>/topic/<tid>` 单条 topic 两种主形态。短链 `t.zsxq.com/<code>` 自动 302 解析（参考 Douyin 短链思路）；H5 邀请短链跳转目标 `?topic_id=<digits>` 通过 query 参数识别。
+
+**鉴权**（参考 [yann0917/knowledge](https://github.com/yann0917/knowledge) `service.go` 逆向）：Cookie 模式（核心 `zsxq_access_token`，`.zsxq.com` 域）+ 固定 UA + `X-Timestamp` (Unix 秒) + `X-Version: 2.37.0`。X-Version 过期可由 `ZSXQ_API_VERSION` 覆盖。
+
+**Tier 链路**（对齐 LinuxDo 范式）：
+
+- Tier 0：HTTP GET（带 cookie + 头部）。articles 走 `requests.get` + BeautifulSoup `.ql-editor`；topic 走 `https://api.zsxq.com/v2/topics/<tid>/info` 直接解析 JSON。
+- Tier 1：CDP `connect_over_cdp(ws://9222/devtools/browser)` 复用 Chrome `.zsxq.com` cookie context。
+- Tier 2：Stealth Playwright launch + `sessions/zsxq.json`，page.goto 取 HTML 或 page.evaluate(fetch(api)) 取 JSON。
+- Tier 3：Jina（鉴于 zsxq 强登录态门控基本无效，仅留姿态）。明确 401/404/business-failed 时直接终止不下沉，避免落地登录页 .md。
+
+**article HTML 解析关键点**：作者优先 `<meta name="author">`，回退到 `.author-info .nick-name`；group_id 从 `.group-info a[href]` 中正则匹配 `/group/(\d+)`；group_name 优先 `<meta property="og:site_name">`，回退到 `.group-name`；cover_image 优先 `<meta property="og:image">`，回退到 `.ql-editor` 内第一个 `<img>`；Quill 代码块 `<pre class="ql-syntax" spec-language="X">` 用 4 反引号围栏（与 LinuxDo / Feishu 对齐）。
+
+**topic 五形态**：talk / question+answer / article / **solution**（zsxq 较新的"问答+解决方案"形态，`topic.title` 是用户提问，`topic.solution.text` 是星主/AI 解答）。
+
+**评论三态**：`ZSXQ_COMMENT_MODE=none|all|author`（默认 none），对齐 LinuxDo `LINUXDO_REPLY_MODE`。author 模式仅渲染 `owner.user_id == comment.owner.user_id` 的评论。
+
+**配置**：`ZSXQ_ENABLED` / `ZSXQ_CDP_ENABLED` / `ZSXQ_PAGE_LOAD_TIMEOUT` / `ZSXQ_COMMENT_MODE` / `ZSXQ_MAX_COMMENTS` / `ZSXQ_DOWNLOAD_MEDIA` / `ZSXQ_API_VERSION` 共 7 个环境变量；登录用 `feedgrab login zsxq`（CDP 自动提取 / 弹窗扫码二选一）。
+
 ## 迭代历史摘要
 
 > 完整记录见 `DEVLOG.md`
 
 | 版本 | 功能 |
 |------|------|
+| v0.21.0 | 新增「知识星球」（Zsxq）平台支持（articles.zsxq.com 长文章 + wx.zsxq.com 短帖 + t.zsxq.com 短链 302 解析）；4 级 Tier 链路 + 五形态 topic 渲染（含 solution）+ 三态评论筛选 |
+| v0.20.1 | 修复 Twitter 长 thread 被误判为 Article 导致 quoted tweet 丢失（`schema.from_twitter` 改用 `_has_article_body` 看 article_data 实际内容） |
+| v0.20.0 | 五平台扩展：HackerNews / Medium / Reddit / Weibo / Douyin |
 | v0.19.0 | IDCFlare 平台支持 + Discourse 回复模式/会话预热 + 飞书知识库目录/表格/代码块修复 |
 | v0.18.0 | LinuxDo / Discourse 平台支持 + JSON-first 多级兜底 + 折叠块混合渲染（Obsidian callout / 原生 details） |
 | v0.17.0 | 小宇宙 / 喜马拉雅 / B 站字幕三平台 + WBI 签名自研 + Whisper 共享薄层 |

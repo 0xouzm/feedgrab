@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.20.1
+- **当前版本**：v0.21.0
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -47,6 +47,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 | Reddit | old.reddit.com .json + 自报 UA → CDP 复用 Chrome → Stealth Playwright + saved session → Jina（首屏 Top 50 评论 + reddit-sub 五种排序） |
 | Weibo | m.weibo.cn `/statuses/show` + `/api/container/getIndex`（SUB Cookie 可选 + Visitor 占位 + SSR `$render_data` 兜底） |
 | Douyin | CDP 复用 Chrome → Stealth Playwright + saved session → SSR RENDER_DATA → Jina（不破解签名，浏览器内自动签名；v.douyin.com 短链 302 解析） |
+| 知识星球 | Tier 0 HTTP cookie（articles SSR HTML / topic API JSON）→ Tier 1 CDP 复用 → Tier 2 Stealth Browser → Tier 3 Jina（强登录态门控，仅姿态保留）；短链 t.zsxq.com 302 解析；topic 五形态：talk/question+answer/article/solution；评论三态 |
 | 付费新闻（300+） | 7 级 Tier 绕过（JSON-LD → Googlebot/Bingbot UA → AMP → EU IP → archive.today → Google Cache → Jina） |
 | 任意网页 | JSON-LD 前置探测 → Jina 兜底 |
 
@@ -168,6 +169,7 @@ feedgrab/
 | Weibo | m.weibo.cn 移动端 API（show/container/getIndex），SUB Cookie 走 `WEIBO_COOKIE` env 或 `sessions/weibo.json`；SSR 兜底解析 `var $render_data=[{...}][0]||`；created_at 用 `email.utils.parsedate_to_datetime` 解析 RFC 2822；转发用 Markdown 引用块嵌套 |
 | Douyin | CDP/Launch 共用同一 page 内 `fetch('/aweme/v1/web/aweme/detail/?aweme_id=...')`，浏览器自动签名 a_bogus / X-Bogus / msToken；明确**不破解**签名算法（每月变化）；SSR 兜底解析 `<script id="RENDER_DATA">` URL-encoded JSON；短链 `v.douyin.com/<code>` → 302 → `iesdouyin.com/share/video/<aweme_id>/` |
 | 付费墙 | 7 级 Tier 级联（JSON-LD/Googlebot/Bingbot/Generic/AMP/EU IP/archive.today/Google Cache）；`PAYWALL_JSONLD_FOR_ALL=true` 让 Tier 0 对 generic URL 都跑；Googlebot/Bingbot 每次覆盖 UA + Referer + `X-Forwarded-For` + `cookies={}` |
+| 知识星球 | Cookie 鉴权（`zsxq_access_token` + 固定 UA + `X-Timestamp` + `X-Version: 2.37.0`，从 [yann0917/knowledge](https://github.com/yann0917/knowledge) 逆向）；articles.zsxq.com SSR HTML 正文在 `.ql-editor`，作者从 `.author-info .nick-name` 取，group_id 从 `.group-info a[href]` 正则；topic API 返回五形态（talk/question+answer/article/solution，solution 是 zsxq 较新的“问答+解决方案”形态，`topic.title` 是提问，`topic.solution.text` 是解答）；短链 `t.zsxq.com/<code>` 跳转 H5 形态 `?topic_id=<digits>` 用 query 解析；明确终止 401/404/business-failed 不下沉 Jina（避免落地登录页 .md） |
 | Whisper 共享 | `utils/transcribe.py` 4 个公开函数（`groq_transcribe_file`/`groq_transcribe_url`/`format_transcript`/`subtitle_body_to_snippets`）委托 youtube.py 内部函数，不重构 youtube.py |
 
 ### 诊断命令
@@ -182,6 +184,7 @@ feedgrab/
 
 | 版本 | 功能 |
 |------|------|
+| v0.21.0 | 新增「知识星球」（Zsxq）平台支持（articles.zsxq.com 长文章 + wx.zsxq.com 短帖 + t.zsxq.com 短链 302 解析）；4 级 Tier 链路（HTTP cookie / CDP / Stealth Browser / Jina）+ 五形态 topic 渲染（含 solution）+ 三态评论筛选 |
 | v0.20.1 | 修复 Twitter 长 thread 被误判为 Article 导致 quoted tweet 丢失（`schema.from_twitter` 改用 `_has_article_body` 看 article_data 实际内容，统一 thread/article 渲染路径） |
 | v0.20.0 | 五平台扩展：HackerNews（Firebase API + 列表批量）/ Medium（Jina + RSS）/ Reddit（.json + CDP 兜底 + reddit-sub）/ Weibo（m.weibo.cn API + weibo-user）/ Douyin（CDP/Launch/SSR 三级 Tier）|
 | v0.19.0 | IDCFlare 平台支持 + Discourse 回复模式/会话预热 + 飞书知识库目录/表格/代码块修复 |
@@ -220,6 +223,7 @@ feedgrab/
 | Reddit | `reddit.py`（.json + CDP/Browser fetch + reddit-sub） |
 | Weibo | `weibo.py`（m.weibo.cn show + container/getIndex + SSR 兜底） |
 | Douyin | `douyin.py`（CDP/Launch + SSR RENDER_DATA + 短链 302 解析） |
+| 知识星球 | `zsxq.py`（articles SSR HTML + topic API JSON + 五形态 + 短链 302） |
 | 小红书 | `xhs*.py`（5 个文件）+ `browser.py` |
 | 飞书 | `feishu.py` + `feishu_wiki.py` + `browser.py` |
 | 金山文档 | `kdocs.py` |
@@ -229,4 +233,4 @@ feedgrab/
 | B站字幕 / WBI | `bilibili.py` + `utils/bilibili_wbi.py` |
 | 付费墙 / 通用网页 | `paywall.py` + `utils/jsonld.py` |
 | 隐身浏览器 | `fetchers/browser.py`（52 条 stealth args + 资源拦截） |
-| CDP Cookie | `login.py`（6 平台支持，含 LinuxDo） |
+| CDP Cookie | `login.py`（7 平台支持，含 LinuxDo / Zsxq） |

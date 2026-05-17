@@ -45,6 +45,7 @@ class SourceType(str, Enum):
     REDDIT = "reddit"
     WEIBO = "weibo"
     DOUYIN = "douyin"
+    ZSXQ = "zsxq"
     WEB = "web"
     MANUAL = "manual"
 
@@ -617,6 +618,35 @@ def from_idcflare(data: dict) -> UnifiedContent:
             "last_posted_at": data.get("last_posted_at", ""),
             "cover_image": data.get("cover_image", ""),
             "post_count_loaded": data.get("post_count_loaded", 0),
+        },
+    )
+
+
+def from_zsxq(data: dict) -> UnifiedContent:
+    """Convert Zsxq article/topic dict to UnifiedContent."""
+    return UnifiedContent(
+        source_type=SourceType.ZSXQ,
+        source_name=data.get("author", "") or "zsxq",
+        title=data.get("title", "") or "Untitled",
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "zsxq_type": data.get("zsxq_type", "article"),  # article | topic
+            "article_id": data.get("article_id", ""),
+            "topic_id": data.get("topic_id", ""),
+            "group_id": data.get("group_id", ""),
+            "group_name": data.get("group_name", ""),
+            "likes": data.get("likes", 0),
+            "comments": data.get("comments", 0),
+            "reads": data.get("reads", 0),
+            "rewards": data.get("rewards", 0),
+            "comment_mode": data.get("comment_mode", "none"),
+            "rendered_comment_count": data.get("rendered_comment_count", 0),
+            "created_at": data.get("created_at", ""),
+            "cover_image": data.get("cover_image", ""),
+            "images": data.get("images", []),
+            "is_silent": data.get("is_silent", False),
         },
     )
 

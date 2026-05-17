@@ -172,6 +172,16 @@ feedgrab weibo-user 1234567890 --limit 20                      # 微博用户主
 feedgrab https://www.douyin.com/video/7234567890123456789     # 抖音单视频
 feedgrab https://v.douyin.com/iL3xpDe/                         # 抖音短链（自动 302 解析）
 
+# === Zsxq 知识星球（v0.21.0 新增）===
+# 首次需要登录（CDP 自动提取或可视化扫码二选一）：
+feedgrab login zsxq                                            # 弹 Chrome 扫码登录
+CHROME_CDP_LOGIN=true feedgrab login zsxq                      # 复用已运行 Chrome 的登录态（推荐）
+feedgrab https://articles.zsxq.com/id_sz9kew31q6we.html        # 长文章
+feedgrab https://wx.zsxq.com/group/<gid>/topic/<tid>           # 单条 topic 短帖
+feedgrab https://t.zsxq.com/yUX3P                              # 邀请短链（自动 302 解析）
+ZSXQ_COMMENT_MODE=author feedgrab https://wx.zsxq.com/...      # 仅渲染作者本人评论
+ZSXQ_COMMENT_MODE=all feedgrab https://wx.zsxq.com/...         # 全部评论
+
 # 自动检测本机 Chrome UA 并写入 .env（推荐首次部署时运行）
 feedgrab detect-ua
 
@@ -275,6 +285,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | **Reddit** | **old.reddit.com .json + 自报 UA** → CDP 复用 Chrome → Stealth Playwright + saved session → Jina（单帖含 Top 50 评论 + `reddit-sub` 子版块批量，hot/new/top/best/rising 五种排序） | — |
 | **Weibo** | m.weibo.cn 移动端 API（show + container/getIndex）+ SSR `$render_data` 兜底（单条 + `weibo-user` 用户主页批量；SUB Cookie 可选） | — |
 | **Douyin** | **CDP 复用 Chrome** → Stealth Playwright + saved session → SSR `RENDER_DATA` 解析 → Jina（不破解签名，依赖浏览器内执行；短链自动 302 解析 aweme_id） | — |
+| **知识星球**（Zsxq） | Tier 0 HTTP cookie（articles.zsxq.com SSR HTML / api.zsxq.com `/topics/{id}/info` JSON）→ CDP 复用 Chrome → Stealth Playwright → Jina；topic 五形态全覆盖（talk / question+answer / article / **solution**）；短链 `t.zsxq.com/<code>` 302 解析；评论三态 `none/all/author` | `feedgrab login zsxq` |
 | **付费新闻网站**（NYT/WSJ/FT/Economist/Bloomberg/SCMP 等 300+ 站） | **7 级 Tier 付费墙绕过**（JSON-LD 探测 + Googlebot/Bingbot UA + AMP 页面 + archive.today + Google Cache） | — |
 | 任意网页 | **JSON-LD 前置** → Jina 兜底 | — |
 

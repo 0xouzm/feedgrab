@@ -168,6 +168,7 @@ PLATFORM_FOLDER_MAP = {
     SourceType.REDDIT: "Reddit",
     SourceType.WEIBO: "Weibo",
     SourceType.DOUYIN: "Douyin",
+    SourceType.ZSXQ: "Zsxq",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",
     SourceType.WEB: "Web",
@@ -351,6 +352,15 @@ def _generate_filename(item: UnifiedContent) -> str:
             raw = f"{author_display}：{raw_title}"
         else:
             raw = raw_title
+    elif item.source_type == SourceType.ZSXQ:
+        author_display = (item.source_name or "").strip()
+        published = (extra.get("created_at") or "")[:10]
+        if author_display and published:
+            raw = f"{author_display}_{published}：{raw_title}"
+        elif author_display:
+            raw = f"{author_display}：{raw_title}"
+        else:
+            raw = raw_title
     else:
         raw = raw_title
 
@@ -412,6 +422,8 @@ def _format_markdown(item: UnifiedContent) -> str:
     elif item.source_type == SourceType.MEDIUM and extra.get("published_at"):
         published = _format_iso_datetime(extra["published_at"], with_time=False)
     elif item.source_type in (SourceType.REDDIT, SourceType.WEIBO, SourceType.DOUYIN) and extra.get("created_at"):
+        published = _format_iso_datetime(extra["created_at"], with_time=False)
+    elif item.source_type == SourceType.ZSXQ and extra.get("created_at"):
         published = _format_iso_datetime(extra["created_at"], with_time=False)
     fetched_date = item.fetched_at[:10] if item.fetched_at else ""
 
@@ -681,6 +693,30 @@ def _format_markdown(item: UnifiedContent) -> str:
             fm_lines.append(f'music_author: "{extra["music_author"]}"')
         if extra.get("cover_image"):
             fm_lines.append(f'cover_image: "{extra["cover_image"]}"')
+
+    # Zsxq extras
+    is_zsxq = item.source_type == SourceType.ZSXQ
+    if is_zsxq:
+        if extra.get("zsxq_type"):
+            fm_lines.append(f'zsxq_type: "{extra["zsxq_type"]}"')
+        if extra.get("article_id"):
+            fm_lines.append(f'article_id: "{extra["article_id"]}"')
+        if extra.get("topic_id"):
+            fm_lines.append(f'topic_id: "{extra["topic_id"]}"')
+        if extra.get("group_id"):
+            fm_lines.append(f'group_id: "{extra["group_id"]}"')
+        if extra.get("group_name"):
+            fm_lines.append(f'group_name: "{extra["group_name"]}"')
+        fm_lines.append(f"likes: {extra.get('likes', 0)}")
+        fm_lines.append(f"comments: {extra.get('comments', 0)}")
+        if extra.get("reads"):
+            fm_lines.append(f"reads: {extra['reads']}")
+        if extra.get("rewards"):
+            fm_lines.append(f"rewards: {extra['rewards']}")
+        if extra.get("comment_mode"):
+            fm_lines.append(f'comment_mode: "{extra["comment_mode"]}"')
+        if extra.get("rendered_comment_count") is not None:
+            fm_lines.append(f"rendered_comment_count: {extra.get('rendered_comment_count', 0)}")
 
     # Tags (from tweet hashtags or other sources)
     if item.tags:

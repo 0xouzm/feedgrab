@@ -1,6 +1,6 @@
 ---
 name: feedgrab
-description: Universal content grabber — fetch any URL and return structured Markdown. Supports X/Twitter, WeChat, Xiaohongshu, YouTube, GitHub, LinuxDo/IDCFlare/Discourse, Feishu/Lark, KDocs, Youdao Note, Zhihu, Bilibili (with subtitle transcription), Xiaoyuzhou podcasts, Ximalaya podcasts, Telegram, RSS, 300+ paywall news sites, and any web page. Use when user provides a URL and wants its content extracted.
+description: Universal content grabber — fetch any URL and return structured Markdown. Supports X/Twitter, WeChat, Xiaohongshu, YouTube, GitHub, LinuxDo/IDCFlare/Discourse, Feishu/Lark, KDocs, Youdao Note, Zhihu, Bilibili (with subtitle transcription), Xiaoyuzhou podcasts, Ximalaya podcasts, Telegram, HackerNews, Medium, Reddit, Weibo, Douyin, Zsxq (Knowledge Planet), RSS, 300+ paywall news sites, and any web page. Use when user provides a URL and wants its content extracted.
 ---
 
 # feedgrab — Universal Content Grabber
@@ -51,6 +51,12 @@ Then stop — do not proceed without feedgrab.
 | Xiaoyuzhou (小宇宙) | `xiaoyuzhoufm.com/episode/*` | SSR `__NEXT_DATA__` + Groq Whisper transcription |
 | Ximalaya (喜马拉雅) | `ximalaya.com/sound/*`, `m.ximalaya.com/sound/*` | Web Revision API + canPlay degradation + Groq Whisper |
 | Telegram | `t.me/*` | Telethon |
+| HackerNews | `news.ycombinator.com/item?id=*` | Firebase API v0 (item.json + first-layer comments + `hn top/new/best/ask/show/jobs` list batch) |
+| Medium | `medium.com/*`, `*.medium.com/*` | Jina Reader → JSON-LD articleBody → Stealth Browser; user/publication batch via RSS |
+| Reddit | `reddit.com/r/*/comments/*`, `redd.it/*` | old.reddit.com .json + self-UA → CDP → Stealth Playwright + saved session → Jina (with Top 50 comments + reddit-sub batch) |
+| Weibo | `weibo.com/*`, `weibo.cn/*`, `m.weibo.cn/status/*` | m.weibo.cn /statuses/show + container/getIndex + SSR $render_data fallback (SUB cookie optional) |
+| Douyin (抖音) | `douyin.com/video/*`, `v.douyin.com/*` (short link) | CDP → Stealth Playwright + saved session → SSR RENDER_DATA → Jina (browser-side signing, no algorithm break) |
+| Zsxq (知识星球) | `articles.zsxq.com/id_*.html`, `wx.zsxq.com/group/*/topic/*`, `t.zsxq.com/*` (short) | HTTP cookie (articles SSR HTML / api.zsxq.com topic JSON) → CDP → Stealth Playwright → Jina (auth-walled, login required) |
 | RSS | RSS/Atom feed URLs | feedparser |
 | Paywall news (300+) | NYT/WSJ/FT/Economist/Bloomberg... | JSON-LD → Googlebot/Bingbot UA → AMP → EU IP → archive.today → Google Cache → Jina |
 | Any web page | Any other URL | JSON-LD pre-scan → Jina Reader fallback |

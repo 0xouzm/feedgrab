@@ -2,6 +2,78 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-05-08 · v0.21.0 · 新增「知识星球」（Zsxq）平台支持
+
+### 背景
+
+用户在知识星球（zsxq.com）累积了大量长文章和短帖讨论，目前 feedgrab 没有专门支持，会落 generic/Jina 兜底。但 zsxq 完全不开放给未登录用户（401/302），Jina 必失败 → 必须设计专属 fetcher 复用浏览器登录态。本次以 `https://articles.zsxq.com/id_sz9kew31q6we.html`（长文章）和 `https://t.zsxq.com/yUX3P`（短链）为示例验证 URL。
+
+### 调研要点
+
+- **API base**：`https://api.zsxq.com/v2/`（不是 v1.10）
+- **文章页**：`articles.zsxq.com/id_<hashid>.html` 是 SSR HTML，正文在 `.ql-editor` 内（参考 [yann0917/knowledge](https://github.com/yann0917/knowledge) `service.go` `GetArticle`）
+- **单 topic API**：`GET /v2/topics/{topic_id}/info`
+- **鉴权**：Cookie 模式（核心 `zsxq_access_token`，`.zsxq.com` 域）+ 固定 UA + `X-Timestamp` + `X-Version: 2.37.0`
+- **未登录响应**：401 / 302 → wx.zsxq.com/dweb2/login（实测验证）
+- **短链**：`t.zsxq.com/<code>` 302 跳转移动 H5 URL（`?topic_id=<digits>&inviter_id=...`）
+- **topic 类型**：talk / question + answer / article / **solution**（v0.21.0 全部覆盖；`solution` 是 zsxq 较新的"问答+解决方案"形态，实测 API 返回数据中 `topic.title` 为提问，`topic.solution.text` 为解答）
+
+### 方案决策
+
+- **范式**：完全对齐 LinuxDo 的四级 Tier 链路（HTTP cookie → CDP 复用 → Stealth Browser → Jina）
+- **Tier 0 双形态**：
+  - article：HTTP GET `articles.zsxq.com/id_<hashid>.html` → BeautifulSoup `.ql-editor` → markdownify
+  - topic：HTTP GET `api.zsxq.com/v2/topics/<tid>/info` → JSON → 五形态分发渲染
+- **Tier 1**：CDP `connect_over_cdp(ws://9222/devtools/browser)` → 找 `.zsxq.com` cookie 的 context → `page.goto` 取 HTML / `page.evaluate(fetch(api))` 取 JSON
+- **Tier 2**：Stealth Playwright launch + `sessions/zsxq.json`，complete the same flow
+- **Tier 3 Jina**：保留姿态，但 zsxq 强登录态门控基本无效；明确 401/404/business-failed 时直接终止不下沉
+- **短链 302 解析前置**：在 `parse_zsxq_url()` 之前调 `_resolve_zsxq_short_url()`，参照 Douyin v.douyin.com 做法
+- **评论三态**：`ZSXQ_COMMENT_MODE=none|all|author`（默认 none），对齐 LinuxDo `LINUXDO_REPLY_MODE`
+- **媒体下载**：`ZSXQ_DOWNLOAD_MEDIA` 开关，默认 false（保守起步，留 v0.21.x 完善 referer 防盗链处理）
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/fetchers/zsxq.py` | 新增 | ~830 行核心 fetcher（短链 302 / URL 解析 / `.ql-editor` 解析 / 五形态 topic 渲染 / 三态评论 / 四级 Tier） |
+| `feedgrab/reader.py` | 修改 | `_detect_platform()` 加 `zsxq.com` 域名识别 + `_fetch()` 加 dispatch + `_dedup_plat_map[ZSXQ]="Zsxq"` |
+| `feedgrab/schema.py` | 修改 | `SourceType.ZSXQ` 枚举 + `from_zsxq()` 工厂 |
+| `feedgrab/utils/storage.py` | 修改 | `PLATFORM_FOLDER_MAP[ZSXQ]="Zsxq"` + 文件名规则 + zsxq extras front matter 字段 + published 解析 |
+| `feedgrab/login.py` | 修改 | `PLATFORM_URLS["zsxq"]` + `_CDP_COOKIE_DOMAINS["zsxq"]` + `_CDP_COOKIE_URLS["zsxq"]` 三 dict 各加一行 |
+| `feedgrab/config.py` | 修改 | 新增 7 个配置函数：`zsxq_enabled` / `zsxq_cdp_enabled` / `zsxq_page_load_timeout` / `zsxq_comment_mode` / `zsxq_max_comments` / `zsxq_download_media` / `zsxq_api_version` |
+| `.env.example` | 修改 | 追加 zsxq 配置段 |
+| `tests/test_zsxq.py` | 新增 | 21 个回归测试（URL 解析 / `.ql-editor` HTML→MD / 五形态 topic JSON / 终止判定 / 三态评论筛选 / schema 工厂 / front matter） |
+| `pyproject.toml` | 修改 | 0.20.1 → 0.21.0 |
+| `开发及迭代方案调研报告/20260508-v0.21.0-知识星球文章抓取需求规格.md` | 新增 | 完整需求规格（450+ 行） |
+| `开发及迭代方案调研报告/20260508-v0.21.0-知识星球-实施计划.md` | 新增 | plan 文件（230+ 行） |
+
+### 关键解析细节
+
+- **作者**：优先 `<meta name="author">`，回退到 `.author-info .nick-name` span（zsxq 文章页 SSR 结构）
+- **group_name**：优先 `<meta property="og:site_name">`，回退到 `.group-name` span
+- **group_id**：从 `.group-info a[href]` 中正则匹配 `/group/(\d+)`
+- **cover_image**：优先 `<meta property="og:image">`，回退到 `.ql-editor` 内第一个 `<img src>`
+- **Quill 代码块**：`<pre class="ql-syntax" spec-language="X">` → 4 反引号围栏（与 LinuxDo / Feishu 对齐）
+- **空标题清理**：移除 Quill 偶尔产生的空 `# ` 标题行（regex `^#{1,6}\s*$`）
+- **topic title 截断**：超过 60 字符截断 + `…`（避免 solution 形态把整篇提问内容都拼进 title）
+- **短链 query 解析**：`?topic_id=<digits>` 形态映射为 topic 类型（H5 / 邀请短链跳转目标）
+
+### 验证结果
+
+- ✅ 实测 `feedgrab https://articles.zsxq.com/id_sz9kew31q6we.html` 一次成功落盘 .md（Tier 0 直接打通）
+  - 标题 / 作者「不养猫的薛定谔」/ group_id / group_name / cover_image 全部解析正确
+- ✅ 实测短链 `feedgrab https://t.zsxq.com/yUX3P` → 自动 302 解析 → 正确路由到 topic API
+- ✅ 实测长链 `feedgrab https://wx.zsxq.com/group/.../topic/...` → Tier 2 浏览器内 fetch JSON → 正确渲染 solution 形态（提问 + 解答）
+- ✅ 边界用例：不存在的 article hashid → 走完三级 Tier 后明确报错"知识星球文章不存在或已被删除"，**不写垃圾 .md**
+- ✅ `pytest tests/test_zsxq.py -v` 21 个用例全部通过
+- ✅ `pytest tests/` 全套 135 个测试通过（无回归）
+
+### 状态
+
+已完成 ✅
+
+---
+
 ## 2026-05-06 · v0.20.1 · 修复长 thread 被误判为 Article 导致 quoted tweet 丢失
 
 ### 背景

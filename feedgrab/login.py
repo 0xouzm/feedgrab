@@ -35,6 +35,7 @@ PLATFORM_URLS = {
     "zhihu": "https://www.zhihu.com",
     "linuxdo": "https://linux.do/",
     "idcflare": "https://idcflare.com/",
+    "zsxq": "https://wx.zsxq.com/",
 }
 
 
@@ -201,6 +202,7 @@ _CDP_COOKIE_DOMAINS = {
     "zhihu": [".zhihu.com"],
     "linuxdo": [".linux.do"],
     "idcflare": [".idcflare.com"],
+    "zsxq": [".zsxq.com"],
 }
 
 # URLs to pass to Network.getCookies (legacy WebSocket mode)
@@ -213,6 +215,7 @@ _CDP_COOKIE_URLS = {
     "zhihu": ["https://www.zhihu.com"],
     "linuxdo": ["https://linux.do"],
     "idcflare": ["https://idcflare.com"],
+    "zsxq": ["https://wx.zsxq.com", "https://articles.zsxq.com", "https://api.zsxq.com"],
 }
 
 

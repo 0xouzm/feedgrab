@@ -16,7 +16,7 @@ from feedgrab.schema import (
     from_bilibili, from_twitter, from_wechat,
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
     from_github, from_feishu, from_kdocs, from_youdao, from_linuxdo, from_idcflare, from_web,
-    from_xiaoyuzhou, from_ximalaya, from_hackernews, from_medium, from_reddit, from_weibo, from_douyin,
+    from_xiaoyuzhou, from_ximalaya, from_hackernews, from_medium, from_reddit, from_weibo, from_douyin, from_zsxq,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.utils.url_validator import validate_url
@@ -113,6 +113,9 @@ class UniversalReader:
         if ("douyin.com" in domain or domain.endswith(".douyin.com")
                 or "iesdouyin.com" in domain or domain.endswith(".iesdouyin.com")):
             return "douyin"
+        # Zsxq (知识星球): articles.zsxq.com / wx.zsxq.com / api.zsxq.com / t.zsxq.com 短链
+        if ("zsxq.com" in domain or domain.endswith(".zsxq.com")):
+            return "zsxq"
         # Feishu / Lark
         from feedgrab.fetchers.feishu import is_feishu_url
         if is_feishu_url(url):
@@ -306,6 +309,7 @@ class UniversalReader:
                     SourceType.YOUDAO: "NoteYouDao",
                     SourceType.LINUXDO: "LinuxDo",
                     SourceType.IDCFLARE: "IDCFlare",
+                    SourceType.ZSXQ: "Zsxq",
                 }
                 plat = _dedup_plat_map.get(content.source_type, "X")
                 index = load_index(platform=plat)
@@ -424,6 +428,14 @@ class UniversalReader:
             from feedgrab.fetchers.douyin import fetch_douyin
             data = await fetch_douyin(url)
             return from_douyin(data)
+
+        if platform == "zsxq":
+            from feedgrab.config import zsxq_enabled
+            if not zsxq_enabled():
+                raise RuntimeError("Zsxq 抓取已禁用，请设置 ZSXQ_ENABLED=true")
+            from feedgrab.fetchers.zsxq import fetch_zsxq
+            data = await fetch_zsxq(url)
+            return from_zsxq(data)
 
         if platform == "xiaoyuzhou":
             from feedgrab.config import xiaoyuzhou_enabled
