@@ -650,6 +650,13 @@ async def search_twitter_keyword(
                             content.extra.get("videos", []),
                             content.id,
                             platform="twitter",
+                            context={
+                                "tweet_id": content.id,
+                                "url": content.url,
+                                "screen_name": (content.source_name or "").lstrip("@"),
+                                "user_id": content.extra.get("user_id", ""),
+                                "created_at": content.extra.get("created_at", ""),
+                            },
                         )
 
                 add_item(item_id, tweet_url, dedup_index)

@@ -1599,6 +1599,11 @@ def cmd_twitter_search(args: list):
         print("   Set X_SEARCH_ENABLED=true in .env to enable.")
         return
 
+    # v0.23.0: --people flag \u2192 SearchTimeline with product=People (returns users)
+    if "--people" in args:
+        _run_search_people(args)
+        return
+
     keywords = _split_keywords(args[0])
 
     # Parse CLI options
@@ -1698,6 +1703,92 @@ def cmd_twitter_search(args: list):
         print(f"\n\U0001f4ca Merged summary: {merged_path}")
         print(f"   CSV: {merged_path.with_suffix('.csv')}")
         print(f"   Total: {len(all_tweets_merged)} tweets from {len(keywords)} keywords")
+
+
+def cmd_twitter_tweet_user_list(args: list, mode: str):
+    """v0.23.0: batch-fetch users who retweeted / liked a tweet.
+
+    mode: 'retweeters' or 'favoriters'
+    args: [<tweet_url_or_id>]
+    """
+    import asyncio
+    from feedgrab.config import x_tweet_user_list_enabled
+    from feedgrab.fetchers.twitter_retweeters import (
+        fetch_tweet_user_list, extract_tweet_id,
+    )
+    from feedgrab.fetchers.twitter_cookies import (
+        load_twitter_cookies, has_required_cookies,
+    )
+
+    if not x_tweet_user_list_enabled():
+        print("❌ Tweet user-list fetch is disabled.")
+        print("   Set X_TWEET_USER_LIST_ENABLED=true in .env to enable.")
+        return
+
+    if not args:
+        print(f"❌ Usage: feedgrab x-{mode} <tweet_url_or_id>")
+        return
+
+    tweet_id = extract_tweet_id(args[0])
+    if not tweet_id:
+        print(f"❌ 无法从输入解析推文 ID: {args[0]}")
+        print('   Example: feedgrab x-retweeters https://x.com/<u>/status/123456')
+        print('            feedgrab x-retweeters 1234567890')
+        return
+
+    cookies = load_twitter_cookies()
+    if not has_required_cookies(cookies):
+        print("❌ 需要 Twitter Cookie，请先运行: feedgrab login twitter")
+        return
+
+    try:
+        result = asyncio.run(
+            fetch_tweet_user_list(f"{mode}:{tweet_id}", cookies)
+        )
+    except Exception as e:
+        print(f"❌ 抓取失败: {e}")
+        return
+
+    label = "转推者" if mode == "retweeters" else "点赞者"
+    print(f"✅ 推文 {tweet_id} 的{label}抓取完成")
+    print(f"   总数: {result['total']}")
+    print(f"   汇总: {result.get('summary_path', '')}")
+    print(f"   CSV:  {result.get('csv_path', '')}")
+
+
+def _run_search_people(args: list):
+    """v0.23.0: SearchTimeline product=People → user-list output."""
+    import asyncio
+
+    if not args:
+        print("❌ Usage: feedgrab x-so <keyword> --people")
+        return
+
+    keyword = args[0]
+    if keyword == "--people":
+        print("❌ Missing keyword. Usage: feedgrab x-so <keyword> --people")
+        return
+
+    from feedgrab.fetchers.twitter_search_people import search_people
+    from feedgrab.fetchers.twitter_cookies import (
+        load_twitter_cookies, has_required_cookies,
+    )
+
+    cookies = load_twitter_cookies()
+    if not has_required_cookies(cookies):
+        print("❌ 需要 Twitter Cookie，请先运行: feedgrab login twitter")
+        return
+
+    try:
+        result = search_people(keyword, cookies)
+    except Exception as e:
+        print(f"❌ 人物搜索失败: {e}")
+        return
+
+    print(f"✅ 人物搜索完成: '{keyword}'")
+    print(f"   总数: {result['total']}")
+    print(f"   汇总: {result.get('summary_path', '')}")
+    print(f"   CSV:  {result.get('csv_path', '')}")
 
 
 def cmd_zhihu_search(args: list):
@@ -2163,6 +2254,20 @@ Examples:
             print("   Example: feedgrab weibo-user 1234567890 --limit 20")
             sys.exit(1)
         cmd_weibo_user(sys.argv[2:])
+    elif cmd == "x-retweeters":
+        if len(sys.argv) < 3:
+            print("❌ Usage: feedgrab x-retweeters <tweet_url_or_id>")
+            print("   Example: feedgrab x-retweeters https://x.com/<u>/status/1234567890")
+            print("            feedgrab x-retweeters 1234567890")
+            sys.exit(1)
+        cmd_twitter_tweet_user_list(sys.argv[2:], mode="retweeters")
+    elif cmd == "x-favoriters":
+        if len(sys.argv) < 3:
+            print("❌ Usage: feedgrab x-favoriters <tweet_url_or_id>")
+            print("   Example: feedgrab x-favoriters https://x.com/<u>/status/1234567890")
+            print("            feedgrab x-favoriters 1234567890")
+            sys.exit(1)
+        cmd_twitter_tweet_user_list(sys.argv[2:], mode="favoriters")
     elif cmd.startswith("http") or cmd.startswith("www.") or "." in cmd:
         urls = [arg for arg in sys.argv[1:] if arg.startswith(("http", "www.")) or "." in arg]
         cmd_fetch(urls)

@@ -459,6 +459,12 @@ def _format_markdown(item: UnifiedContent) -> str:
         # P0-3: pinned tweet marker
         if extra.get("is_pinned"):
             fm_lines.append(f"is_pinned: true")
+        # v0.23.0: ModeratedTimeline marker
+        if extra.get("has_moderated_replies"):
+            fm_lines.append(
+                f"moderated_replies_count: "
+                f"{len(extra.get('moderated_replies', []) or [])}"
+            )
         for metric in ("likes", "retweets", "replies", "bookmarks", "views"):
             fm_lines.append(f"{metric}: {extra.get(metric, 0)}")
         # New: quote_count (被引用次数)
@@ -770,6 +776,35 @@ def _format_markdown(item: UnifiedContent) -> str:
             fm_lines.append(f"## 评论区 ({len(comments)}条)")
             fm_lines.append("")
             for c in comments:
+                c_author = c.get("author", "")
+                date_str = _format_twitter_datetime(c.get("created_at", ""))
+                likes = c.get("likes", 0)
+                text = c.get("text", "").strip()
+                if text:
+                    meta = [f"**@{c_author}**"]
+                    if date_str:
+                        meta.append(date_str)
+                    if likes:
+                        meta.append(f"❤️ {likes}")
+                    fm_lines.append(" · ".join(meta))
+                    fm_lines.append(text)
+                    fm_lines.append("")
+
+        # --- v0.23.0: 被作者隐藏的回复 (ModeratedTimeline opt-in) ---
+        moderated_replies = extra.get("moderated_replies", [])
+        if moderated_replies:
+            fm_lines.append("")
+            fm_lines.append("---")
+            fm_lines.append("")
+            fm_lines.append(
+                f"## ⚠️ 被作者隐藏的回复 ({len(moderated_replies)}条)"
+            )
+            fm_lines.append("")
+            fm_lines.append(
+                "> 以下回复被推文作者隐藏，仅作者本人 cookie 可见。"
+            )
+            fm_lines.append("")
+            for c in moderated_replies:
                 c_author = c.get("author", "")
                 date_str = _format_twitter_datetime(c.get("created_at", ""))
                 likes = c.get("likes", 0)

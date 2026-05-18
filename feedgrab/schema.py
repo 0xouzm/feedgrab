@@ -329,6 +329,9 @@ def from_twitter(data: dict) -> UnifiedContent:
             "listed_count": data.get("listed_count", 0),
             # P0-3: pinned tweet marker (TimelinePinEntry instruction)
             "is_pinned": data.get("is_pinned", False),
+            # v0.23.0: ModeratedTimeline supplement
+            "moderated_replies": data.get("moderated_replies", []),
+            "has_moderated_replies": data.get("has_moderated_replies", False),
         },
     )
 

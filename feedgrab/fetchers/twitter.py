@@ -221,6 +221,9 @@ async def _fetch_via_graphql(url: str, tweet_id: str, cookies: dict = None) -> D
             "followers_count": root.get("followers_count", 0),
             "statuses_count": root.get("statuses_count", 0),
             "listed_count": root.get("listed_count", 0),
+            # v0.23.0: ModeratedTimeline (opt-in via X_FETCH_MODERATED_REPLIES)
+            "moderated_replies": thread.get("moderated_replies", []),
+            "has_moderated_replies": thread.get("has_moderated_replies", False),
         }
 
     # Fallback: single tweet via TweetDetail

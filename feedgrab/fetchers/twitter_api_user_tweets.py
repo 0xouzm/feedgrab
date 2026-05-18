@@ -595,6 +595,13 @@ async def _process_tweets(
                         content.extra.get("videos", []),
                         content.id,
                         platform="twitter",
+                        context={
+                            "tweet_id": content.id,
+                            "url": content.url,
+                            "screen_name": (content.source_name or "").lstrip("@"),
+                            "user_id": content.extra.get("user_id", ""),
+                            "created_at": content.extra.get("created_at", ""),
+                        },
                     )
 
             # Update index

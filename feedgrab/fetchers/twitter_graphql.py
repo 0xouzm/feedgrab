@@ -60,6 +60,11 @@ FALLBACK_LIST_SUBSCRIBERS_QUERY_ID = "_av5eJHyhOzx9nTQkQg0iQ"
 # (queryId from fa0311/twitter-openapi; twe modules/tweet-detail/api.ts:48)
 FALLBACK_MODERATED_TIMELINE_QUERY_ID = "T2DTQt8XU3-d2EHWRsxOcw"
 
+# v0.23.0: Retweeters / Favoriters — users who retweeted / liked a tweet
+# (queryId from fa0311/twitter-openapi placeholder.json)
+FALLBACK_RETWEETERS_QUERY_ID = "Mbs-2NiTvy32oHDerWtVhg"
+FALLBACK_FAVORITERS_QUERY_ID = "G27_CXbgIP3G9Fod_2RMUA"
+
 # ---------------------------------------------------------------------------
 # Feature switches — per-operation, from baoyu constants.ts
 # ---------------------------------------------------------------------------
@@ -1041,6 +1046,62 @@ def parse_list_subscribers_users(response: Dict[str, Any]) -> tuple:
     )
 
 
+# --- Tweet-level user-list ops: Retweeters / Favoriters --------------------
+# v0.23.0: who retweeted / liked a given tweet.
+
+def _fetch_tweet_user_list_op(
+    tweet_id: str, cookies: dict, cursor: Optional[str], count: int,
+    operation_name: str,
+) -> Optional[Dict[str, Any]]:
+    """Shared helper for Retweeters / Favoriters."""
+    query_id = _get_query_id(operation_name)
+    headers = build_graphql_headers(cookies)
+    variables = {
+        "tweetId": tweet_id,
+        "count": count,
+        "includePromotedContent": False,
+    }
+    if cursor:
+        variables["cursor"] = cursor
+        _rate_limit_wait()
+    return _execute_graphql(
+        query_id=query_id,
+        operation_name=operation_name,
+        variables=variables,
+        features=dict(USER_LIST_FEATURES),
+        field_toggles={},
+        headers=headers,
+    )
+
+
+def fetch_retweeters_page(
+    tweet_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of users who retweeted a tweet."""
+    return _fetch_tweet_user_list_op(tweet_id, cookies, cursor, count, "Retweeters")
+
+
+def fetch_favoriters_page(
+    tweet_id: str, cookies: dict, cursor: Optional[str] = None, count: int = 20
+) -> Optional[Dict[str, Any]]:
+    """Fetch one page of users who liked a tweet."""
+    return _fetch_tweet_user_list_op(tweet_id, cookies, cursor, count, "Favoriters")
+
+
+def parse_retweeters_users(response: Dict[str, Any]) -> tuple:
+    """data.retweeters_timeline.timeline.instructions"""
+    return _parse_user_list_response(
+        response, ["retweeters_timeline", "timeline"]
+    )
+
+
+def parse_favoriters_users(response: Dict[str, Any]) -> tuple:
+    """data.favoriters_timeline.timeline.instructions"""
+    return _parse_user_list_response(
+        response, ["favoriters_timeline", "timeline"]
+    )
+
+
 # --- Tweet-timeline ops returning Tweet entries (Likes, UserTweetsAndReplies)
 
 def fetch_user_likes_page(
@@ -1535,6 +1596,64 @@ def parse_search_entries(response: Dict[str, Any]) -> tuple:
 
     return entries, cursors
 
+
+def parse_search_people_entries(response: Dict[str, Any]) -> tuple:
+    """v0.23.0: parse SearchTimeline response for `product=People`.
+
+    Response shape is identical to parse_search_entries, but entries are
+    TimelineUser items (consumable by extract_user_data).
+
+    Returns:
+        (entries, cursors) — entries can be passed to extract_user_data().
+    """
+    if not response or "data" not in response:
+        return [], {}
+
+    instructions = (
+        response["data"]
+        .get("search_by_raw_query", {})
+        .get("search_timeline", {})
+        .get("timeline", {})
+        .get("instructions", [])
+    )
+
+    entries: List[dict] = []
+    cursors: Dict[str, str] = {}
+
+    for instruction in instructions:
+        inst_type = instruction.get("type", "")
+        if inst_type == "TimelineAddEntries":
+            for entry in instruction.get("entries", []):
+                entry_id = entry.get("entryId", "")
+                content = entry.get("content", {})
+                if entry_id.startswith("cursor-"):
+                    cursor_type = content.get("cursorType", "")
+                    value = content.get("value", "")
+                    if cursor_type == "Top" and value:
+                        cursors["top"] = value
+                    elif cursor_type == "Bottom" and value:
+                        cursors["bottom"] = value
+                    continue
+                # Only keep TimelineUser items (drops promoted, modules, etc.)
+                if content.get("entryType") == "TimelineTimelineItem":
+                    item_type = content.get("itemContent", {}).get("itemType", "")
+                    if item_type == "TimelineUser":
+                        entries.append(entry)
+        elif inst_type == "TimelineReplaceEntry":
+            entry = instruction.get("entry", {})
+            entry_id = entry.get("entryId", "")
+            content = entry.get("content", {})
+            if entry_id.startswith("cursor-"):
+                cursor_type = content.get("cursorType", "")
+                value = content.get("value", "")
+                if cursor_type == "Top" and value:
+                    cursors["top"] = value
+                elif cursor_type == "Bottom" and value:
+                    cursors["bottom"] = value
+
+    _sort_entries_by_sortindex(entries)
+    return entries, cursors
+
 def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
     """
     Dynamically resolve queryIds from multiple sources.
@@ -1653,6 +1772,7 @@ def resolve_query_ids(user_agent: str = None) -> Dict[str, str]:
                     "UserTweetsAndReplies", "ListMembers", "ListSubscribers",
                     # v0.23.0
                     "ModeratedTimeline",
+                    "Retweeters", "Favoriters",
                 } - set(result)
                 if main_ops_missing and main_match:
                     chunk_hash = main_match.group(1)
@@ -2517,6 +2637,8 @@ def _fallback_query_ids() -> Dict[str, str]:
         "ListSubscribers": FALLBACK_LIST_SUBSCRIBERS_QUERY_ID,
         # v0.23.0
         "ModeratedTimeline": FALLBACK_MODERATED_TIMELINE_QUERY_ID,
+        "Retweeters": FALLBACK_RETWEETERS_QUERY_ID,
+        "Favoriters": FALLBACK_FAVORITERS_QUERY_ID,
     }
 
 

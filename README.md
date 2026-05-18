@@ -72,6 +72,24 @@ feedgrab https://x.com/i/lists/2002743803959300263/subscribers   # 列表订阅�
 feedgrab https://x.com/ai_xiaomu/with_replies                    # 用户回复 tab（含自回复）
 feedgrab https://x.com/ai_xiaomu/likes                           # 用户喜欢（Twitter 默认私密，仅公开账号可见）
 
+# v0.23.0: 抓取推文的转推者 / 点赞者列表（输出 MD + CSV，按粉丝倒序）
+feedgrab x-retweeters https://x.com/ai_xiaomu/status/2051099012288356592
+feedgrab x-favoriters 2051099012288356592                        # 也支持直接传 tweet_id
+feedgrab https://x.com/ai_xiaomu/status/2051099012288356592/retweets  # 等价 URL 路由
+feedgrab https://x.com/ai_xiaomu/status/2051099012288356592/likes     # 点赞者（作者可能隐藏）
+
+# v0.23.0: Twitter 人物搜索（SearchTimeline product=People）
+feedgrab x-so "AI Agent" --people                                # 关键词搜索人物，按粉丝倒序
+
+# v0.23.0: 抓取被作者隐藏的回复（ModeratedTimeline，仅作者本人 Cookie 可见）
+X_FETCH_MODERATED_REPLIES=true feedgrab https://x.com/me/status/...  # 自动追加 thread Phase 8
+
+# v0.23.0: 自定义媒体文件名（X-only，默认沿用 CDN 原 stem）
+X_DOWNLOAD_MEDIA=true X_MEDIA_FILENAME_PATTERN="{date}_{screen_name}_{tweet_id}_{num}.{ext}" \
+  feedgrab https://x.com/ai_xiaomu/status/...
+# 输出文件：20260518_ai_xiaomu_2056173124073525356_1.jpg
+# 支持 token：{date} {datetime} {screen_name} {user_id} {tweet_id} {num} {type} {ext} {name}
+
 # 批量抓取小红书作者笔记（需要 XHS_USER_NOTES_ENABLED=true + feedgrab login xhs）
 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
 XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...  # 指定日期之后

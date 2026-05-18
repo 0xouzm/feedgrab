@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.22.0
+- **当前版本**：v0.23.0
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -184,6 +184,7 @@ feedgrab/
 
 | 版本 | 功能 |
 |------|------|
+| v0.23.0 | twitter-web-exporter 融合 Phase 2 五项功能：P2-1 头像原图替换（`_normal/_bigger/_mini/_400x400` → 原图）+ P2-3 Retweeters/Favoriters（`/status/<id>/retweets` `/status/<id>/likes` URL 路由 + `x-retweeters` `x-favoriters` CLI）+ P2-4 SearchTimeline `product=People` 人物搜索（`x-so --people`）+ P1-3 ModeratedTimeline thread Phase 8 接入（`X_FETCH_MODERATED_REPLIES` opt-in，404 优雅降级）+ P2-2 X 媒体文件名 pattern 系统（`X_MEDIA_FILENAME_PATTERN` opt-in 9 token + path traversal 安全化）；测试 153 → 193；P1-1 通用 instruction helper 重构推迟 v0.23.1 |
 | v0.22.0 | 融合 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter)：补 5 个高价值 GraphQL operation（Followers / Following / BlueVerifiedFollowers / ListMembers / ListSubscribers / Likes / UserTweetsAndReplies，queryId 取自 fa0311/twitter-openapi）+ 3 个解析鲁棒性增强（TweetTombstone/TweetUnavailable 显式日志 + TimelinePinEntry 置顶提取 + 视频 variant 不过滤 content_type）；新 URL pattern：`/followers` `/following` `/verified_followers` `/likes` `/with_replies` `/i/lists/<id>/members(subscribers)` |
 | v0.21.0 | 新增「知识星球」（Zsxq）平台支持（articles.zsxq.com 长文章 + wx.zsxq.com 短帖 + t.zsxq.com 短链 302 解析）；4 级 Tier 链路（HTTP cookie / CDP / Stealth Browser / Jina）+ 五形态 topic 渲染（含 solution）+ 三态评论筛选 |
 | v0.20.1 | 修复 Twitter 长 thread 被误判为 Article 导致 quoted tweet 丢失（`schema.from_twitter` 改用 `_has_article_body` 看 article_data 实际内容，统一 thread/article 渲染路径） |

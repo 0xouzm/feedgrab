@@ -18,12 +18,17 @@ import os
 from loguru import logger
 from typing import Dict, Any, Optional, List
 
-from feedgrab.config import x_fetch_author_replies, x_fetch_all_comments, x_max_comments
+from feedgrab.config import (
+    x_fetch_author_replies, x_fetch_all_comments, x_max_comments,
+    x_fetch_moderated_replies, x_moderated_replies_max_pages,
+)
 from feedgrab.fetchers.twitter_graphql import (
     fetch_tweet_detail,
     parse_tweet_entries,
     parse_cursors,
     extract_tweet_data,
+    fetch_moderated_timeline_page,
+    parse_moderated_timeline_entries,
     DEFAULT_MAX_PAGES,
 )
 
@@ -159,16 +164,50 @@ def fetch_tweet_thread(
 
     logger.info(f"[Thread] Found {len(thread_tweets)} tweets by @{author}")
 
+    # Phase 8 (v0.23.0): opt-in ModeratedTimeline supplement
+    # Only the tweet author themselves can read this endpoint; for everyone
+    # else the response is empty (graceful no-op).
+    moderated_tweets: List[Dict[str, Any]] = []
+    if x_fetch_moderated_replies():
+        root_id_for_mod = root_tweet.get("id", "") or tweet_id
+        logger.debug(
+            f"[Thread] Phase 8: 尝试 ModeratedTimeline (仅作者本人 Cookie 可见)"
+        )
+        moderated_tweets = _fetch_moderated_replies(root_id_for_mod, cookies)
+        if moderated_tweets:
+            existing_ids = {t.get("id") for t in all_entries}
+            new_mod = [t for t in moderated_tweets if t.get("id") not in existing_ids]
+            for t in new_mod:
+                t["_is_moderated"] = True
+            all_entries = all_entries + new_mod
+            logger.info(
+                f"[Thread] Phase 8: +{len(new_mod)} moderated reply(ies) from "
+                f"ModeratedTimeline"
+            )
+
     result = {
         "tweets": thread_tweets,
         "root_tweet": root_tweet,
         "author": author,
         "author_name": root_tweet.get("author_name", ""),
         "tweet_count": len(thread_tweets),
+        "has_moderated_replies": bool(moderated_tweets),
     }
 
     # --- Classify remaining entries (zero extra API calls) ---
     thread_ids = {t.get("id") for t in thread_tweets}
+
+    # v0.23.0: Surface moderated replies as their own list (regardless of
+    # whether x_fetch_all_comments / x_fetch_author_replies are on)
+    if moderated_tweets:
+        # Tag each moderated tweet
+        moderated_only = [t for t in moderated_tweets if t.get("id") not in thread_ids]
+        moderated_only.sort(key=lambda t: int(t.get("id", "0")))
+        result["moderated_replies"] = moderated_only
+        logger.info(
+            f"[Thread] Collected {len(moderated_only)} moderated reply(ies) "
+            f"surfaced via ModeratedTimeline"
+        )
 
     # C 类：作者回复评论者（不在自回复链中的作者推文）
     # 不限制 in_reply_to_user_id —— 作者回复评论者后又继续自回复也应抓取
@@ -418,3 +457,71 @@ def _filter_same_thread(tweets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return tweets
 
     return [t for t in tweets if _is_same_thread(t, root)]
+
+
+# ---------------------------------------------------------------------------
+# v0.23.0: ModeratedTimeline (author-hidden replies under thread)
+# ---------------------------------------------------------------------------
+
+def _fetch_moderated_replies(
+    root_tweet_id: str, cookies: dict
+) -> List[Dict[str, Any]]:
+    """Pull author-hidden replies via ModeratedTimeline (paginated).
+
+    Returns:
+        Flat tweet dicts (extracted via extract_tweet_data). Empty list if
+        endpoint returns no data — which is the common case for any cookie
+        not belonging to the tweet author themselves.
+    """
+    tweets: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    max_pages = x_moderated_replies_max_pages()
+    endpoint_unavailable = False
+
+    for page in range(max_pages):
+        try:
+            resp = fetch_moderated_timeline_page(root_tweet_id, cookies, cursor=cursor)
+        except Exception as e:
+            # 404/403 通常意味着当前 cookie 不是推文作者，端点拒绝访问。
+            # 这是该 API 的预期行为 — 静默降级。
+            logger.debug(
+                f"[Thread] ModeratedTimeline endpoint refused: {e} — "
+                f"this is normal unless the cookie owner is the tweet author"
+            )
+            endpoint_unavailable = True
+            break
+
+        if not resp:
+            break
+
+        entries, cursors = parse_moderated_timeline_entries(resp)
+        if not entries:
+            if page == 0:
+                logger.debug(
+                    "[Thread] ModeratedTimeline returned 0 entries — "
+                    "tweet has no hidden replies, or current cookie is not the author"
+                )
+            break
+
+        page_tweets = 0
+        for entry in entries:
+            tw = extract_tweet_data(entry)
+            if tw:
+                tweets.append(tw)
+                page_tweets += 1
+
+        logger.debug(
+            f"[Thread] ModeratedTimeline page {page + 1}: +{page_tweets} tweets"
+        )
+
+        cursor = cursors.get("bottom")
+        if not cursor:
+            break
+
+    if endpoint_unavailable and not tweets:
+        logger.info(
+            "[Thread] ModeratedTimeline 端点对当前 Cookie 不可见（404）— "
+            "只有推文作者本人才能查询被隐藏的回复，已优雅跳过"
+        )
+
+    return tweets

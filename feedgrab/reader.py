@@ -50,6 +50,11 @@ class UniversalReader:
             # List tweets timeline: x.com/i/lists/{listId}
             if re.match(r'^/i/lists/\d+', path):
                 return "twitter_list_tweets"
+            # v0.23.0: Retweeters / Favoriters — must come BEFORE single-tweet check
+            if re.match(r'^/[a-zA-Z0-9_]{1,15}/status/\d+/retweets/?$', path):
+                return "twitter_tweet_user_list"
+            if re.match(r'^/[a-zA-Z0-9_]{1,15}/status/\d+/likes/?$', path):
+                return "twitter_tweet_user_list"
             # Single tweet: x.com/{user}/status/{id}
             if "/status/" in path:
                 return "twitter"
@@ -205,6 +210,10 @@ class UniversalReader:
         if platform == "twitter_user_replies":
             return await self._read_user_replies(url)
 
+        # v0.23.0: Tweet-level user lists (retweeters / favoriters)
+        if platform == "twitter_tweet_user_list":
+            return await self._read_tweet_user_list(url)
+
         # XHS user notes batch mode: special flow, returns summary
         if platform == "xhs_user_notes":
             return await self._read_user_notes(url)
@@ -269,12 +278,22 @@ class UniversalReader:
                 from feedgrab.config import x_download_media
                 if x_download_media():
                     from feedgrab.utils.media import download_media
+                    # v0.23.0: media filename pattern context (opt-in via
+                    # X_MEDIA_FILENAME_PATTERN; default behavior unchanged)
+                    screen_name = (content.source_name or "").lstrip("@")
                     download_media(
                         saved_path,
                         content.extra.get("images", []),
                         content.extra.get("videos", []),
                         content.id,
                         platform="twitter",
+                        context={
+                            "tweet_id": content.id,
+                            "url": content.url,
+                            "screen_name": screen_name,
+                            "user_id": content.extra.get("user_id", ""),
+                            "created_at": content.extra.get("created_at", ""),
+                        },
                     )
 
             # XHS: download media to attachments/{item_id}/
@@ -768,6 +787,43 @@ class UniversalReader:
             source_type=SourceType.TWITTER,
             source_name="user_replies",
             title=f"回复抓取 {result['fetched']}/{result['total']}",
+            content=summary,
+            url=url,
+        )
+
+    async def _read_tweet_user_list(self, url: str) -> UnifiedContent:
+        """v0.23.0: batch-fetch users who retweeted / liked a tweet.
+
+        Covers: /status/<id>/retweets and /status/<id>/likes URLs.
+        """
+        from feedgrab.config import x_tweet_user_list_enabled
+        if not x_tweet_user_list_enabled():
+            raise ValueError(
+                "推文用户列表抓取未启用。请在 .env 中设置 X_TWEET_USER_LIST_ENABLED=true"
+            )
+
+        from feedgrab.fetchers.twitter_retweeters import fetch_tweet_user_list
+        from feedgrab.fetchers.twitter_cookies import load_twitter_cookies, has_required_cookies
+
+        cookies = load_twitter_cookies()
+        if not has_required_cookies(cookies):
+            raise RuntimeError(
+                "推文用户列表抓取需要 Twitter Cookie，请先运行: feedgrab login twitter"
+            )
+
+        result = await fetch_tweet_user_list(url, cookies)
+
+        summary = (
+            f"推文 {result['tweet_id']} 的 {result['mode']} 抓取完成\n"
+            f"总数: {result['total']}\n"
+            f"汇总表: {result.get('summary_path', '')}\n"
+            f"CSV: {result.get('csv_path', '')}"
+        )
+
+        return UnifiedContent(
+            source_type=SourceType.TWITTER,
+            source_name=f"tweet_user_list_{result['mode']}",
+            title=f"{result['mode']} tweet={result['tweet_id']} {result['total']} 个用户",
             content=summary,
             url=url,
         )

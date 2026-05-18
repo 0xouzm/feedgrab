@@ -2,6 +2,111 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-05-18 · v0.23.0 · twitter-web-exporter 融合 Phase 2：P1-P2 五项功能落地
+
+### 背景
+
+v0.22.0 在 twe 对标方案中完成 P0 全部（5 个新 GraphQL operation + 3 项解析鲁棒性增强）+ P1-2 sortIndex 稳定排序 + P1-3 基础设施。本版本继续推进 P1-P2 剩余 5 个功能点（P1-3 thread 接入、P2-1 头像原图、P2-2 媒体文件名 pattern、P2-3 Retweeters/Favoriters、P2-4 People-tab 搜索）。完整方案：`开发及迭代方案调研报告/20260518-v0.23.0-P1-P2实施方案.md`。
+
+P1-1（抽出 `_iter_timeline_instructions` 通用 helper，重构 7 处独立 parser）涉及 7 个 parser 的微妙差异（item filter / pin / addToModule / sortIndex / cursor 类型 / fallback path），回归风险较高，与用户确认**拆分到 v0.23.1 单独 ship**。helper 设计草案见 `tasks/twe_research/` 与方案文档。
+
+### 实施清单
+
+#### P2-1 — Twitter profile 头像原图替换
+
+- `utils/media.py:_optimize_url` Twitter 分支：在 `pbs.twimg.com/profile_images/` URL 上去掉尺寸前缀（`_normal` / `_bigger` / `_mini` / `_400x400`），保留可选 query string
+- 单元测试 `tests/test_media_url_optimize.py`（7 case 覆盖 4 种前缀 + query 保留 + 非头像 URL 不影响 + 媒体 URL 不被错位）
+
+#### P2-3 — Retweeters / Favoriters operation
+
+- 新增 `twitter_graphql.py` 常量与函数：
+  - `FALLBACK_RETWEETERS_QUERY_ID = "Mbs-2NiTvy32oHDerWtVhg"` / `FALLBACK_FAVORITERS_QUERY_ID = "G27_CXbgIP3G9Fod_2RMUA"`（fa0311/twitter-openapi placeholder.json）
+  - `fetch_retweeters_page` / `fetch_favoriters_page`（`tweetId` 变量，复用 `USER_LIST_FEATURES`）
+  - `parse_retweeters_users` / `parse_favoriters_users`（路径 `data.retweeters_timeline.timeline.instructions` / `data.favoriters_timeline.timeline.instructions`，复用 `_parse_user_list_response`）
+  - 加入 `main_ops_missing` 集合 + `_fallback_query_ids` 字典（4 级 fallback 全员复用）
+- 新增 fetcher 文件 `fetchers/twitter_retweeters.py`：`fetch_tweet_user_list(url_or_id, cookies)`，输出 `X/users/{mode}/{tweet_id}_{date}.{md,csv}` 按 followers_count 倒序
+- `reader.py` URL 路由：`^/<u>/status/<id>/retweets/?$` → retweeters；`^/<u>/status/<id>/likes/?$` → favoriters（**必须放在 `/status/` 单推检测之前**）
+- CLI 命令：`feedgrab x-retweeters <tweet_url_or_id>` / `feedgrab x-favoriters <tweet_url_or_id>`
+- 优雅降级：favoriters 返回 0 用户时打 WARNING 提示「作者可能隐藏点赞列表 — Twitter 默认行为」
+- 新增 env vars：`X_TWEET_USER_LIST_ENABLED` / `_MAX_PAGES=5` / `_DELAY=2.0` / `_PER_PAGE=40`
+- 单元测试 `tests/test_twitter_retweeters.py`（10 case）：URL 路由 + tweet_id 提取 + parser 输出 + cursor 解析 + 空响应
+
+#### P2-4 — People-tab 搜索（`x-so --people`）
+
+- `twitter_graphql.py` 新增 `parse_search_people_entries`（与 `parse_search_entries` 同路径但仅保留 `itemType=TimelineUser`，复用 sortIndex 排序）
+- 新增 `fetchers/twitter_search_people.py`：`search_people(keyword, cookies)`，输出 `X/search-people/{keyword}_{date}.{md,csv}` 按 followers_count 倒序
+- `cli.py:cmd_twitter_search` 入口检测 `--people` 选项 → 分支到 `_run_search_people`
+- 新增 env vars：`X_SEARCH_PEOPLE_MAX_PAGES=3` / `_DELAY=2.0` / `_PER_PAGE=20`
+- 单元测试 `tests/test_twitter_search_people.py`（4 case）：parser 保留 user / 过滤 tweet / cursor 提取 / 空响应
+
+#### P1-3 — ModeratedTimeline 接入 thread 主路径
+
+- `twitter_thread.py` 新增 Phase 8（opt-in via `X_FETCH_MODERATED_REPLIES=true`）：
+  - 在 Phase 7 后调用 `_fetch_moderated_replies(root_id, cookies)`
+  - 调用 `fetch_moderated_timeline_page` + `parse_moderated_timeline_entries`（v0.22.0 已建基础设施）分页直到 bottom cursor 为空
+  - 标记 moderated tweet 加 `_is_moderated=True` 并合并到 `all_entries`
+  - 单独导出 `result["moderated_replies"]` + `result["has_moderated_replies"]` 供下游消费
+- `schema.py:from_twitter` 透传 `moderated_replies` / `has_moderated_replies` 到 extra
+- `fetchers/twitter.py` thread 分支返回值带 `moderated_replies` / `has_moderated_replies`
+- `utils/storage.py`：
+  - Twitter front matter 加 `moderated_replies_count`
+  - Twitter MD body 加「⚠️ 被作者隐藏的回复」区段（含 callout 说明仅作者本人 Cookie 可见）
+- `config.py` 新增 `x_fetch_moderated_replies()` + `x_moderated_replies_max_pages()`（默认 false / 3 页）
+- 优雅降级：API 对非作者 Cookie 返回 404 → 静默吞掉 + 单条 INFO 解释（"端点对当前 Cookie 不可见"），不阻塞主流程
+- 单元测试 `tests/test_twitter_moderated.py`（8 case）：开关默认 / 空响应 / 单页 / 分页 / 异常吞噬
+
+#### P2-2 — X 媒体文件名 pattern 系统（opt-in）
+
+- `utils/media.py:download_media` 新增 `context: dict = None` 可选参数（默认 None = 沿用 CDN-stem 命名，向后兼容）
+- 新增 `_apply_filename_pattern(pattern, fallback_name, ctx, num, media_type)` helper：
+  - 支持 9 个 token：`{date}` / `{datetime}` / `{screen_name}` / `{user_id}` / `{tweet_id}` / `{num}` / `{type}` / `{ext}` / `{name}`
+  - **`{tweet_id}` 优先从 `ctx["url"]` 提取真实 Snowflake**（避免 feedgrab 内部 12 字符 hash），fallback 到 `ctx["tweet_id"]`
+  - 严格白名单 token 替换 + 二次 filename 安全化（`re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", ...)`）+ 长度截断 200 字符
+  - created_at 支持 4 种格式解析（Twitter v1.1 / ISO 8601 / ...）
+- 7 处调用方传 context dict（`reader.py` + 6 个 X 批量 fetcher）：`tweet_id` / `screen_name` / `user_id` / `created_at` / `url`
+- 新 env var：`X_MEDIA_FILENAME_PATTERN`（默认空 = 沿用旧行为）
+- 单元测试 `tests/test_media_pattern.py`（11 case）：token 替换 / 缺失 created_at fallback / path traversal 安全化 / 无 token / 无扩展名 / 长度截断 / env 默认关闭 / url 优先于 ctx tweet_id
+
+### 实测验证（账号 @ai_xiaomu）
+
+| 场景 | URL / 命令 | 结果 |
+|------|-----------|------|
+| P2-1 默认抓取 | `https://x.com/ai_xiaomu` | ✅ 873/790/83/0，UserTweets 主路径无回归 |
+| P2-3 retweeters | `x-retweeters 2051099012288356592` | ✅ 5 页 × 35 ≈ 176 个转推者，按 followers_count 倒序 |
+| P2-3 favoriters 隐私降级 | `x-favoriters 2051099012288356592` | ✅ 0 用户 + WARNING 提示「作者可能隐藏」 |
+| P2-3 URL 路由 | `https://x.com/ai_xiaomu/status/.../retweets` | ✅ 走 reader.py 调度 |
+| P2-4 人物搜索 | `x-so "ai_xiaomu" --people` | ✅ 3 个匹配用户（按粉丝倒序） |
+| P2-4 主路径回归 | `x-so "ai_xiaomu" --days 1 --min-faves 10` | ✅ 4 条 / Latest 模式无回归 |
+| P1-3 默认关闭 | thread 抓取 | ✅ 未触发 Phase 8 |
+| P1-3 启用 + 404 优雅降级 | `X_FETCH_MODERATED_REPLIES=true` + thread URL | ✅ 端点 404 被吞 + INFO 提示 + 主路径完成 |
+| P2-2 默认 CDN-stem | `X_DOWNLOAD_MEDIA=true` 单推 | ✅ `HIj-jn8aMAAHHwh.jpg` |
+| P2-2 pattern 生效 | `X_MEDIA_FILENAME_PATTERN="{date}_{screen_name}_{tweet_id}_{num}.{ext}"` | ✅ `20260518_ai_xiaomu_2056173124073525356_1.jpg` |
+| 全套回归 | `pytest tests/` | ✅ **193/193 通过**（v0.22.0 是 153） |
+
+### 新增单元测试统计
+
+- v0.22.0: 153
+- v0.23.0: 193（+40：P2-1 ×7 / P2-2 ×11 / P2-3 ×10 / P2-4 ×4 / P1-3 ×8）
+
+### 新增 env vars（`.env.example` 已同步）
+
+- `X_TWEET_USER_LIST_ENABLED` / `_MAX_PAGES` / `_DELAY` / `_PER_PAGE`
+- `X_SEARCH_PEOPLE_MAX_PAGES` / `_DELAY` / `_PER_PAGE`
+- `X_FETCH_MODERATED_REPLIES` / `X_MODERATED_REPLIES_MAX_PAGES`
+- `X_MEDIA_FILENAME_PATTERN`
+
+### 关键经验
+
+- **Retweeters / Favoriters 与 Followers 同 schema**：返回 `TimelineUser` entries，直接复用 `_parse_user_list_response` + `extract_user_data`，零额外解析代码
+- **People-tab 与普通搜索同 GraphQL endpoint**：只是 `product` variable 从 `"Latest"/"Top"` 改为 `"People"`，但 entry `itemType` 从 `TimelineTweet` 切到 `TimelineUser` — parser 必须区分
+- **ModeratedTimeline 端点对非作者 Cookie 返回 404**：这是 Twitter 默认行为（仅作者本人能查询自己被隐藏的回复），不是 bug — 优雅降级 + INFO 提示比抛错更友好
+- **媒体文件名 pattern 的 `{tweet_id}` 必须从 url 提取**：feedgrab 内部 `content.id` 是 MD5 hash 前 12 字符，不是 Twitter Snowflake；helper 内部从 `ctx["url"]` regex `/status/(\d+)` 拿真实 ID
+- **path traversal 安全化必须二次清洗**：单独清洗 token 值 + 最终拼接结果都要走 `_FS_UNSAFE.sub("_", ...)`，防止 `../` 或 `screen_name=../etc/passwd` 类输入污染输出文件路径
+
+### P1-1 推迟说明
+
+调研发现 7 个独立 parser（`parse_user_tweets_entries` / `_parse_user_list_response` / `parse_moderated_timeline_entries` / `parse_list_tweets_entries` / `parse_bookmark_entries` / `parse_search_entries` / `parse_tweet_entries`）的差异维度涵盖：`item_filter` 三态（Tweet/User/None）/ `handle_pin_entry` / `handle_add_to_module` / `handle_replace_entry` / `cursor_types` / `sort_by_sortindex` / `fallback_path_scan` / `return_cursors`。helper 设计草案已落到调研报告。一次性重构涉及 #4/#5/#6/#7 的 sortIndex 默认启用变更（输出顺序变化），与用户协商后**单独拆到 v0.23.1**，便于做完整回归测试。
+
 ## 2026-05-17 · v0.22.0 · 融合 twitter-web-exporter：补 5 个高价值 GraphQL operation + 3 个解析鲁棒性增强
 
 ### 背景

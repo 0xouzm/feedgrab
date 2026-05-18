@@ -72,6 +72,24 @@ feedgrab https://x.com/i/lists/2002743803959300263/subscribers   # List subscrib
 feedgrab https://x.com/ai_xiaomu/with_replies                    # User replies tab (incl. self-replies)
 feedgrab https://x.com/ai_xiaomu/likes                           # User likes (Twitter default = private)
 
+# v0.23.0: Fetch retweeters / favoriters of a tweet (outputs MD + CSV, sorted by followers)
+feedgrab x-retweeters https://x.com/ai_xiaomu/status/2051099012288356592
+feedgrab x-favoriters 2051099012288356592                        # Accepts plain tweet_id too
+feedgrab https://x.com/ai_xiaomu/status/2051099012288356592/retweets  # URL-based routing
+feedgrab https://x.com/ai_xiaomu/status/2051099012288356592/likes     # Likes (author may hide)
+
+# v0.23.0: Twitter People search (SearchTimeline product=People)
+feedgrab x-so "AI Agent" --people                                # People search, ranked by followers
+
+# v0.23.0: Author-hidden replies (ModeratedTimeline; only the tweet author can see them)
+X_FETCH_MODERATED_REPLIES=true feedgrab https://x.com/me/status/...  # Adds thread Phase 8 automatically
+
+# v0.23.0: Custom media filename pattern (X-only; default keeps CDN stem)
+X_DOWNLOAD_MEDIA=true X_MEDIA_FILENAME_PATTERN="{date}_{screen_name}_{tweet_id}_{num}.{ext}" \
+  feedgrab https://x.com/ai_xiaomu/status/...
+# Output: 20260518_ai_xiaomu_2056173124073525356_1.jpg
+# Tokens: {date} {datetime} {screen_name} {user_id} {tweet_id} {num} {type} {ext} {name}
+
 # Batch fetch XHS author notes (requires XHS_USER_NOTES_ENABLED=true + feedgrab login xhs)
 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...
 XHS_USER_NOTES_SINCE=2026-02-01 feedgrab https://www.xiaohongshu.com/user/profile/5eb416f...  # Only after date

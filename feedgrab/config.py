@@ -190,6 +190,23 @@ def x_max_comments() -> int:
         return 50
 
 
+def x_fetch_moderated_replies() -> bool:
+    """v0.23.0: whether to also pull author-hidden replies via ModeratedTimeline.
+
+    Note: API typically only returns data for the tweet author themselves.
+    For everyone else, the timeline is empty (graceful no-op).
+    """
+    return os.getenv("X_FETCH_MODERATED_REPLIES", "false").lower() in ("true", "1", "yes")
+
+
+def x_moderated_replies_max_pages() -> int:
+    """Maximum pagination requests for ModeratedTimeline (default 3)."""
+    try:
+        return int(os.getenv("X_MODERATED_REPLIES_MAX_PAGES", "3"))
+    except ValueError:
+        return 3
+
+
 # ---------------------------------------------------------------------------
 # Bookmarks batch fetch
 # ---------------------------------------------------------------------------
@@ -361,6 +378,15 @@ def x_user_likes_max_pages() -> int:
 def x_user_replies_enabled() -> bool:
     """Whether Twitter user-replies batch fetching is enabled."""
     return os.getenv("X_USER_REPLIES_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+# ---------------------------------------------------------------------------
+# v0.23.0: Tweet-level user lists (Retweeters / Favoriters)
+# ---------------------------------------------------------------------------
+
+def x_tweet_user_list_enabled() -> bool:
+    """Whether tweet-level user-list batch fetching is enabled."""
+    return os.getenv("X_TWEET_USER_LIST_ENABLED", "true").lower() in ("true", "1", "yes")
 
 
 # ---------------------------------------------------------------------------

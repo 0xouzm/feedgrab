@@ -24,6 +24,8 @@ def download_media(
     videos: list,
     item_id: str,
     platform: str = "twitter",
+    *,
+    context: dict = None,
 ) -> None:
     """Download images/videos to {md_dir}/attachments/{item_id}/ and rewrite .md URLs.
 
@@ -33,6 +35,9 @@ def download_media(
         videos: List of video URLs.
         item_id: Unique ID for subdirectory (matches front matter item_id).
         platform: "twitter" or "xhs" — determines URL optimization and headers.
+        context: Optional dict carrying metadata for filename pattern token
+                 substitution (X-only, opt-in via X_MEDIA_FILENAME_PATTERN).
+                 Keys: tweet_id, screen_name, user_id, created_at.
     """
     all_urls = [u for u in (images or []) if u] + [u for u in (videos or []) if u]
     if not all_urls:
@@ -48,10 +53,28 @@ def download_media(
     url_map = {}  # {remote_url: relative_path}
     downloaded = 0
 
-    for url in all_urls:
+    # v0.23.0: X-only media filename pattern (opt-in via env)
+    import os as _os
+    pattern = _os.getenv("X_MEDIA_FILENAME_PATTERN", "").strip()
+    apply_pattern = bool(pattern) and platform == "twitter"
+    image_count = len([u for u in (images or []) if u])
+
+    for idx, url in enumerate(all_urls, start=1):
+        is_video_url = idx > image_count  # videos come after images in all_urls
+        media_type = "video" if is_video_url else "photo"
+
         filename = _extract_filename(url, platform)
         if not filename:
             continue
+
+        if apply_pattern:
+            filename = _apply_filename_pattern(
+                pattern=pattern,
+                fallback_name=filename,
+                ctx=context or {},
+                num=idx,
+                media_type=media_type,
+            )
 
         dest = att_dir / filename
 
@@ -177,10 +200,111 @@ def _extract_filename(url: str, platform: str) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# v0.23.0: X-only media filename pattern (opt-in via X_MEDIA_FILENAME_PATTERN)
+# ---------------------------------------------------------------------------
+
+# Whitelist of allowed tokens (defensive against path-traversal injection).
+_PATTERN_TOKENS = {
+    "{date}", "{datetime}", "{screen_name}", "{user_id}", "{tweet_id}",
+    "{num}", "{type}", "{ext}", "{name}",
+}
+
+_FS_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _apply_filename_pattern(
+    pattern: str,
+    fallback_name: str,
+    ctx: dict,
+    num: int,
+    media_type: str,
+) -> str:
+    """Apply X_MEDIA_FILENAME_PATTERN substitution to build a media filename.
+
+    Args:
+        pattern: User-supplied pattern (e.g. "{date}_{screen_name}_{num}.{ext}")
+        fallback_name: Original CDN-stem filename (e.g. "GmNx7jHXcAA5EYi.jpg")
+        ctx: Context dict from caller (tweet_id, screen_name, user_id, created_at)
+        num: 1-based media index within the tweet
+        media_type: "photo" / "video" / "animated_gif"
+
+    Returns:
+        Sanitized filename string. Falls back to original on any error.
+    """
+    try:
+        # Split fallback into stem + ext (for {name} and {ext} tokens)
+        if "." in fallback_name:
+            base_stem, _, ext = fallback_name.rpartition(".")
+        else:
+            base_stem, ext = fallback_name, "bin"
+
+        # tweet_id: prefer extraction from url (Snowflake), else ctx value (may be a hash)
+        real_tweet_id = ctx.get("tweet_id", "") or ""
+        ctx_url = ctx.get("url", "") or ""
+        if ctx_url:
+            m = re.search(r"/status/(\d+)", ctx_url)
+            if m:
+                real_tweet_id = m.group(1)
+
+        # Parse created_at → date / datetime tokens
+        from datetime import datetime
+        created_at = (ctx.get("created_at") or "").strip()
+        date_token = ""
+        datetime_token = ""
+        if created_at:
+            # Twitter format: "Tue May 18 09:36:31 +0000 2026"
+            dt = None
+            for fmt in (
+                "%a %b %d %H:%M:%S %z %Y",  # Twitter v1.1
+                "%Y-%m-%dT%H:%M:%S%z",       # ISO 8601 w/ tz
+                "%Y-%m-%dT%H:%M:%SZ",        # ISO 8601 UTC
+                "%Y-%m-%d %H:%M:%S",
+            ):
+                try:
+                    dt = datetime.strptime(created_at, fmt)
+                    break
+                except ValueError:
+                    continue
+            if dt:
+                date_token = dt.strftime("%Y%m%d")
+                datetime_token = dt.strftime("%Y%m%d_%H%M%S")
+
+        replacements = {
+            "{date}": date_token or "nodate",
+            "{datetime}": datetime_token or "nodate",
+            "{screen_name}": ctx.get("screen_name", "") or "unknown",
+            "{user_id}": ctx.get("user_id", "") or "0",
+            "{tweet_id}": real_tweet_id or "0",
+            "{num}": str(num),
+            "{type}": media_type,
+            "{ext}": ext,
+            "{name}": base_stem,
+        }
+
+        result = pattern
+        for token, value in replacements.items():
+            # Sanitize each substitution against fs-unsafe chars
+            safe_value = _FS_UNSAFE.sub("_", str(value))
+            result = result.replace(token, safe_value)
+
+        # Final filename safety pass (in case the pattern itself had unsafe chars)
+        result = _FS_UNSAFE.sub("_", result)
+        # Reject empty / pure-extension results
+        if not result or result.lstrip(".") == "":
+            return fallback_name
+
+        return result[:200]  # length cap
+
+    except Exception as e:
+        logger.debug(f"[media] filename pattern failed, using fallback: {e}")
+        return fallback_name
+
+
 def _optimize_url(url: str, platform: str) -> str:
     """Optimize URL for highest quality download.
 
-    Twitter: append name=orig for original resolution.
+    Twitter: append name=orig for original resolution + strip avatar size suffix.
     XHS: strip CDN resize suffix.
     WeChat: upgrade http to https.
     """
@@ -190,6 +314,14 @@ def _optimize_url(url: str, platform: str) -> str:
         qs["name"] = ["orig"]
         new_query = urlencode(qs, doseq=True)
         return urlunparse(parsed._replace(query=new_query))
+
+    if platform == "twitter" and "pbs.twimg.com/profile_images/" in url:
+        # 头像原图：去掉 _normal / _bigger / _mini / _400x400 尺寸前缀
+        return re.sub(
+            r"_(normal|bigger|mini|400x400)\.(jpg|jpeg|png|gif|webp)(\?.*)?$",
+            r".\2\3",
+            url,
+        )
 
     if platform == "xhs":
         # Remove CDN resize/format suffixes
