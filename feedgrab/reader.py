@@ -17,6 +17,7 @@ from feedgrab.schema import (
     from_xiaohongshu, from_youtube, from_rss, from_telegram,
     from_github, from_feishu, from_kdocs, from_youdao, from_linuxdo, from_idcflare, from_web,
     from_xiaoyuzhou, from_ximalaya, from_hackernews, from_medium, from_reddit, from_weibo, from_douyin, from_zsxq,
+    from_flowus,
 )
 from feedgrab.fetchers.jina import fetch_via_jina
 from feedgrab.utils.url_validator import validate_url
@@ -135,6 +136,10 @@ class UniversalReader:
         # Zsxq (知识星球): articles.zsxq.com / wx.zsxq.com / api.zsxq.com / t.zsxq.com 短链
         if ("zsxq.com" in domain or domain.endswith(".zsxq.com")):
             return "zsxq"
+        # FlowUs (息流): flowus.cn share / personal-space docs
+        from feedgrab.fetchers.flowus import is_flowus_url
+        if is_flowus_url(url):
+            return "flowus"
         # Feishu / Lark
         from feedgrab.fetchers.feishu import is_feishu_url
         if is_feishu_url(url):
@@ -258,6 +263,19 @@ class UniversalReader:
                         img_subdir=content.extra.get("img_subdir", ""),
                     )
 
+            # FlowUs: download images to {md_dir}/attachments/{subdir}/ after saving
+            if (saved_path
+                    and content.source_type == SourceType.FLOWUS
+                    and content.extra.get("images_info")):
+                from feedgrab.config import flowus_download_images
+                if flowus_download_images():
+                    from feedgrab.fetchers.flowus import download_flowus_images
+                    download_flowus_images(
+                        saved_path,
+                        content.extra["images_info"],
+                        img_subdir=content.extra.get("img_subdir", ""),
+                    )
+
             # Youdao Note: download images to {md_dir}/attachments/{subdir}/
             if (saved_path
                     and content.source_type == SourceType.YOUDAO
@@ -355,6 +373,7 @@ class UniversalReader:
                     SourceType.LINUXDO: "LinuxDo",
                     SourceType.IDCFLARE: "IDCFlare",
                     SourceType.ZSXQ: "Zsxq",
+                    SourceType.FLOWUS: "FlowUs",
                 }
                 plat = _dedup_plat_map.get(content.source_type, "X")
                 index = load_index(platform=plat)
@@ -481,6 +500,11 @@ class UniversalReader:
             from feedgrab.fetchers.zsxq import fetch_zsxq
             data = await fetch_zsxq(url)
             return from_zsxq(data)
+
+        if platform == "flowus":
+            from feedgrab.fetchers.flowus import fetch_flowus
+            data = await fetch_flowus(url)
+            return from_flowus(data)
 
         if platform == "xiaoyuzhou":
             from feedgrab.config import xiaoyuzhou_enabled

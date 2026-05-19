@@ -867,6 +867,33 @@ def kdocs_download_images() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# FlowUs (息流 flowus.cn)
+# ---------------------------------------------------------------------------
+
+def flowus_cdp_enabled() -> bool:
+    """Connect to running Chrome via CDP for FlowUs. Default true.
+
+    Required for private / paid docs needing the next_auth JWT cookie.
+    Public share docs work without cookies — CDP is skipped automatically
+    when the no-cookie HTTP attempt succeeds.
+    """
+    return os.getenv("FLOWUS_CDP_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def flowus_page_load_timeout() -> int:
+    """Playwright page element wait timeout in ms. Default 10000."""
+    try:
+        return int(os.getenv("FLOWUS_PAGE_LOAD_TIMEOUT", "10000"))
+    except ValueError:
+        return 10000
+
+
+def flowus_download_images() -> bool:
+    """Download FlowUs images locally. Default false (links may be time-limited)."""
+    return os.getenv("FLOWUS_DOWNLOAD_IMAGES", "false").lower() in ("true", "1", "yes")
+
+
+# ---------------------------------------------------------------------------
 # Zhihu (知乎)
 # ---------------------------------------------------------------------------
 

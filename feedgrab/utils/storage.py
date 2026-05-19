@@ -169,6 +169,7 @@ PLATFORM_FOLDER_MAP = {
     SourceType.WEIBO: "Weibo",
     SourceType.DOUYIN: "Douyin",
     SourceType.ZSXQ: "Zsxq",
+    SourceType.FLOWUS: "FlowUs",
     SourceType.TELEGRAM: "Telegram",
     SourceType.RSS: "RSS",
     SourceType.WEB: "Web",
@@ -412,7 +413,7 @@ def _format_markdown(item: UnifiedContent) -> str:
         published = _parse_xhs_date(extra["date"])
     elif is_wechat and extra.get("publish_date"):
         published = extra["publish_date"]
-    elif extra.get("create_time") and item.source_type in (SourceType.FEISHU, SourceType.KDOCS, SourceType.YOUDAO):
+    elif extra.get("create_time") and item.source_type in (SourceType.FEISHU, SourceType.KDOCS, SourceType.YOUDAO, SourceType.FLOWUS):
         published = extra["create_time"][:10]  # YYYY-MM-DD
     elif item.source_type in (SourceType.LINUXDO, SourceType.IDCFLARE) and extra.get("created_at"):
         published = _format_iso_datetime(extra["created_at"])
@@ -582,6 +583,18 @@ def _format_markdown(item: UnifiedContent) -> str:
     if is_kdocs:
         if extra.get("doc_token"):
             fm_lines.append(f'doc_token: "{extra["doc_token"]}"')
+        if extra.get("edit_time"):
+            fm_lines.append(f'edit_time: "{extra["edit_time"]}"')
+
+    # FlowUs extras
+    is_flowus = item.source_type == SourceType.FLOWUS
+    if is_flowus:
+        if extra.get("doc_token"):
+            fm_lines.append(f'doc_token: "{extra["doc_token"]}"')
+        if extra.get("share_code"):
+            fm_lines.append(f'share_code: "{extra["share_code"]}"')
+        if extra.get("space_title"):
+            fm_lines.append(f'space_title: "{extra["space_title"]}"')
         if extra.get("edit_time"):
             fm_lines.append(f'edit_time: "{extra["edit_time"]}"')
 

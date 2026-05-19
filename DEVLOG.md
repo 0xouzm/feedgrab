@@ -2,6 +2,95 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-05-19 · v0.24.0 · FlowUs 息流文档抓取支持
+
+### 背景
+
+参考 KDocs / 飞书模式新增 FlowUs（flowus.cn）平台支持。FlowUs 是 Notion 风格的协作文档平台，采用 Vite SPA 架构，正文完全通过 `/api/docs/{uuid}` 加载（block-tree 扁平字典，按 `subNodes` 递归还原）。方案文档：`开发及迭代方案调研报告/20260519-v0.24.0-FlowUs息流文档抓取方案.md`。
+
+### 关键决策
+
+- **API 直连为主**：与 KDocs（ProseMirror DOM 抓取）、飞书（block snapshot 解析）不同，FlowUs 主路径是 `requests.get('/api/docs/{uuid}')`，无需浏览器解析 DOM。浏览器路径仅在公开 HTTP 被拒（付费/私有）时启用，复用本机 Chrome 的 `next_auth` JWT cookie。
+- **公开 + 私有双兼容**：无 cookie 也先尝试一次 HTTP；只有 API 返回 1407/1401/401/403 这类鉴权码且本地无 cookie 时才下沉浏览器。公开链接零开销直出。
+- **JWT cookie 持久化**：CDP 提取本机 Chrome 的 `next_auth` + `next_auth.sig` 双 cookie 后写入 `sessions/flowus.json`，后续重复抓取直接走 Tier 0 HTTP 复用。Launch fallback 路径强制要求**两个** cookie 同时存在才落盘，避免用残缺 cookie 污染未来 CDP 提取结果。
+- **`next_auth.sig` 的关键性**：实测发现 FlowUs 鉴权用 `next_auth`（JWT body）+ `next_auth.sig`（HMAC 签名）**两条 cookie 联合验证**，缺任何一个都返回 1407。这与一般"单 JWT cookie"模式不同，且容易被忽略（DevTools 里两条 cookie 分两行展示，复制 next_auth 单条值时签名 cookie 不会被一起带上）。
+- **媒体下载默认关**：FlowUs 文档中的图片往往是飞书 `my.feishu.cn/space/api/box/stream/download/asynccode/?code=...` 签名链接（≈1 小时过期），开启 `FLOWUS_DOWNLOAD_IMAGES=true` 才本地化。
+
+### 实施清单
+
+#### Block 类型映射（实测样本 418 block）
+
+| type | 含义 | Markdown |
+|------|------|----------|
+| 0 | 页面/根 | `# title`（由 fetcher 单独输出） |
+| 1 | paragraph | `text\n` |
+| 4 | bullet | `- text` |
+| 5 | ordered | `1. text`（按 depth 重置 counter） |
+| 7 | heading（`data.level` 1-6） | `## text` / `### text` |
+| 12 | quote | `> text` |
+| 14 | media（`data.display`: image/audio/video/file） | `![alt](link)` / `[🎬 ...]` / `[📎 ...]` |
+| 25 | code（`data.format.language`） | ` ````lang\ncode\n```` ` |
+
+#### Segment enhancer
+
+- `bold` → `**text**`
+- `italic` → `*text*`
+- `code` → `` `text` ``
+- `backgroundColor` → `==text==`（Obsidian 高亮）
+- `segment.type === 3` + `url` 字段 → `[text](url)`
+
+#### 抓取链路（Tier 0/1/2/3）
+
+1. **Tier 0 HTTP**：`utils/http_client.get('/api/docs/{uuid}', headers=..., cookies=load_flowus_cookies())` — 公开/已登录都走这条
+2. **Tier 1 CDP**：`playwright.connect_over_cdp('ws://127.0.0.1:9222/devtools/browser')` → 找 `flowus.cn` cookie context → `new_page()` → 页面内 `fetch('/api/docs/{uuid}')` → 提取 cookie 保存
+3. **Tier 2 Launch**：Playwright 启动新浏览器（带 saved `sessions/flowus.json`），页面内 `fetch()` 取 JSON；如果产出包含 `next_auth` 则落盘
+4. **Tier 3 Jina**：仅当 API 不可达且非定义性错误码（1407/1404/401/403）时下沉
+
+#### 文件清单
+
+- `feedgrab/fetchers/flowus.py`（~700 行）— 全新 fetcher
+- `feedgrab/config.py` — `flowus_cdp_enabled()` / `flowus_page_load_timeout()` / `flowus_download_images()`
+- `feedgrab/schema.py` — `SourceType.FLOWUS` + `from_flowus()`
+- `feedgrab/reader.py` — 平台路由（`is_flowus_url`）+ `_fetch` dispatch + 图片下载 hook + dedup 平台映射
+- `feedgrab/login.py` — `PLATFORM_URLS["flowus"]` + `_CDP_COOKIE_DOMAINS["flowus"]` + `_CDP_COOKIE_URLS["flowus"]`
+- `feedgrab/utils/storage.py` — `PLATFORM_FOLDER_MAP[FLOWUS] = "FlowUs"` + `published` 时间映射 + front matter (`doc_token` / `share_code` / `space_title` / `edit_time`)
+- `.env.example` — 三个 FlowUs 环境变量样例
+- `pyproject.toml` — v0.24.0
+
+### URL 形态
+
+- `https://flowus.cn/share/{uuid}?code={code}` — 公开分享链接（code 可有可无）
+- `https://flowus.cn/{username}/{uuid}` — 个人空间链接（需登录）
+- `https://flowus.cn/{username}/share/{uuid}` — 用户空间下的分享链接
+
+### 实测结果
+
+- ✅ 公开链接 `https://flowus.cn/baochang/share/1e8b026a-cb5a-41bb-8f2c-61fed1d3cc54`：零 cookie 直接 HTTP 200，输出 Markdown 1 篇（《OPPO母亲节文案翻车...》）front matter / 标题 / 正文 / 高亮 / 图片链接 全部正确
+- ✅ 付费链接 `https://flowus.cn/share/08d68f8b-...?code=TU56HX`：注入 `next_auth` + `next_auth.sig` 双 cookie 后，Tier 0 HTTP 0.5 秒抓完完整付费文档（934 行 Markdown，59 张图片），抓取链路 `/api/docs/{uuid}` 一次到位
+- ✅ 图片本地化（`FLOWUS_DOWNLOAD_IMAGES=true`）：DOM 滚动 + 双 pass 加载 → 提取 `cdn2.flowus.cn/oss/.../?time=&token=&role=sharePaid` 签名 URL → 直 HTTP 拉 → **59/59 全部成功，39 MB 完整本地化**
+
+### 图片下载的关键设计
+
+FlowUs 图片在 block JSON 里只有 `data.link`（作者引用的飞书 CDN URL，受 hotlink 保护，server-side 取 400）和 `data.ossName`（FlowUs 自家 OSS 路径，无 token 也取不到）。
+渲染图片的真实 URL `cdn2.flowus.cn/<ossName>?time=&token=&role=sharePaid` **由前端客户端按某未公开算法签名生成**，未保存到任何 API response 中。
+
+解决方案：当用户开启图片下载时，启动 headless Playwright 渲染同一篇 doc，触发前端把签名 URL 注入到 DOM `<img>` 元素的 `src` 上：
+1. `viewport: 1920×3000` 一次性显示更多
+2. 三 pass 滚动（第一 pass 步进 400px、慢节奏；后续 800px 快速过）+ `img[loading="lazy"] → "eager"` 强制加载
+3. `networkidle` 等所有图片请求结束
+4. `querySelectorAll('img')` 抓 `cdn2.flowus.cn/oss/{path}` URL，按 `ossName` 建立 `{path: signed_url}` 映射
+5. Python 直拉签名 URL（**无需 cookie，token 自带签名**）
+
+`asyncio.run()` 与 reader.py 的 async caller 会冲突，所以下载线程 `threading.Thread` 隔离。
+
+### 风险与缓解
+
+- **飞书图床链接时效性**：FlowUs 文档内的图片大量引用 `my.feishu.cn/space/api/box/stream/download/asynccode/?code=...`（1 小时过期）。默认 `FLOWUS_DOWNLOAD_IMAGES=false` 保留原链接，开启则本地化
+- **付费/私有文档**：API 返回 `code=1407` 时本地无 cookie 才下沉浏览器，已登录场景直接 Tier 0 拿到；明确终止码（1407/1404/401/403）+ 已有 cookie 时不再下沉 Jina，避免 fallback 写出垃圾文件
+- **JWT 过期**：`next_auth` 默认 30 天有效。失效后再次走 CDP 即可自动刷新 `sessions/flowus.json`
+
+---
+
 ## 2026-05-18 · v0.23.0 · twitter-web-exporter 融合 Phase 2：P1-P2 五项功能落地
 
 ### 背景

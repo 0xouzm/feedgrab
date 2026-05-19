@@ -211,6 +211,19 @@ feedgrab https://t.zsxq.com/yUX3P                              # 邀请短链（
 ZSXQ_COMMENT_MODE=author feedgrab https://wx.zsxq.com/...      # 仅渲染作者本人评论
 ZSXQ_COMMENT_MODE=all feedgrab https://wx.zsxq.com/...         # 全部评论
 
+# === FlowUs 息流（v0.24.0 新增）===
+# 公开分享链接：零 cookie 直接抓取
+feedgrab https://flowus.cn/baochang/share/1e8b026a-cb5a-41bb-8f2c-61fed1d3cc54
+feedgrab https://flowus.cn/share/<uuid>?code=<share_code>
+
+# 付费/私有文档：需要复用本机 Chrome 登录态
+CHROME_CDP_LOGIN=true feedgrab login flowus                    # CDP 直提本机 Cookie（推荐）
+feedgrab login flowus                                          # 或弹 Playwright 浏览器手动登录
+feedgrab https://flowus.cn/share/<uuid>?code=<paid_code>       # 后续抓取直接复用 sessions/flowus.json
+
+# 开启图片本地化（默认远程链接，开启后 headless 浏览器解析签名 URL → 全部下载）
+FLOWUS_DOWNLOAD_IMAGES=true feedgrab https://flowus.cn/share/<uuid>?code=<code>
+
 # 自动检测本机 Chrome UA 并写入 .env（推荐首次部署时运行）
 feedgrab detect-ua
 
@@ -315,6 +328,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | **Weibo** | m.weibo.cn 移动端 API（show + container/getIndex）+ SSR `$render_data` 兜底（单条 + `weibo-user` 用户主页批量；SUB Cookie 可选） | — |
 | **Douyin** | **CDP 复用 Chrome** → Stealth Playwright + saved session → SSR `RENDER_DATA` 解析 → Jina（不破解签名，依赖浏览器内执行；短链自动 302 解析 aweme_id） | — |
 | **知识星球**（Zsxq） | Tier 0 HTTP cookie（articles.zsxq.com SSR HTML / api.zsxq.com `/topics/{id}/info` JSON）→ CDP 复用 Chrome → Stealth Playwright → Jina；topic 五形态全覆盖（talk / question+answer / article / **solution**）；短链 `t.zsxq.com/<code>` 302 解析；评论三态 `none/all/author` | `feedgrab login zsxq` |
+| **FlowUs 息流**（v0.24.0） | Tier 0 纯 HTTP `/api/docs/{uuid}`（公开链接零 cookie 直出；付费/私有需 `next_auth`+`next_auth.sig` 双 cookie，CDP 复用本机 Chrome）→ Tier 1 CDP → Tier 2 Launch+saved session（浏览器内 fetch）→ Jina；Notion 风格 block-tree 渲染（8 类 block + 5 种 enhancer + 链接片段）；图片本地化时 headless 浏览器渲染抓 `cdn2.flowus.cn` 签名 URL 后直拉 | `feedgrab login flowus` |
 | **付费新闻网站**（NYT/WSJ/FT/Economist/Bloomberg/SCMP 等 300+ 站） | **7 级 Tier 付费墙绕过**（JSON-LD 探测 + Googlebot/Bingbot UA + AMP 页面 + archive.today + Google Cache） | — |
 | 任意网页 | **JSON-LD 前置** → Jina 兜底 | — |
 

@@ -46,6 +46,7 @@ class SourceType(str, Enum):
     WEIBO = "weibo"
     DOUYIN = "douyin"
     ZSXQ = "zsxq"
+    FLOWUS = "flowus"
     X_USER_LIST = "x_user_list"  # v0.22.0: Twitter user-list exports
     WEB = "web"
     MANUAL = "manual"
@@ -515,6 +516,29 @@ def from_kdocs(data: dict) -> UnifiedContent:
             "create_time": data.get("create_time", ""),
             "edit_time": data.get("edit_time", ""),
             "creator_id": data.get("creator_id", ""),
+            "images_info": data.get("images_info", []),
+            "img_subdir": data.get("img_subdir", ""),
+        },
+    )
+
+
+def from_flowus(data: dict) -> UnifiedContent:
+    """Convert FlowUs (息流) data dict to UnifiedContent."""
+    return UnifiedContent(
+        source_type=SourceType.FLOWUS,
+        source_name=data.get("author", ""),
+        title=data.get("title", ""),
+        content=data.get("content", ""),
+        url=data.get("url", ""),
+        tags=data.get("tags", []),
+        extra={
+            "doc_token": data.get("doc_token", ""),
+            "share_code": data.get("share_code", ""),
+            "space_title": data.get("space_title", ""),
+            "seo_description": data.get("seo_description", ""),
+            "word_count": data.get("word_count", 0),
+            "create_time": data.get("create_time", ""),
+            "edit_time": data.get("edit_time", ""),
             "images_info": data.get("images_info", []),
             "img_subdir": data.get("img_subdir", ""),
         },

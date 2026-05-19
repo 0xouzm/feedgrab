@@ -56,3 +56,6 @@ output_smoke/
 # External research source archives (GPL/MIT third-party code kept local only)
 tasks/twe_research/
 
+
+# Playwright MCP screenshots / logs
+.playwright-mcp/

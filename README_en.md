@@ -189,6 +189,19 @@ feedgrab https://wx.zsxq.com/group/<gid>/topic/<tid>           # Short topic
 feedgrab https://t.zsxq.com/yUX3P                              # Invite short link (auto 302)
 
 
+# === FlowUs (v0.24.0 new) ===
+# Public share links — works zero-cookie
+feedgrab https://flowus.cn/baochang/share/1e8b026a-cb5a-41bb-8f2c-61fed1d3cc54
+
+# Paid / private docs — reuse local Chrome login state
+CHROME_CDP_LOGIN=true feedgrab login flowus                    # CDP cookie extraction (recommended)
+feedgrab login flowus                                          # Or Playwright browser manual login
+feedgrab https://flowus.cn/share/<uuid>?code=<paid_code>       # Subsequent fetches reuse sessions/flowus.json
+
+# Localize images (default off — keeps remote URLs)
+FLOWUS_DOWNLOAD_IMAGES=true feedgrab https://flowus.cn/share/<uuid>?code=<code>
+
+
 # Auto-detect local Chrome UA and write to .env (recommended on first setup)
 feedgrab detect-ua
 

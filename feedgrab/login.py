@@ -36,6 +36,7 @@ PLATFORM_URLS = {
     "linuxdo": "https://linux.do/",
     "idcflare": "https://idcflare.com/",
     "zsxq": "https://wx.zsxq.com/",
+    "flowus": "https://flowus.cn/login",
 }
 
 
@@ -203,6 +204,7 @@ _CDP_COOKIE_DOMAINS = {
     "linuxdo": [".linux.do"],
     "idcflare": [".idcflare.com"],
     "zsxq": [".zsxq.com"],
+    "flowus": [".flowus.cn", "flowus.cn"],
 }
 
 # URLs to pass to Network.getCookies (legacy WebSocket mode)
@@ -216,6 +218,7 @@ _CDP_COOKIE_URLS = {
     "linuxdo": ["https://linux.do"],
     "idcflare": ["https://idcflare.com"],
     "zsxq": ["https://wx.zsxq.com", "https://articles.zsxq.com", "https://api.zsxq.com"],
+    "flowus": ["https://flowus.cn"],
 }
 
 

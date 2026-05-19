@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.23.0
+- **当前版本**：v0.24.0
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -36,6 +36,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 | LinuxDo / IDCFlare / Discourse | Discourse Topic JSON API → CDP 复用 Chrome → Playwright 页面内 fetch → Jina（默认主贴 + 楼主自回，可切换完整楼层） |
 | 飞书/Lark | Open API → CDP 直连 → Playwright PageMain → Jina（+ 知识库批量 + 嵌入表格 + 图片；修复虚拟目录树与表格错位） |
 | 金山文档 | Playwright ProseMirror DOM（虚拟滚动 + 代码块 + shapes API 图片 + CDP 直连） |
+| FlowUs 息流 | Tier 0 纯 HTTP `/api/docs/{uuid}`（公开零 cookie / 付费需 `next_auth`+`next_auth.sig` 双 cookie）→ CDP → Launch+saved session → Jina；Notion 风格 block-tree 渲染；图片本地化用 headless 浏览器渲染抓 `cdn2.flowus.cn` 签名 URL 后直拉 |
 | 有道云笔记 | JSON API → Playwright iframe DOM → Jina（+ 图片下载） |
 | 知乎 | API v4 → Playwright CDP/DOM → Jina（+ 问答前 3 楼 + 专栏 + `zhihu-so`） |
 | Telegram | Telethon |
@@ -137,6 +138,7 @@ feedgrab/
 - LinuxDo：`LINUXDO_CDP_ENABLED=true`（复用 Chrome Cookie / Cloudflare 会话抓论坛 JSON）
 - IDCFlare：`IDCFLARE_CDP_ENABLED=true`（复用 Chrome Cookie / Cloudflare 会话抓论坛 JSON）
 - 金山：`KDOCS_CDP_ENABLED=true`
+- FlowUs：CDP 复用本机 Chrome（`flowus.cn` cookie context），认证靠 `next_auth` JWT + `next_auth.sig` HMAC **两个 cookie 联合验证**（缺任意一个 API 返回 `code:1407`）
 - 关键：`browser.close()` 在 CDP 模式下只断 WebSocket 不杀 Chrome
 
 ### 微信 URL 规范化
@@ -184,6 +186,7 @@ feedgrab/
 
 | 版本 | 功能 |
 |------|------|
+| v0.24.0 | 新增「FlowUs 息流」（flowus.cn）平台支持（公开分享 + 付费/私有分享 + 个人空间链接）；Notion 风格 block-tree 扁平 JSON 渲染（8 类 block：page/paragraph/bullet/ordered/heading/quote/media/code + 5 种 enhancer + 链接片段）；纯 HTTP 链路（公开零 cookie / 付费需 `next_auth`+`next_auth.sig` 双 cookie）+ CDP/Launch 浏览器兜底；图片本地化：headless 浏览器渲染 + 多 pass 滚动 + lazy→eager 抓 `cdn2.flowus.cn` 签名 URL（59/59 全成功） |
 | v0.23.0 | twitter-web-exporter 融合 Phase 2 五项功能：P2-1 头像原图替换（`_normal/_bigger/_mini/_400x400` → 原图）+ P2-3 Retweeters/Favoriters（`/status/<id>/retweets` `/status/<id>/likes` URL 路由 + `x-retweeters` `x-favoriters` CLI）+ P2-4 SearchTimeline `product=People` 人物搜索（`x-so --people`）+ P1-3 ModeratedTimeline thread Phase 8 接入（`X_FETCH_MODERATED_REPLIES` opt-in，404 优雅降级）+ P2-2 X 媒体文件名 pattern 系统（`X_MEDIA_FILENAME_PATTERN` opt-in 9 token + path traversal 安全化）；测试 153 → 193；P1-1 通用 instruction helper 重构推迟 v0.23.1 |
 | v0.22.0 | 融合 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter)：补 5 个高价值 GraphQL operation（Followers / Following / BlueVerifiedFollowers / ListMembers / ListSubscribers / Likes / UserTweetsAndReplies，queryId 取自 fa0311/twitter-openapi）+ 3 个解析鲁棒性增强（TweetTombstone/TweetUnavailable 显式日志 + TimelinePinEntry 置顶提取 + 视频 variant 不过滤 content_type）；新 URL pattern：`/followers` `/following` `/verified_followers` `/likes` `/with_replies` `/i/lists/<id>/members(subscribers)` |
 | v0.21.0 | 新增「知识星球」（Zsxq）平台支持（articles.zsxq.com 长文章 + wx.zsxq.com 短帖 + t.zsxq.com 短链 302 解析）；4 级 Tier 链路（HTTP cookie / CDP / Stealth Browser / Jina）+ 五形态 topic 渲染（含 solution）+ 三态评论筛选 |
@@ -229,6 +232,7 @@ feedgrab/
 | 小红书 | `xhs*.py`（5 个文件）+ `browser.py` |
 | 飞书 | `feishu.py` + `feishu_wiki.py` + `browser.py` |
 | 金山文档 | `kdocs.py` |
+| FlowUs 息流 | `flowus.py`（HTTP API → CDP → Launch browser → Jina；block-tree 渲染 + DOM 抓 cdn2.flowus.cn 签名 URL 图片下载） |
 | 有道云笔记 | `youdao.py` |
 | 知乎 | `zhihu.py` + `zhihu_search.py` |
 | 小宇宙 / 喜马拉雅 | `xiaoyuzhou.py` + `ximalaya.py` + `utils/transcribe.py` |
