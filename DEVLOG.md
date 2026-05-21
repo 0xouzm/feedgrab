@@ -2,6 +2,139 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-05-21 · v0.24.1 · Twitter 多账号 429 轮换修复
+
+### 背景
+
+用户报告：用 `feedgrab https://x.com/AdrianPunk115` 批量抓取，明明 `sessions/` 里有 6 个账号 cookie，但第一个账号 `3a43aed6...` 触发 429 后，重试 3 次都用同一个被限流的账号失败 → 整体停止在 557 条，远低于该账号实际推文量。日志：
+
+```
+[CookieRotation] 账号 3a43aed6... 被标记限流，15 分钟后自动恢复
+[UserTweets] API 返回空响应，5秒后第 1/3 次重试...
+GraphQL 429 Rate Limited — too many requests
+[CookieRotation] 账号 3a43aed6... 被标记限流，15 分钟后自动恢复
+[UserTweets] API 返回空响应，5秒后第 2/3 次重试...
+...
+[UserTweets] 3次重试后仍无响应，停止分页
+```
+
+### 根因
+
+入口处 `twitter.py` 一次性 `cookies = load_twitter_cookies()` 加载固定 cookie 字典，调用 `fetch_user_tweets(profile_url, cookies, mode)` 传入。`fetch_user_tweets` 内的分页循环在 `if not response` 时仅 `time.sleep(5)` 后**用同一个 cookies 字典**重试 3 次。虽然 `_execute_graphql` 在 429 时调用 `mark_cookie_rate_limited()` 把当前账号加入限流字典，但**上游重试时并没有重新调用 `load_twitter_cookies()` 拿到一个未限流账号**，所以 3 次都用同一个失败账号。
+
+排查发现**所有 7 个 Twitter 批量 fetcher 都有同样问题**（程度不一）：
+
+| 文件 | 旧行为 |
+|------|--------|
+| `twitter_user_tweets.py` | 重试 3 次，但不刷 cookies（本次 bug 现场） |
+| `twitter_bookmarks.py` | 直接 break，无重试 |
+| `twitter_list_tweets.py` | 直接 break，无重试 |
+| `twitter_user_lists.py` | 直接 break，无重试 |
+| `twitter_retweeters.py` | 直接 break，无重试 |
+| `twitter_search_people.py` | 直接 break，无重试 |
+| `twitter_keyword_search.py` | 半成品：仅重试 1 次拿一个新 cookie |
+
+### 实施
+
+#### 抽出统一 helper：`fetch_with_cookie_rotation()`
+
+放在 `twitter_cookies.py`，3 个新 public 函数：
+
+```python
+def count_total_accounts() -> int: ...           # 总账号数
+def count_available_accounts() -> int: ...       # 当前未限流账号数
+def earliest_rate_limit_recovery_seconds() -> int: ...  # 最早解封倒计时
+
+def fetch_with_cookie_rotation(
+    fetcher_callable, *args,
+    label: str = "GraphQL",
+    network_retry_delay: float = 5.0,
+    **kwargs,
+) -> tuple[Optional[Any], dict]:
+    """每次失败重新调用 load_twitter_cookies() 拿可用账号；
+    所有账号都限流才返回 None。"""
+```
+
+核心循环逻辑：
+
+1. 计算 `total = count_total_accounts()`
+2. 最多循环 `total` 次（保证每个账号都试一遍）
+3. 每次循环开始重新 `cookies = load_twitter_cookies()` — 利用 `load_twitter_cookies` 内已有的"跳过限流账号"逻辑天然轮换到下一个可用账号
+4. 调用 `fetcher_callable(*args, cookies=cookies, **kwargs)`
+5. 切换账号时打印 `[label] 切换账号重试 (N/total) — 新账号: xxx... 剩余可用 M/total`
+6. 单账号场景防死循环：如果连续两次拿到同一 `auth_token` 前 8 字符且仍失败，立即终止
+7. 全部账号失败：明确打印 `[label] >>> 所有 N 个 Twitter 账号均已被限流 <<< 最早 Xs 后自动恢复`
+
+#### 调用方迁移
+
+7 个 fetcher 的 `if not response` 分支统一改为：
+
+```python
+response, rotated_cookies = fetch_with_cookie_rotation(
+    page_fetcher, user_id,
+    label="UserTweets", cursor=cursor,
+)
+if rotated_cookies:
+    cookies = rotated_cookies   # 让后续页继承轮换后的账号
+if not response:
+    logger.error(f"[UserTweets] >>> 第 N 页所有 6 个账号均失败 <<< 已抓取 K 条，停止分页")
+    break
+```
+
+注意 `cookies` 透传更新——这样下一页直接用新账号开始，避免每次都从第 1 个账号重新加载。
+
+#### 文件清单
+
+- `feedgrab/fetchers/twitter_cookies.py` — 新增 `fetch_with_cookie_rotation()` + 3 个统计函数（~100 行）
+- `feedgrab/fetchers/twitter_user_tweets.py` — 重试逻辑改 helper
+- `feedgrab/fetchers/twitter_bookmarks.py` — 单点失败改 helper
+- `feedgrab/fetchers/twitter_list_tweets.py` — 同上
+- `feedgrab/fetchers/twitter_user_lists.py` — 同上
+- `feedgrab/fetchers/twitter_retweeters.py` — 同上
+- `feedgrab/fetchers/twitter_search_people.py` — 同上
+- `feedgrab/fetchers/twitter_keyword_search.py` — 替换半成品方案
+- `tests/test_twitter_cookie_rotation.py` — 新增 8 case（首次成功 / 第二账号轮换 / 全限流 / 单账号防死循环 / 无 cookie / 异常吞噬 / kwargs 透传 / 实时统计）
+
+### 实测结果（`feedgrab https://x.com/AdrianPunk115`）
+
+| 指标 | 修复前 | 修复后 |
+|------|--------|--------|
+| 抓取条数 | 557 条 | **632 条**（+75 / +13.4%） |
+| 429 后行为 | 3 次同账号重试失败 → 停止 | 自动切换到下一个未限流账号继续 |
+| 轮换次数 | 0 | 2 次（3a43aed6 → ae0669d0 → 467488bb） |
+| 单元测试 | 193 | **201**（+8 新 case） |
+
+观察到的关键日志：
+
+```
+22:58:31 GraphQL 429 Rate Limited — too many requests
+22:58:31 [CookieRotation] 账号 3a43aed6... 被标记限流，15 分钟后自动恢复
+22:58:31 Twitter cookies loaded from cookie_file(x_2.json) (auth_token=ae0669d0...) [5/6 可用]
+22:58:36 [UserTweets] 切换账号重试 (2/6) — 新账号: ae0669d0... 剩余可用 5/6
+22:58:37 [UserTweets] 切换到账号 ae0669d0... 第 2 次尝试成功
+22:58:37 [UserTweets] 第 51 页获取 1 条，累计 569 条   # 突破之前的 557 停止线
+...
+23:01:06 [CookieRotation] 账号 ae0669d0... 被标记限流，15 分钟后自动恢复
+23:01:11 [UserTweets] 切换账号重试 (2/6) — 新账号: 467488bb... 剩余可用 4/6
+23:01:59 [UserTweets] 共获取 632 条推文条目  # 服务端 cursor 用尽自然结束
+```
+
+### 关键经验
+
+- **`load_twitter_cookies()` 已经实现了"跳过限流账号、返回下一个可用"的逻辑**——但被旧重试代码绕过了。修复的本质是"在重试循环里**重新调用** `load_twitter_cookies()`"
+- **多账号 cookie 轮换的最强语义**：重试次数 = 账号总数，每次重试天然切到下一个可用账号；只有所有账号都被限流才真正终止
+- **关键日志的格式约定**：`>>> 关键事件 <<<` 三个尖括号包夹是项目里常用的高亮标记，方便用户在大量日志中一眼识别
+- **`cookies` 透传**：helper 返回 `(response, last_cookies)`，调用方应该把 `cookies = rotated_cookies` 接住，让下一页直接用新账号开始（否则又会从第 1 个账号重新尝试）
+- **单账号场景的死循环防御**：如果只有 1 个账号且失败，helper 必须立即终止；否则 `load_twitter_cookies` 在"所有都限流"时会返回最快解封的账号 → 同一个失败账号被反复尝试
+
+### 测试覆盖
+
+- 旧 193 + 新 8 = **201 个 unit test 全过**
+- 实测真实账号 1 个 + 6 个 cookie 轮换链路验证
+- 6 个 fetcher 的修改均通过 `python -c "from feedgrab.fetchers import ...; print('OK')"` 冒烟检查
+
+---
+
 ## 2026-05-19 · v0.24.0 · FlowUs 息流文档抓取支持
 
 ### 背景

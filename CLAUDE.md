@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.24.0
+- **当前版本**：v0.24.1
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -186,6 +186,7 @@ feedgrab/
 
 | 版本 | 功能 |
 |------|------|
+| v0.24.1 | 修复 Twitter 多账号 429 轮换：抽出 `fetch_with_cookie_rotation()` helper（`twitter_cookies.py`），统一 7 个批量 fetcher（user_tweets / bookmarks / list / user_lists / retweeters / search_people / keyword_search）的"账号限流后跨账号重试"逻辑；之前重试仅复用同一被限流账号 3 次就停（user_tweets）或直接 break（其余 6 个），现在改为**每个账号都试一遍**才真正终止；关键日志统一加 `>>> ... <<<` 高亮 + 剩余可用账号数 + 最早解封倒计时；测试 193 → 201；实测 `feedgrab https://x.com/AdrianPunk115` 抓取量 557 → 632（+13.4%） |
 | v0.24.0 | 新增「FlowUs 息流」（flowus.cn）平台支持（公开分享 + 付费/私有分享 + 个人空间链接）；Notion 风格 block-tree 扁平 JSON 渲染（8 类 block：page/paragraph/bullet/ordered/heading/quote/media/code + 5 种 enhancer + 链接片段）；纯 HTTP 链路（公开零 cookie / 付费需 `next_auth`+`next_auth.sig` 双 cookie）+ CDP/Launch 浏览器兜底；图片本地化：headless 浏览器渲染 + 多 pass 滚动 + lazy→eager 抓 `cdn2.flowus.cn` 签名 URL（59/59 全成功） |
 | v0.23.0 | twitter-web-exporter 融合 Phase 2 五项功能：P2-1 头像原图替换（`_normal/_bigger/_mini/_400x400` → 原图）+ P2-3 Retweeters/Favoriters（`/status/<id>/retweets` `/status/<id>/likes` URL 路由 + `x-retweeters` `x-favoriters` CLI）+ P2-4 SearchTimeline `product=People` 人物搜索（`x-so --people`）+ P1-3 ModeratedTimeline thread Phase 8 接入（`X_FETCH_MODERATED_REPLIES` opt-in，404 优雅降级）+ P2-2 X 媒体文件名 pattern 系统（`X_MEDIA_FILENAME_PATTERN` opt-in 9 token + path traversal 安全化）；测试 153 → 193；P1-1 通用 instruction helper 重构推迟 v0.23.1 |
 | v0.22.0 | 融合 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter)：补 5 个高价值 GraphQL operation（Followers / Following / BlueVerifiedFollowers / ListMembers / ListSubscribers / Likes / UserTweetsAndReplies，queryId 取自 fa0311/twitter-openapi）+ 3 个解析鲁棒性增强（TweetTombstone/TweetUnavailable 显式日志 + TimelinePinEntry 置顶提取 + 视频 variant 不过滤 content_type）；新 URL pattern：`/followers` `/following` `/verified_followers` `/likes` `/with_replies` `/i/lists/<id>/members(subscribers)` |

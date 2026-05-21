@@ -199,6 +199,118 @@ def mark_cookie_rate_limited(cookies: dict = None):
     )
 
 
+def count_total_accounts() -> int:
+    """返回当前可用的 Twitter 账号总数（包括限流中的）。"""
+    return len(_load_all_cookie_sets())
+
+
+def count_available_accounts() -> int:
+    """返回当前未被限流的 Twitter 账号数。"""
+    now = time.time()
+    total = count_total_accounts()
+    limited = sum(1 for _, expiry in _rate_limited_accounts.items() if now < expiry)
+    return max(0, total - limited)
+
+
+def earliest_rate_limit_recovery_seconds() -> int:
+    """返回最早一个限流账号距离解封的秒数（无限流则返回 0）。"""
+    if not _rate_limited_accounts:
+        return 0
+    now = time.time()
+    soonest = min(_rate_limited_accounts.values())
+    return max(0, int(soonest - now))
+
+
+def fetch_with_cookie_rotation(
+    fetcher_callable,
+    *args,
+    label: str = "GraphQL",
+    network_retry_delay: float = 5.0,
+    **kwargs,
+):
+    """跨 cookie 账号的统一重试 helper。
+
+    每次失败时重新调用 ``load_twitter_cookies()`` 切换到下一个可用账号，
+    直到拿到非空响应或所有账号都被限流为止。``cookies`` 不需要由调用方提供，
+    helper 内部统一加载和轮换。
+
+    Args:
+        fetcher_callable: 接收 ``*args``（含 ``cookies`` 占位位置）+ ``**kwargs`` 的 GraphQL 调用函数。
+            **注意：调用方必须按 fetcher 签名传位置参数和关键字参数，
+            ``cookies`` 通过 kwargs 注入（fetcher 签名通常为 ``(id, cookies, cursor=...)``）。**
+        label: 日志前缀（如 ``UserTweets``/``Bookmarks``）。
+        network_retry_delay: 切换账号后等待的秒数。
+
+    Returns:
+        (response, cookies)
+            - response 为 None 表示所有账号都尝试过且失败
+            - cookies 为最后一次使用的账号 cookie dict（即便失败也返回，用于日志/上下文）
+    """
+    total = count_total_accounts()
+    if total == 0:
+        logger.error(f"[{label}] 未找到任何 Twitter 账号 Cookie")
+        return None, {}
+
+    last_cookies: dict = {}
+    last_account_key = ""
+
+    for attempt in range(1, total + 1):
+        cookies = load_twitter_cookies()
+        if not cookies:
+            # All accounts limited — load_twitter_cookies() picks soonest-to-recover
+            wait_sec = earliest_rate_limit_recovery_seconds()
+            logger.error(
+                f"[{label}] >>> 所有 {total} 个 Twitter 账号均已被限流 <<< "
+                f"最早 {wait_sec}s 后自动恢复（约 {wait_sec // 60} 分钟）— 终止本次分页"
+            )
+            return None, last_cookies
+
+        last_cookies = cookies
+        account_key = cookies.get("auth_token", "")[:8]
+
+        if attempt > 1:
+            time.sleep(network_retry_delay)
+            available = count_available_accounts()
+            logger.warning(
+                f"[{label}] 切换账号重试 ({attempt}/{total}) — "
+                f"新账号: {account_key}... 剩余可用 {available}/{total}"
+            )
+
+        # Guard: if the rotator returns the same account twice in a row
+        # (single account scenario), avoid an infinite tight loop
+        if attempt > 1 and account_key == last_account_key:
+            logger.error(
+                f"[{label}] >>> 只有 1 个可用账号且仍失败 <<< "
+                f"账号 {account_key}... 已尝试 {attempt} 次，终止"
+            )
+            return None, last_cookies
+
+        last_account_key = account_key
+
+        try:
+            response = fetcher_callable(*args, cookies=cookies, **kwargs)
+        except Exception as exc:
+            logger.error(
+                f"[{label}] 账号 {account_key}... 调用异常: {exc}（将尝试下一个账号）"
+            )
+            response = None
+
+        if response:
+            if attempt > 1:
+                logger.info(
+                    f"[{label}] 切换到账号 {account_key}... 第 {attempt} 次尝试成功"
+                )
+            return response, cookies
+
+    # Should be unreachable: load_twitter_cookies() falls back to soonest-recovering
+    # account once all are limited. This branch handles the edge case where every
+    # attempt returned None without triggering the "all limited" early-exit.
+    logger.error(
+        f"[{label}] >>> 全部 {total} 个账号轮询完毕仍无响应 <<< 终止本次分页"
+    )
+    return None, last_cookies
+
+
 def has_required_cookies(cookies: dict) -> bool:
     """Check if cookies contain both auth_token and ct0 with valid values."""
     for k in REQUIRED_COOKIES:

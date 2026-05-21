@@ -532,30 +532,28 @@ async def search_twitter_keyword(
     graphql_failed = False
 
     for page_num in range(max_pages):
-        response = fetch_search_timeline_page(
+        from feedgrab.fetchers.twitter_cookies import (
+            fetch_with_cookie_rotation,
+            count_total_accounts,
+        )
+        response, rotated_cookies = fetch_with_cookie_rotation(
+            fetch_search_timeline_page,
+            label="X-SO",
             raw_query=query,
-            cookies=cookies,
             cursor=cursor,
             count=20,
             product=product,
         )
-
-        # Retry once (cookie may have rotated after 429)
+        if rotated_cookies:
+            cookies = rotated_cookies
         if not response:
-            cookies = load_twitter_cookies()
-            if not cookies:
-                logger.warning("[X-SO] No available cookies after retry")
-                graphql_failed = True
-                break
-            time.sleep(3)
-            response = fetch_search_timeline_page(
-                raw_query=query, cookies=cookies,
-                cursor=cursor, count=20, product=product,
+            total_accounts = count_total_accounts()
+            logger.warning(
+                f"[X-SO] >>> 第 {page_num + 1} 页所有 {total_accounts} 个账号均失败 <<< "
+                f"累计 {len(all_entries)} 条，停止分页"
             )
-            if not response:
-                logger.warning("[X-SO] GraphQL request failed after retry, stopping")
-                graphql_failed = True
-                break
+            graphql_failed = True
+            break
 
         entries, cursors = parse_search_entries(response)
         if not entries:

@@ -72,15 +72,26 @@ def search_people(keyword: str, cookies: dict) -> Dict[str, Any]:
     per_page = _per_page_count()
 
     for page in range(max_pages):
-        response = fetch_search_timeline_page(
+        from feedgrab.fetchers.twitter_cookies import (
+            fetch_with_cookie_rotation,
+            count_total_accounts,
+        )
+        response, rotated_cookies = fetch_with_cookie_rotation(
+            fetch_search_timeline_page,
+            label="SearchPeople",
             raw_query=keyword,
-            cookies=cookies,
             cursor=cursor,
             count=per_page,
             product="People",
         )
+        if rotated_cookies:
+            cookies = rotated_cookies
         if not response:
-            logger.warning(f"[SearchPeople] 第 {page + 1} 页响应为空，终止")
+            total_accounts = count_total_accounts()
+            logger.warning(
+                f"[SearchPeople] >>> 第 {page + 1} 页所有 {total_accounts} 个账号均失败 <<< "
+                f"累计 {len(all_users)} 个，终止"
+            )
             break
 
         entries, cursors = parse_search_people_entries(response)

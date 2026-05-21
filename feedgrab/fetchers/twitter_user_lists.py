@@ -187,9 +187,23 @@ async def fetch_user_list(url: str, cookies: dict) -> Dict[str, Any]:
     per_page = _per_page_count()
 
     for page in range(max_pages):
-        response = fetcher(target_id, cookies, cursor=cursor, count=per_page)
+        from feedgrab.fetchers.twitter_cookies import (
+            fetch_with_cookie_rotation,
+            count_total_accounts,
+        )
+        response, rotated_cookies = fetch_with_cookie_rotation(
+            fetcher, target_id,
+            label=f"UserList:{mode}",
+            cursor=cursor, count=per_page,
+        )
+        if rotated_cookies:
+            cookies = rotated_cookies
         if not response:
-            logger.warning(f"[UserList:{mode}] 第 {page + 1} 页响应为空，终止")
+            total_accounts = count_total_accounts()
+            logger.warning(
+                f"[UserList:{mode}] >>> 第 {page + 1} 页所有 {total_accounts} 个账号均失败 <<< "
+                f"累计 {len(all_users)} 个，终止"
+            )
             break
 
         entries, cursors = parser(response)

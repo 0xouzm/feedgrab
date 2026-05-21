@@ -307,10 +307,23 @@ async def fetch_list_tweets(
 
     for page in range(max_pages):
         logger.info(f"[ListTweets] 分页 {page + 1}/{max_pages}...")
-        response = fetch_list_tweets_page(list_id, cookies, cursor=cursor)
+        from feedgrab.fetchers.twitter_cookies import (
+            fetch_with_cookie_rotation,
+            count_total_accounts,
+        )
+        response, rotated_cookies = fetch_with_cookie_rotation(
+            fetch_list_tweets_page, list_id,
+            label="ListTweets", cursor=cursor,
+        )
+        if rotated_cookies:
+            cookies = rotated_cookies
 
         if not response:
-            logger.warning(f"[ListTweets] 第 {page + 1} 页无响应，停止分页")
+            total_accounts = count_total_accounts()
+            logger.warning(
+                f"[ListTweets] >>> 第 {page + 1} 页所有 {total_accounts} 个账号均失败 <<< "
+                f"已抓取 {len(all_tweet_entries)} 条，停止分页"
+            )
             break
 
         entries, cursors = parse_list_tweets_entries(response)

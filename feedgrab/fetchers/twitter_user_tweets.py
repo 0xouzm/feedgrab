@@ -206,17 +206,26 @@ async def fetch_user_tweets(
     for page in range(max_pages):
         logger.info(f"[{mode_label}] 获取第 {page + 1} 页...")
 
-        response = page_fetcher(user_id, cookies, cursor=cursor)
+        from feedgrab.fetchers.twitter_cookies import (
+            fetch_with_cookie_rotation,
+            count_total_accounts,
+        )
+        response, rotated_cookies = fetch_with_cookie_rotation(
+            page_fetcher,
+            user_id,
+            label=mode_label,
+            network_retry_delay=5.0,
+            cursor=cursor,
+        )
+        # Update working cookies for subsequent pages (best-effort, rotation persists)
+        if rotated_cookies:
+            cookies = rotated_cookies
         if not response:
-            # Retry up to 3 times (handles transient connection resets)
-            for retry in range(1, 4):
-                logger.warning(f"[{mode_label}] API 返回空响应，5秒后第 {retry}/3 次重试...")
-                time.sleep(5)
-                response = page_fetcher(user_id, cookies, cursor=cursor)
-                if response:
-                    break
-        if not response:
-            logger.error("[UserTweets] 3次重试后仍无响应，停止分页")
+            total_accounts = count_total_accounts()
+            logger.error(
+                f"[{mode_label}] >>> 第 {page + 1} 页所有 {total_accounts} 个账号均失败 <<< "
+                f"已抓取 {len(all_tweet_entries)} 条，停止分页"
+            )
             break
 
         entries, cursors = parse_user_tweets_entries(response)

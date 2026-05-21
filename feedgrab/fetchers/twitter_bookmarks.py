@@ -432,12 +432,28 @@ async def fetch_bookmarks(bookmark_url: str, cookies: dict) -> dict:
     for page in range(max_pages):
         logger.info(f"[Bookmarks] 获取第 {page + 1} 页...")
 
+        from feedgrab.fetchers.twitter_cookies import (
+            fetch_with_cookie_rotation,
+            count_total_accounts,
+        )
         if folder_id:
-            response = fetch_bookmark_folder_page(folder_id, cookies, cursor=cursor)
+            response, rotated_cookies = fetch_with_cookie_rotation(
+                fetch_bookmark_folder_page, folder_id,
+                label="Bookmarks", cursor=cursor,
+            )
         else:
-            response = fetch_bookmarks_page(cookies, cursor=cursor)
+            response, rotated_cookies = fetch_with_cookie_rotation(
+                fetch_bookmarks_page,
+                label="Bookmarks", cursor=cursor,
+            )
+        if rotated_cookies:
+            cookies = rotated_cookies
         if not response:
-            logger.error("[Bookmarks] API 返回空响应，停止分页")
+            total_accounts = count_total_accounts()
+            logger.error(
+                f"[Bookmarks] >>> 第 {page + 1} 页所有 {total_accounts} 个账号均失败 <<< "
+                f"已抓取 {len(all_tweet_entries)} 条，停止分页"
+            )
             break
 
         entries, cursors = parse_bookmark_entries(response)
