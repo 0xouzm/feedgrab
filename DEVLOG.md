@@ -2,6 +2,37 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-06-25 · v0.25.0-dev · 第一阶段 service layer 架构升级
+
+### 背景
+
+为后续 GUI 客户端和 MCP 共用同一后端能力，新增 `feedgrab/service/` 服务层。第一阶段目标是建立稳定结构化 API，不改现有 CLI 命令、输出目录、Markdown/front matter、去重索引、session 文件格式或平台抓取策略。
+
+### 实施
+
+- 新增 `feedgrab/service/models.py`：`FetchRequest`、`FetchResult`、`Artifact`、`ProgressEvent`、`ServiceError`、`DiagnosticResult`，均提供 JSON-safe `to_dict()`。
+- 新增 `FetchService.fetch_url()` / `fetch_urls()` / `detect_platform()` / `list_inbox()`，内部复用现有 `UniversalReader.read()`，保留原有落盘、媒体下载和去重副作用。
+- `UniversalReader.read()` 在保存 Markdown 后通过临时属性 `_feedgrab_saved_path` 暴露 artifact 路径，不写入 `UnifiedContent.extra`，不影响 `to_dict()`、Markdown 或 front matter。
+- `cmd_fetch()` 改为调用 `FetchService`，终端输出格式保持：普通单 URL 仍打印 `[source_type] title + url + content preview`，特殊批量 URL 仍打印 summary content，多 URL 仍打印 `Fetched N/M URLs`。
+- `mcp_server.py` 改为通过 `FetchService` 调用 reader 能力，修复旧的 `UniversalReader(inbox=...)` 入口漂移；MCP 工具名和 pretty JSON 返回格式保持不变。
+- 新增低风险服务骨架：`OutputService`、`LoginService`、`SettingsService`、`DoctorService`、`JobService`，均只包装现有实现，不引入 GUI/桌面/授权逻辑。
+
+### 测试
+
+- 新增 `tests/test_service_layer.py` 覆盖 service models、`FetchService`、CLI 兼容层、MCP service 调用。
+- 红灯确认：新增测试最初因 `feedgrab.service` 缺失、CLI 无 `FetchService`、MCP 旧构造漂移失败。
+- 绿灯结果：`python -m pytest` 通过 206 tests；本机 `.pytest_cache` 无写权限，仅产生 cache warning。
+- CLI smoke：`python -m feedgrab.cli` 正常打印帮助页。
+- MCP smoke：`python -c "import mcp_server; print('mcp import ok')"` 正常导入。
+
+### 兼容策略
+
+- 不拆平台 fetcher，不改变 `UniversalReader.read()` 的公开返回类型。
+- 不改变 `save_to_markdown()`、`download_media()`、`dedup.py` 的路径和文件格式语义。
+- MCP `read_url()` / `read_batch()` 仍返回 `UnifiedContent.to_dict()` 的 pretty JSON 字符串，artifact 路径仅作为 service 结果字段提供给直接调用 service 的客户端。
+
+---
+
 ## 2026-05-21 · v0.24.1 · Twitter 多账号 429 轮换修复
 
 ### 背景

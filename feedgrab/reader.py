@@ -235,6 +235,10 @@ class UniversalReader:
             if content.source_type == SourceType.TWITTER and not content.category:
                 content.category = "status"
             saved_path = save_to_markdown(content)
+            # Service-layer metadata only. This is intentionally not stored in
+            # UnifiedContent.extra, so Markdown/front matter and to_dict() stay
+            # backward-compatible.
+            setattr(content, "_feedgrab_saved_path", saved_path)
 
             # Feishu: download images to {md_dir}/attachments/{subdir}/ after saving
             if (saved_path

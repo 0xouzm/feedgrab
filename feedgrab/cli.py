@@ -44,6 +44,7 @@ logger.remove()
 logger.add(sys.stderr, level=_log_level)
 
 from feedgrab.reader import UniversalReader
+from feedgrab.service import FetchService
 
 
 def _read_clipboard() -> str:
@@ -95,19 +96,19 @@ def cmd_clip():
 
 def cmd_fetch(urls: list):
     """Fetch one or more URLs."""
-    reader = UniversalReader()
+    fetch_service = FetchService()
 
     async def run():
         if len(urls) == 1:
             # Bookmark batch mode: special output
             if "/i/bookmarks" in urls[0]:
-                item = await reader.read(urls[0])
+                item = (await fetch_service.fetch_url(urls[0])).content
                 print(f"\n\u2705 {item.content}")
                 return
 
             # List tweets batch mode: special output
             if "/i/lists/" in urls[0] and "x.com" in urls[0]:
-                item = await reader.read(urls[0])
+                item = (await fetch_service.fetch_url(urls[0])).content
                 print(f"\n\u2705 {item.content}")
                 return
 
@@ -115,16 +116,17 @@ def cmd_fetch(urls: list):
             if ("/user/profile/" in urls[0] and "xiaohongshu.com" in urls[0]) or \
                ("/search_result" in urls[0] and "xiaohongshu.com" in urls[0]) or \
                ("x.com/" in urls[0] and "/status/" not in urls[0] and "/i/" not in urls[0]):
-                item = await reader.read(urls[0])
+                item = (await fetch_service.fetch_url(urls[0])).content
                 print(f"\n\u2705 {item.content}")
                 return
 
-            item = await reader.read(urls[0])
+            item = (await fetch_service.fetch_url(urls[0])).content
             print(f"\u2705 [{item.source_type.value}] {item.title[:60]}")
             print(f"   {item.url}")
             print(f"   {item.content[:200]}...")
         else:
-            items = await reader.read_batch(urls)
+            results = await fetch_service.fetch_urls(urls)
+            items = [result.content for result in results]
             for item in items:
                 print(f"\u2705 [{item.source_type.value}] {item.title[:60]}")
             print(f"\n\U0001f4e6 Fetched {len(items)}/{len(urls)} URLs")

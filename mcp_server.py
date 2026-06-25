@@ -23,15 +23,15 @@ from mcp.server.fastmcp import FastMCP
 
 load_dotenv()
 
-from feedgrab.reader import UniversalReader
 from feedgrab.schema import UnifiedInbox
+from feedgrab.service import FetchService
 
 mcp = FastMCP(
     "feedgrab",
     instructions="Universal content reader — give it any URL, get structured content back.",
 )
 
-reader = UniversalReader(inbox=UnifiedInbox())
+fetch_service = FetchService(inbox=UnifiedInbox())
 
 
 @mcp.tool()
@@ -46,7 +46,8 @@ async def read_url(url: str) -> str:
     """
     import json
 
-    content = await reader.read(url)
+    result = await fetch_service.fetch_url(url)
+    content = result.content
     result = content.to_dict()
     # Keep it readable
     return json.dumps(result, ensure_ascii=False, indent=2)
@@ -61,7 +62,8 @@ async def read_batch(urls: list[str]) -> str:
     """
     import json
 
-    contents = await reader.read_batch(urls)
+    results = await fetch_service.fetch_urls(urls)
+    contents = [result.content for result in results]
     results = [c.to_dict() for c in contents]
     return json.dumps(results, ensure_ascii=False, indent=2)
 
@@ -75,7 +77,7 @@ async def list_inbox() -> str:
     """
     import json
 
-    items = [item.to_dict() for item in reader.inbox.items]
+    items = [item.to_dict() for item in fetch_service.list_inbox()]
     return json.dumps(items, ensure_ascii=False, indent=2)
 
 
@@ -87,7 +89,7 @@ async def detect_platform(url: str) -> str:
     Returns the platform name: youtube, bilibili, twitter, wechat,
     xhs, telegram, rss, or generic.
     """
-    return reader._detect_platform(url)
+    return fetch_service.detect_platform(url)
 
 
 if __name__ == "__main__":

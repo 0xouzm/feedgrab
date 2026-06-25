@@ -647,6 +647,26 @@ async def main():
 asyncio.run(main())
 ```
 
+### 结构化 Service API
+
+新客户端优先使用 `feedgrab.service.FetchService`。它复用现有 `UniversalReader`、Markdown 保存、媒体本地化和去重逻辑，但返回结构化 `FetchResult`，其中 `content` 是原有 `UnifiedContent`，`artifacts` 会记录本次生成的 Markdown 路径。
+
+```python
+import asyncio
+from feedgrab.service import FetchService
+
+async def main():
+    service = FetchService()
+    result = await service.fetch_url("https://github.com/iBigQiang/feedgrab")
+    print(result.content.title)
+    for artifact in result.artifacts:
+        print(artifact.kind, artifact.path)
+
+asyncio.run(main())
+```
+
+CLI 命令仍保持原有行为；MCP 服务器也通过同一 service 层调用抓取能力。
+
 ## 配置
 
 复制 `.env.example` 为 `.env`：

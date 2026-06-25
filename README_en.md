@@ -570,6 +570,26 @@ async def main():
 asyncio.run(main())
 ```
 
+### Structured Service API
+
+New clients should prefer `feedgrab.service.FetchService`. It reuses the existing `UniversalReader`, Markdown persistence, media localization, and dedup logic, while returning a structured `FetchResult`. `content` is the existing `UnifiedContent`, and `artifacts` records generated Markdown paths.
+
+```python
+import asyncio
+from feedgrab.service import FetchService
+
+async def main():
+    service = FetchService()
+    result = await service.fetch_url("https://github.com/iBigQiang/feedgrab")
+    print(result.content.title)
+    for artifact in result.artifacts:
+        print(artifact.kind, artifact.path)
+
+asyncio.run(main())
+```
+
+CLI commands keep their existing behavior. The MCP server now calls the same service layer for fetch operations.
+
 ## Configuration
 
 Copy `.env.example` to `.env`:
