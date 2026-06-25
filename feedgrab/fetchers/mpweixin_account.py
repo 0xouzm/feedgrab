@@ -243,6 +243,7 @@ async def fetch_account_articles(
         context = await browser.new_context(**ctx_opts)
         page = await context.new_page()
         await setup_resource_blocking(page)
+        date_cutoff_reached = False
 
         try:
             # Navigate to MP backend to establish session context
@@ -274,7 +275,6 @@ async def fetch_account_articles(
             # Step 2: Paginate article list
             begin = resume_begin
             page_size = 5
-            date_cutoff_reached = False
 
             while not date_cutoff_reached:
                 logger.info(f"[mpweixin-id] Fetching articles offset={begin}")
