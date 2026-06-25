@@ -198,7 +198,7 @@ CHROME_CDP_LOGIN=true feedgrab login flowus                    # CDP cookie extr
 feedgrab login flowus                                          # Or Playwright browser manual login
 feedgrab https://flowus.cn/share/<uuid>?code=<paid_code>       # Subsequent fetches reuse sessions/flowus.json
 
-# Localize images (default off — keeps remote URLs)
+# Image mode: default uses previewable signed online URLs; enable to save local attachments
 FLOWUS_DOWNLOAD_IMAGES=true feedgrab https://flowus.cn/share/<uuid>?code=<code>
 
 

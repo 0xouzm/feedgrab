@@ -450,11 +450,54 @@ def _render_segments(segments: list) -> str:
     return "".join(parts)
 
 
+def _flowus_remote_image_src(
+    link: str,
+    oss_name: str,
+    online_image_urls: Optional[Dict[str, str]] = None,
+) -> str:
+    """Choose a previewable remote image URL for FlowUs online mode."""
+    normalized_oss = (oss_name or "").lstrip("/")
+    if online_image_urls and normalized_oss:
+        signed = online_image_urls.get(normalized_oss) or online_image_urls.get(oss_name)
+        if signed:
+            return signed
+    return link or (f"https://cdn2.flowus.cn/{normalized_oss}" if normalized_oss else "")
+
+
+def _collect_image_oss_names(blocks: Dict[str, dict], root_id: str) -> List[str]:
+    """Collect FlowUs image ossName values in document order."""
+    names: List[str] = []
+    seen_names: set = set()
+    visited: set = set()
+
+    def _walk(block_id: str) -> None:
+        if block_id in visited:
+            return
+        visited.add(block_id)
+        block = blocks.get(block_id)
+        if not block:
+            return
+
+        data = block.get("data", {}) or {}
+        if block.get("type") == _BT_MEDIA and (data.get("display") or "").lower() == "image":
+            oss_name = (data.get("ossName") or "").lstrip("/")
+            if oss_name and oss_name not in seen_names:
+                seen_names.add(oss_name)
+                names.append(oss_name)
+
+        for child_id in block.get("subNodes", []) or []:
+            _walk(child_id)
+
+    _walk(root_id)
+    return names
+
+
 def _walk_blocks(
     blocks: Dict[str, dict],
     root_id: str,
     img_subdir: str = "",
     localize_images: bool = False,
+    online_image_urls: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, List[dict]]:
     """Walk the block tree starting from root_id and render to Markdown.
 
@@ -525,16 +568,15 @@ def _walk_blocks(
         elif btype == _BT_MEDIA:
             display = (data.get("display") or "").lower()
             link = data.get("link") or ""
-            oss_name = data.get("ossName") or ""
+            oss_name = (data.get("ossName") or "").lstrip("/")
             ext = (data.get("extName") or "").lower()
             alt_text = _render_segments(segs) or (oss_name.split("/")[-1] if oss_name else "media")
 
             if display == "image":
-                # Prefer the original `link` for the remote-mode markdown
-                # (Feishu CDN URL the author embedded). When localizing, the
-                # downloader will resolve the real FlowUs-signed CDN URL from
-                # the rendered DOM by matching `ossName`.
-                src = link or (f"https://cdn2.flowus.cn/{oss_name}" if oss_name else "")
+                # Remote mode should still be previewable, so prefer FlowUs'
+                # signed CDN URL when the caller resolved one from the DOM.
+                # Local mode keeps attachment paths and downloads separately.
+                src = _flowus_remote_image_src(link, oss_name, online_image_urls)
                 if localize_images and (oss_name or link):
                     fname = f"{img_idx[0]:03d}_image.{ext or 'png'}"
                     img_idx[0] += 1
@@ -698,8 +740,20 @@ async def fetch_flowus(url: str) -> Dict[str, Any]:
     create_time = _ts_to_local(root.get("createdAt", 0))
     edit_time = _ts_to_local(root.get("updatedAt", 0))
 
+    online_image_urls: Dict[str, str] = {}
+    if not localize:
+        oss_names = _collect_image_oss_names(blocks, doc_uuid)
+        if oss_names:
+            logger.info(f"[flowus] Resolving online image URLs from DOM ({len(oss_names)} images)...")
+            online_image_urls = _resolve_image_urls_from_dom(url, oss_names)
+            logger.info(f"[flowus] Online image URL resolution: {len(online_image_urls)} signed URLs found")
+
     md_body, images_info = _walk_blocks(
-        blocks, doc_uuid, img_subdir=item_id, localize_images=localize,
+        blocks,
+        doc_uuid,
+        img_subdir=item_id,
+        localize_images=localize,
+        online_image_urls=online_image_urls,
     )
 
     return {

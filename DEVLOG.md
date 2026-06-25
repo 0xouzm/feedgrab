@@ -16,6 +16,7 @@
 - `cmd_fetch()` 改为调用 `FetchService`，终端输出格式保持：普通单 URL 仍打印 `[source_type] title + url + content preview`，特殊批量 URL 仍打印 summary content，多 URL 仍打印 `Fetched N/M URLs`。
 - `mcp_server.py` 改为通过 `FetchService` 调用 reader 能力，修复旧的 `UniversalReader(inbox=...)` 入口漂移；MCP 工具名和 pretty JSON 返回格式保持不变。
 - 新增低风险服务骨架：`OutputService`、`LoginService`、`SettingsService`、`DoctorService`、`JobService`，均只包装现有实现，不引入 GUI/桌面/授权逻辑。
+- FlowUs 验收修复：默认在线图片 URL 模式改为解析并写入 `cdn2.flowus.cn` 签名图片链接，避免保留易过期的飞书 `asynccode` 链接；`FLOWUS_DOWNLOAD_IMAGES=true` 时仍保持本地 `attachments/` 下载模式。
 
 ### 测试
 
@@ -24,6 +25,7 @@
 - 绿灯结果：`python -m pytest` 通过 206 tests；本机 `.pytest_cache` 无写权限，仅产生 cache warning。
 - CLI smoke：`python -m feedgrab.cli` 正常打印帮助页。
 - MCP smoke：`python -c "import mcp_server; print('mcp import ok')"` 正常导入。
+- FlowUs 实测：在线 URL 版生成 64 个 `cdn2.flowus.cn` 签名图片链接，抽样 HEAD 为 `200 image/png`；本地附件版生成 64 个 `attachments/5fc04c30c5dd/` 引用和 64 个图片文件。
 
 ### 兼容策略
 
@@ -178,7 +180,7 @@ if not response:
 - **公开 + 私有双兼容**：无 cookie 也先尝试一次 HTTP；只有 API 返回 1407/1401/401/403 这类鉴权码且本地无 cookie 时才下沉浏览器。公开链接零开销直出。
 - **JWT cookie 持久化**：CDP 提取本机 Chrome 的 `next_auth` + `next_auth.sig` 双 cookie 后写入 `sessions/flowus.json`，后续重复抓取直接走 Tier 0 HTTP 复用。Launch fallback 路径强制要求**两个** cookie 同时存在才落盘，避免用残缺 cookie 污染未来 CDP 提取结果。
 - **`next_auth.sig` 的关键性**：实测发现 FlowUs 鉴权用 `next_auth`（JWT body）+ `next_auth.sig`（HMAC 签名）**两条 cookie 联合验证**，缺任何一个都返回 1407。这与一般"单 JWT cookie"模式不同，且容易被忽略（DevTools 里两条 cookie 分两行展示，复制 next_auth 单条值时签名 cookie 不会被一起带上）。
-- **媒体下载默认关**：FlowUs 文档中的图片往往是飞书 `my.feishu.cn/space/api/box/stream/download/asynccode/?code=...` 签名链接（≈1 小时过期），开启 `FLOWUS_DOWNLOAD_IMAGES=true` 才本地化。
+- **媒体下载默认关**：FlowUs 默认输出在线 `cdn2.flowus.cn` 签名 CDN 图片 URL，便于 Obsidian 直接预览；开启 `FLOWUS_DOWNLOAD_IMAGES=true` 时下载为本地 `attachments/`。
 
 ### 实施清单
 
@@ -249,7 +251,7 @@ FlowUs 图片在 block JSON 里只有 `data.link`（作者引用的飞书 CDN UR
 
 ### 风险与缓解
 
-- **飞书图床链接时效性**：FlowUs 文档内的图片大量引用 `my.feishu.cn/space/api/box/stream/download/asynccode/?code=...`（1 小时过期）。默认 `FLOWUS_DOWNLOAD_IMAGES=false` 保留原链接，开启则本地化
+- **飞书图床链接时效性**：FlowUs 文档内的图片大量引用 `my.feishu.cn/space/api/box/stream/download/asynccode/?code=...`（1 小时过期）。默认 `FLOWUS_DOWNLOAD_IMAGES=false` 会解析为可预览的 FlowUs 签名 CDN URL；开启则本地化到 `attachments/`
 - **付费/私有文档**：API 返回 `code=1407` 时本地无 cookie 才下沉浏览器，已登录场景直接 Tier 0 拿到；明确终止码（1407/1404/401/403）+ 已有 cookie 时不再下沉 Jina，避免 fallback 写出垃圾文件
 - **JWT 过期**：`next_auth` 默认 30 天有效。失效后再次走 CDP 即可自动刷新 `sessions/flowus.json`
 

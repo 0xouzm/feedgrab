@@ -221,7 +221,7 @@ CHROME_CDP_LOGIN=true feedgrab login flowus                    # CDP 直提本�
 feedgrab login flowus                                          # 或弹 Playwright 浏览器手动登录
 feedgrab https://flowus.cn/share/<uuid>?code=<paid_code>       # 后续抓取直接复用 sessions/flowus.json
 
-# 开启图片本地化（默认远程链接，开启后 headless 浏览器解析签名 URL → 全部下载）
+# 图片模式：默认在线签名 URL 可预览；开启后下载为本地 attachments/
 FLOWUS_DOWNLOAD_IMAGES=true feedgrab https://flowus.cn/share/<uuid>?code=<code>
 
 # 自动检测本机 Chrome UA 并写入 .env（推荐首次部署时运行）
