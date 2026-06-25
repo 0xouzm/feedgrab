@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.24.1
+- **当前版本**：v0.25.0
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -36,7 +36,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 | LinuxDo / IDCFlare / Discourse | Discourse Topic JSON API → CDP 复用 Chrome → Playwright 页面内 fetch → Jina（默认主贴 + 楼主自回，可切换完整楼层） |
 | 飞书/Lark | Open API → CDP 直连 → Playwright PageMain → Jina（+ 知识库批量 + 嵌入表格 + 图片；修复虚拟目录树与表格错位） |
 | 金山文档 | Playwright ProseMirror DOM（虚拟滚动 + 代码块 + shapes API 图片 + CDP 直连） |
-| FlowUs 息流 | Tier 0 纯 HTTP `/api/docs/{uuid}`（公开零 cookie / 付费需 `next_auth`+`next_auth.sig` 双 cookie）→ CDP → Launch+saved session → Jina；Notion 风格 block-tree 渲染；图片本地化用 headless 浏览器渲染抓 `cdn2.flowus.cn` 签名 URL 后直拉 |
+| FlowUs 息流 | Tier 0 纯 HTTP `/api/docs/{uuid}`（公开零 cookie / 付费需 `next_auth`+`next_auth.sig` 双 cookie）→ CDP → Launch+saved session → Jina；Notion 风格 block-tree 渲染；默认在线签名图 URL，可开启本地图片附件 |
 | 有道云笔记 | JSON API → Playwright iframe DOM → Jina（+ 图片下载） |
 | 知乎 | API v4 → Playwright CDP/DOM → Jina（+ 问答前 3 楼 + 专栏 + `zhihu-so`） |
 | Telegram | Telethon |
@@ -83,6 +83,7 @@ feedgrab/
 │   ├── reader.py              # URL 调度器（UniversalReader 平台检测 + 路由 + URL 规范化）
 │   ├── schema.py              # 统一数据模型（UnifiedContent）
 │   ├── login.py               # 浏览器登录管理 + CDP Cookie 提取
+│   ├── service/               # 服务层 API（FetchService / Output / Login / Settings / Doctor / Job）
 │   ├── fetchers/              # 各平台 fetcher（见"关键文件速查"）
 │   └── utils/                 # storage / dedup / http_client / jsonld / transcribe / bilibili_wbi / media
 ├── skills/                    # Claude Code 技能
@@ -97,6 +98,12 @@ feedgrab/
 
 > 详细实现细节、每个平台的抓取逻辑见 **DEVLOG.md** 对应版本条目。
 > 本节只记录架构性的、跨模块的、易忘记的核心约定。
+
+### Service 层
+
+- `feedgrab/service/` 是 CLI、MCP 和未来 GUI 复用的结构化后端 API 层。
+- `FetchService.fetch_url()` 内部继续复用 `UniversalReader.read()`，保留既有 Markdown 保存、媒体本地化、去重索引和 session 语义。
+- Service 结果通过 `FetchResult.artifacts` 暴露 Markdown 产物路径；不把 artifact 写入 `UnifiedContent.extra`，避免改变 Markdown/front matter 或 MCP `to_dict()` 兼容输出。
 
 ### 输出格式
 
@@ -186,6 +193,7 @@ feedgrab/
 
 | 版本 | 功能 |
 |------|------|
+| v0.25.0 | 第一阶段 service layer 架构升级：新增 `feedgrab/service/` 的结构化 API（models / FetchService / Output / Login / Settings / Doctor / Job），CLI 单 URL 和 MCP 入口改为共用 `FetchService`，保持终端命令、Markdown 输出、去重索引和 session 格式兼容；修复 MP 后台 session 失效错误被掩盖问题；FlowUs 在线图片模式改为写入可预览的 `cdn2.flowus.cn` 签名 URL，本地模式仍通过 `FLOWUS_DOWNLOAD_IMAGES=true` 下载 `attachments/`；测试 210 passed |
 | v0.24.1 | 修复 Twitter 多账号 429 轮换：抽出 `fetch_with_cookie_rotation()` helper（`twitter_cookies.py`），统一 7 个批量 fetcher（user_tweets / bookmarks / list / user_lists / retweeters / search_people / keyword_search）的"账号限流后跨账号重试"逻辑；之前重试仅复用同一被限流账号 3 次就停（user_tweets）或直接 break（其余 6 个），现在改为**每个账号都试一遍**才真正终止；关键日志统一加 `>>> ... <<<` 高亮 + 剩余可用账号数 + 最早解封倒计时；测试 193 → 201；实测 `feedgrab https://x.com/AdrianPunk115` 抓取量 557 → 632（+13.4%） |
 | v0.24.0 | 新增「FlowUs 息流」（flowus.cn）平台支持（公开分享 + 付费/私有分享 + 个人空间链接）；Notion 风格 block-tree 扁平 JSON 渲染（8 类 block：page/paragraph/bullet/ordered/heading/quote/media/code + 5 种 enhancer + 链接片段）；纯 HTTP 链路（公开零 cookie / 付费需 `next_auth`+`next_auth.sig` 双 cookie）+ CDP/Launch 浏览器兜底；图片本地化：headless 浏览器渲染 + 多 pass 滚动 + lazy→eager 抓 `cdn2.flowus.cn` 签名 URL（59/59 全成功） |
 | v0.23.0 | twitter-web-exporter 融合 Phase 2 五项功能：P2-1 头像原图替换（`_normal/_bigger/_mini/_400x400` → 原图）+ P2-3 Retweeters/Favoriters（`/status/<id>/retweets` `/status/<id>/likes` URL 路由 + `x-retweeters` `x-favoriters` CLI）+ P2-4 SearchTimeline `product=People` 人物搜索（`x-so --people`）+ P1-3 ModeratedTimeline thread Phase 8 接入（`X_FETCH_MODERATED_REPLIES` opt-in，404 优雅降级）+ P2-2 X 媒体文件名 pattern 系统（`X_MEDIA_FILENAME_PATTERN` opt-in 9 token + path traversal 安全化）；测试 153 → 193；P1-1 通用 instruction helper 重构推迟 v0.23.1 |
@@ -214,6 +222,7 @@ feedgrab/
 
 | 需求 | 看哪个文件 |
 |------|-----------|
+| 结构化 service API | `feedgrab/service/`，重点 `fetch.py` / `models.py` |
 | 新增 CLI 命令 | `cli.py → main()` 路由 + `cmd_xxx()` |
 | 新增环境变量 | `config.py` + `.env.example` |
 | 新增平台 fetcher | `fetchers/xxx.py` + `reader.py` 路由 |

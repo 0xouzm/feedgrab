@@ -86,6 +86,9 @@ feedgrab login kdocs
 
 # Zhihu (知乎) — opens browser for login
 feedgrab login zhihu
+
+# FlowUs (息流) — opens browser for login
+feedgrab login flowus
 ```
 
 **Tip**: If you have Chrome running with remote debugging enabled, set `CHROME_CDP_LOGIN=true` in `.env` to extract cookies from your existing browser session without re-login.
@@ -149,6 +152,10 @@ FEISHU_APP_ID=your_app_id
 FEISHU_APP_SECRET=your_secret
 FEISHU_DOWNLOAD_IMAGES=true
 FEISHU_CDP_ENABLED=false
+
+# FlowUs
+FLOWUS_CDP_ENABLED=true
+FLOWUS_DOWNLOAD_IMAGES=false      # false=signed online URLs, true=local attachments
 
 # LinuxDo / Discourse
 LINUXDO_CDP_ENABLED=true

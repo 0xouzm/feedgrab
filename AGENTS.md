@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.23.0
+- **当前版本**：v0.25.0
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -37,6 +37,7 @@ feedgrab 由两个项目融合升级而来：
 | LinuxDo / IDCFlare / Discourse | Discourse Topic JSON API → CDP 复用 Chrome → Playwright 页面内 fetch → Jina（默认主贴 + 楼主自回，可切换完整楼层） |
 | 飞书/Lark | Open API → CDP 直连 → Playwright PageMain Block 树 → Jina（单篇 + 知识库批量 + 嵌入表格 + 图片下载；修复虚拟目录树与表格错位） |
 | 金山文档/KDocs | Playwright ProseMirror DOM 提取（虚拟滚动 + 代码块 + 图片 shapes API + CDP 直连） |
+| FlowUs 息流 | Tier 0 纯 HTTP `/api/docs/{uuid}`（公开零 cookie / 付费需 `next_auth`+`next_auth.sig` 双 cookie）→ CDP → Launch+saved session → Jina；Notion 风格 block-tree 渲染；默认在线签名图 URL，可开启本地图片附件 |
 | 有道云笔记 | JSON API（零依赖）→ Playwright iframe DOM → Jina（单篇 + 图片下载） |
 | 知乎 | API v4 → Playwright CDP/DOM → Jina（单篇问答前 3 楼 + 专栏文章 + 关键词搜索 `zhihu-so`） |
 | Telegram | Telethon |
@@ -97,6 +98,7 @@ feedgrab/
 │   ├── reader.py              # URL 调度器（UniversalReader — 平台检测 + 路由 + URL 规范化）
 │   ├── schema.py              # 统一数据模型（UnifiedContent）
 │   ├── login.py               # 浏览器登录管理器（+ CDP Cookie 提取）
+│   ├── service/               # 服务层 API（FetchService / Output / Login / Settings / Doctor / Job）
 │   ├── fetchers/
 │   │   ├── jina.py            # Jina Reader（万能兜底）
 │   │   ├── browser.py         # 隐身浏览器引擎（patchright Tier 1 → playwright Tier 3 + stealth flags）
@@ -151,6 +153,10 @@ feedgrab/
 ```
 
 ## 关键设计决策
+
+### Service 层（`feedgrab/service/`）
+
+`feedgrab/service/` 是 CLI、MCP 和未来 GUI 复用的结构化后端 API 层。`FetchService.fetch_url()` 内部继续复用 `UniversalReader.read()`，保留既有 Markdown 保存、媒体本地化、去重索引和 session 语义。Service 通过 `FetchResult.artifacts` 暴露产物路径，不把 artifact 写入 `UnifiedContent.extra`，避免改变 Markdown/front matter 或 MCP `to_dict()` 兼容输出。
 
 ### GitHub 仓库 README 抓取（`fetchers/github.py`）
 
@@ -407,6 +413,7 @@ yt-dlp 默认只启用 deno。`_js_runtime_args()` 自动检测 deno/node/bun �
 
 | 版本 | 功能 |
 |------|------|
+| v0.25.0 | 第一阶段 service layer 架构升级：新增 `feedgrab/service/` 的结构化 API（models / FetchService / Output / Login / Settings / Doctor / Job），CLI 单 URL 和 MCP 入口改为共用 `FetchService`，保持终端命令、Markdown 输出、去重索引和 session 格式兼容；修复 MP 后台 session 失效错误被掩盖问题；FlowUs 在线图片模式改为写入可预览的 `cdn2.flowus.cn` 签名 URL，本地模式仍通过 `FLOWUS_DOWNLOAD_IMAGES=true` 下载 `attachments/`；测试 210 passed |
 | v0.21.0 | 新增「知识星球」（Zsxq）平台支持（articles.zsxq.com 长文章 + wx.zsxq.com 短帖 + t.zsxq.com 短链 302 解析）；4 级 Tier 链路 + 五形态 topic 渲染（含 solution）+ 三态评论筛选 |
 | v0.20.1 | 修复 Twitter 长 thread 被误判为 Article 导致 quoted tweet 丢失（`schema.from_twitter` 改用 `_has_article_body` 看 article_data 实际内容） |
 | v0.20.0 | 五平台扩展：HackerNews / Medium / Reddit / Weibo / Douyin |
@@ -431,6 +438,7 @@ yt-dlp 默认只启用 deno。`_js_runtime_args()` 自动检测 deno/node/bun �
 
 | 需求 | 看哪个文件 |
 |------|-----------|
+| 结构化 service API | `feedgrab/service/`，重点 `fetch.py` / `models.py` |
 | 新增 CLI 命令 | `cli.py` → `main()` 路由 + `cmd_xxx()` |
 | 新增环境变量 | `config.py` + `.env.example` |
 | 新增平台 fetcher | `fetchers/xxx.py` + `reader.py` 路由 |
