@@ -1,6 +1,6 @@
 ---
 name: feedgrab-batch
-description: Batch content grabber — bulk fetch bookmarks, user tweets, search results, author notes, wiki pages, and more from X/Twitter, Xiaohongshu, WeChat, YouTube, Feishu, Zhihu. Use when user wants to batch/bulk fetch, search keywords, or grab all posts from an account.
+description: Batch content grabber — bulk fetch bookmarks, user tweets, search results, author notes, wiki pages, subreddit posts, and more from X/Twitter, Xiaohongshu, Reddit, WeChat, YouTube, Feishu, Zhihu. Use when user wants to batch/bulk fetch, search keywords, or grab all posts from an account.
 ---
 
 # feedgrab-batch — Batch Content Grabber
@@ -56,10 +56,29 @@ X_LIST_TWEETS_SUMMARY=true feedgrab https://x.com/i/lists/LIST_ID  # + summary t
 feedgrab x-so "AI Agent"                          # Search tweets
 feedgrab x-so "AI Agent" --days 7                 # Last 7 days
 feedgrab x-so "AI Agent" --min-faves 100          # Min 100 likes
+feedgrab x-so WorkBuddy --lang zh+zxx --sort all  # Chinese tweets + Article cards, merged Latest/Top
 feedgrab x-so "claude,cursor,copilot" --merge     # Multi-keyword merged table
 feedgrab x-so "AI Agent" --raw                    # Raw query syntax
 ```
 Output: Markdown table (sorted by views) + CSV at `output/X/search/`
+
+---
+
+### Reddit
+
+#### Subreddit Batch
+```bash
+feedgrab reddit-sub MachineLearning --sort hot --limit 25
+feedgrab reddit-sub ChatGPT --sort top --limit 50
+```
+
+#### Keyword Search (reddit-so)
+```bash
+feedgrab reddit-so "codex" --sort comments --time all --limit 10
+feedgrab reddit-so "AI Agent" --subreddit ChatGPT --sort top --time week
+REDDIT_SEARCH_SAVE_POSTS=true feedgrab reddit-so "open source" --limit 5
+```
+Output: Markdown summary at `output/Reddit/`. Use `REDDIT_REPLY_MODE=tree|all` when deep-fetching posts.
 
 ---
 
@@ -164,6 +183,7 @@ Output: Markdown table (sorted by upvotes) + CSV at `output/Zhihu/search/`
 |----------|-------------------|------------|
 | Twitter (basic) | Cookie via `feedgrab login twitter` | Login in browser |
 | Twitter (paid API) | `TWITTERAPI_IO_KEY` | twitterapi.io |
+| Reddit | Optional Cookie via `feedgrab login reddit`; `REDDIT_SEARCH_*`, `REDDIT_REPLY_MODE` | Login only if Cloudflare/private content requires it |
 | Xiaohongshu | Cookie via `feedgrab login xhs` | Login in browser |
 | WeChat batch | Cookie via `feedgrab login wechat` | Login MP backend |
 | YouTube | `YOUTUBE_API_KEY` | Google Cloud Console |

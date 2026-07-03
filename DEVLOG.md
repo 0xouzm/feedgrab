@@ -2,6 +2,47 @@
 
 开发日志 — 记录每次升级迭代的确定方案、实施细节和状态追踪，作为项目演进的记忆文件。
 
+## 2026-07-03 · v0.26.0 · main CLI 对齐桌面端 0.1.14 后端能力
+
+### 背景
+
+`feedgrab-desktop` 分支的桌面端 0.1.14 已完成阶段性功能收尾。main 分支的 CLI 需要对齐其中可复用的后端/命令行能力，但本轮范围限定为“纯 CLI 对齐”：不合入 `desktop/`、安装包、worker 协议、桌面 release 文档或桌面 UI。
+
+### 方案决策
+
+- 以 `origin/main` 新建隔离 worktree 和 `codex/main-cli-align-v014` 分支，避免污染当前 `feedgrab-desktop` 工作区。
+- 先迁移桌面分支中适用于 CLI 的测试，确认 main 上红灯，再选择性合入 CLI/fetcher/service/MCP 后端能力。
+- 保留 main 的 Python CLI/库边界，显式排除 `feedgrab/worker.py`、`desktop/` 和 installer/package 文件。
+- Reddit CLI 对齐：`reddit-so` 关键词搜索、`REDDIT_REPLY_MODE=top/tree/all` 评论模式、429/5xx 重试、morechildren 展开限制、`feedgrab doctor reddit` 和登录/设置链路。
+- X/Twitter 搜索对齐：`x-so --lang zh+zxx` 覆盖中文普通推文 + Article 长文，`--sort all` 合并 Latest/Top，英文关键词大小写扩展，Article 摘要优先显示长文标题。
+- Service/MCP 对齐：批量抓取返回结构化失败项，新增 `platform_settings.py` 和 `proxy.py` 暴露 `FEEDGRAB_PROXY_*`、Reddit、X 搜索等设置。
+
+### 改动范围
+
+| 文件 | 类型 | 改动 |
+|------|------|------|
+| `feedgrab/cli.py` / `feedgrab/reader.py` / `mcp_server.py` | 修改 | 新增/同步 `reddit-so`、帮助文案、批量失败处理和 service 调用兼容 |
+| `feedgrab/fetchers/reddit.py` / `feedgrab/config.py` / `feedgrab/login.py` | 修改 | Reddit 搜索、评论模式、重试、CDP/session 诊断与配置 |
+| `feedgrab/fetchers/twitter_keyword_search.py` / `twitter*.py` | 修改 | X/Twitter Article 搜索覆盖、Live+Top 合并、Cookie 轮换与摘要渲染增强 |
+| `feedgrab/service/` | 新建/修改 | 新增平台设置 schema 与代理工具，扩展 settings/login/jobs/output/models |
+| `feedgrab/utils/` 与多平台 fetcher | 修改 | 同步桌面分支已验证的 CLI 后端兼容修复，不引入 desktop worker |
+| `tests/` | 新建/修改 | 新增 Reddit、X 搜索、用户可见中文消息、service/MCP 回归测试 |
+| `.env.example` / `README*.md` / `CLAUDE.md` / `AGENTS.md` / `skills/` / `pyproject.toml` | 修改 | 版本号 v0.26.0，配置模板、用法、skill 路由和项目指令同步 |
+
+### 验证结果
+
+- 迁移前红灯确认：目标测试集在 main 基线下 `44 failed, 28 passed`。
+- 代码迁移后目标测试：`python -m pytest -q -p no:cacheprovider tests/test_reddit.py tests/test_twitter_keyword_search.py tests/test_twitter_dispatch.py tests/test_user_visible_messages.py tests/test_service_layer.py tests/test_twitter_p0_enhancements.py tests/test_twitter_rendering.py tests/test_flowus.py tests/test_mpweixin_account.py` → `72 passed`。
+- 帮助文案补齐后复测：`python -m pytest -q -p no:cacheprovider tests/test_user_visible_messages.py tests/test_twitter_keyword_search.py tests/test_reddit.py tests/test_service_layer.py` → `40 passed`。
+- 排除 5 个基线夹具/目录问题后的全量覆盖：`python -m pytest -q -p no:cacheprovider -k "not test_decode_sheet_client_vars_keeps_repeated_vendor_cells_aligned and not test_decode_sheet_client_vars_keeps_repeated_type_cells_aligned and not test_merge_sheet_snapshot_blocks_combines_lazy_loaded_block_payloads and not test_warmup_idcflare_session_syncs_once and not test_warmup_linuxdo_session_syncs_once"` → `249 passed, 5 deselected`。
+- 直接全量 pytest：`249 passed, 5 failed`。失败项为 `tests/test_feishu_sheet_decode.py` 依赖未纳入仓库的 `output/debug_feishu_req558.json` / `debug_feishu_req600.json` / `debug_feishu_req601.json`，以及 LinuxDo/IDCFlare warmup 测试假设 `sessions/` 父目录已存在；这些测试假设在 `origin/main` 已存在，本轮未改其夹具策略。
+- CLI smoke：`python -m feedgrab.cli` 正常打印帮助页，并包含 `reddit-so`、`reddit-sub`、`zh+zxx` / `sort all` 示例。
+- MCP smoke：`python -c "import mcp_server; print('mcp import ok')"` 正常导入。
+
+### 状态：已完成 ✅
+
+---
+
 ## 2026-06-25 · v0.25.0 · 第一阶段 service layer 架构升级
 
 ### 背景

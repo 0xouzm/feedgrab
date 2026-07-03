@@ -216,16 +216,26 @@ async def _connect_flowus_cdp(url: str) -> Optional[tuple]:
                     if c.get("domain", "").endswith("flowus.cn")
                     or c.get("domain", "") == "flowus.cn"
                 ]
-                session_path = get_session_dir() / "flowus.json"
-                session_path.parent.mkdir(parents=True, exist_ok=True)
-                storage = {"cookies": flowus_cookies, "origins": []}
-                session_path.write_text(
-                    json.dumps(storage, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
+                has_auth = (
+                    any(c.get("name") == "next_auth" for c in flowus_cookies)
+                    and any(c.get("name") == "next_auth.sig" for c in flowus_cookies)
                 )
-                logger.info(
-                    f"[flowus] CDP: saved {len(flowus_cookies)} cookies → {session_path}"
-                )
+                if has_auth:
+                    session_path = get_session_dir() / "flowus.json"
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    storage = {"cookies": flowus_cookies, "origins": []}
+                    session_path.write_text(
+                        json.dumps(storage, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+                    logger.info(
+                        f"[flowus] CDP: saved {len(flowus_cookies)} cookies → {session_path}"
+                    )
+                else:
+                    logger.debug(
+                        f"[flowus] CDP: skipping cookie save — auth cookies incomplete "
+                        f"(got {len(flowus_cookies)} cookies, need both next_auth + next_auth.sig)"
+                    )
             except Exception as e:
                 logger.debug(f"[flowus] CDP cookie save failed: {e}")
 
@@ -790,7 +800,7 @@ def _resolve_image_urls_from_dom(doc_url: str, oss_names: List[str]) -> Dict[str
     try:
         from playwright.async_api import async_playwright
     except ImportError:
-        logger.warning("[flowus] Playwright not installed — cannot resolve signed image URLs")
+        logger.warning("[flowus] 未安装 Playwright，无法解析签名图片 URL")
         return {}
 
     from feedgrab.config import get_user_agent, get_session_dir, flowus_page_load_timeout
@@ -896,13 +906,13 @@ def _resolve_image_urls_from_dom(doc_url: str, oss_names: List[str]) -> Dict[str
         t.start()
         t.join(timeout=120)
         if t.is_alive():
-            logger.warning("[flowus] DOM resolution thread timeout")
+            logger.warning("[flowus] DOM 图片解析线程超时")
             return {}
         if error:
             raise error[0]
         return result
     except Exception as e:
-        logger.warning(f"[flowus] DOM image URL resolution failed: {e}")
+        logger.warning(f"[flowus] DOM 图片 URL 解析失败：{e}")
         return {}
 
 
@@ -941,13 +951,13 @@ def download_flowus_images(
     oss_names = [i.get("oss_name") for i in images_info if i.get("oss_name")]
     oss_to_signed: Dict[str, str] = {}
     if oss_names and doc_url:
-        logger.info(f"[flowus] Resolving signed CDN URLs from DOM ({len(oss_names)} images)...")
+        logger.info(f"[flowus] 正在从 DOM 解析签名 CDN URL（{len(oss_names)} 张图片）...")
         oss_to_signed = _resolve_image_urls_from_dom(doc_url, oss_names)
-        logger.info(f"[flowus] DOM resolution: {len(oss_to_signed)} signed URLs found")
+        logger.info(f"[flowus] DOM 解析完成：找到 {len(oss_to_signed)} 个签名 URL")
     elif not oss_names:
-        logger.debug("[flowus] No ossName in images_info; skipping DOM resolution")
+        logger.debug("[flowus] images_info 中没有 ossName，跳过 DOM 解析")
     elif not doc_url:
-        logger.warning("[flowus] Cannot read doc_url from markdown front matter")
+        logger.warning("[flowus] 无法从 Markdown front matter 读取 doc_url")
 
     # Phase 2: download
     from feedgrab.utils.http_client import get as http_get
@@ -988,10 +998,10 @@ def download_flowus_images(
         if content:
             fpath.write_bytes(content)
             succeeded += 1
-            logger.debug(f"[flowus] Downloaded: {fname} ({len(content)} bytes)")
+            logger.debug(f"[flowus] 已下载：{fname}（{len(content)} bytes）")
         else:
             failed += 1
-            logger.warning(f"[flowus] Image download failed: {fname}")
+            logger.warning(f"[flowus] 图片下载失败：{fname}")
 
     if succeeded or failed:
-        logger.info(f"[flowus] Image download: {succeeded} ok, {failed} failed")
+        logger.info(f"[flowus] 图片下载：成功 {succeeded}，失败 {failed}")

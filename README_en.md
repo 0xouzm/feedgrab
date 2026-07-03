@@ -114,6 +114,7 @@ feedgrab ytb-so "ML" --after 2025-01-01 --limit 5
 # Search Twitter tweets (engagement-ranked summary table)
 feedgrab x-so openclaw                                        # Default: last 1 day + Chinese + Latest tab
 feedgrab x-so "AI Agent" --days 7 --min-faves 50 --sort top   # Custom params
+feedgrab x-so WorkBuddy --lang zh+zxx --sort all              # Chinese tweets + Article cards, merged Latest/Top
 feedgrab x-so '"openclaw" lang:zh since:2026-03-01' --raw     # Raw query mode
 feedgrab x-so openclaw --save                                  # Also save individual tweet .md files
 feedgrab x-so "VPN,proxy,v2ray" --merge                        # Multi-keyword merged into one table
@@ -174,6 +175,8 @@ feedgrab medium-pub better-programming --limit 20              # Medium publicat
 
 feedgrab https://www.reddit.com/r/MachineLearning/comments/<id>/foo/  # Reddit post + Top 50 comments
 feedgrab reddit-sub MachineLearning --sort hot --limit 25      # Reddit subreddit batch
+feedgrab reddit-so codex --sort comments --time all --limit 10 # Reddit keyword search
+REDDIT_REPLY_MODE=tree feedgrab https://www.reddit.com/r/...   # Preserve nested replies from the initial response
 
 feedgrab https://m.weibo.cn/status/4857881961438732            # Weibo single post
 feedgrab weibo-user 1234567890 --limit 20                      # Weibo user profile batch
@@ -296,7 +299,7 @@ Claude Code config (`~/.claude/claude_desktop_config.json`):
 | Apple Podcasts | — | via Claude Code skill |
 | **HackerNews** | **Hacker News Firebase API v0** (0 cookie / 0 anti-bot, single item + first-level comments + `hn top/new/best/ask/show/jobs` list batch) | — |
 | **Medium** | **Jina Reader** → JSON-LD articleBody → Stealth Browser; user/publication batch via RSS feed (`medium-user @<handle>` / `medium-pub <slug>`) | — |
-| **Reddit** | **old.reddit.com .json + self-identifying UA** → CDP reuse Chrome → Stealth Playwright + saved session → Jina (single post with Top 50 comments + `reddit-sub` subreddit batch, hot/new/top/best/rising sorts) | — |
+| **Reddit** | **old.reddit.com .json + self-identifying UA** → CDP reuse Chrome → Stealth Playwright + saved session → Jina (single posts support `REDDIT_REPLY_MODE=top/tree/all`, plus `reddit-sub` subreddit batch and `reddit-so` keyword search summary) | — |
 | **Weibo (微博)** | m.weibo.cn mobile API (show + container/getIndex) + SSR `$render_data` fallback (single + `weibo-user` profile batch; SUB cookie optional) | — |
 | **Douyin (抖音)** | **CDP reuse Chrome** → Stealth Playwright + saved session → SSR `RENDER_DATA` parse → Jina (no signature cracking, relies on browser-internal execution; short links auto-resolve via 302) | — |
 | **Paywalled news sites** (NYT/WSJ/FT/Economist/Bloomberg/SCMP, 300+) | **7-tier paywall bypass** (JSON-LD probe + Googlebot/Bingbot UA + AMP pages + archive.today + Google Cache) | — |
@@ -588,7 +591,7 @@ async def main():
 asyncio.run(main())
 ```
 
-CLI commands keep their existing behavior. The MCP server now calls the same service layer for fetch operations.
+CLI commands keep their existing behavior. The MCP server now calls the same service layer for fetch operations. Batch fetches and MCP calls expose structured failure items instead of losing the whole batch on a single URL failure, and `FEEDGRAB_PROXY_*` proxy settings are exposed through the shared service settings layer.
 
 ## Configuration
 
@@ -600,6 +603,10 @@ cp .env.example .env
 
 | Variable | Required | Description |
 |----------|----------|-------------|
+| `FEEDGRAB_LOG_LEVEL` | No | Log level: `INFO` (default) / `DEBUG` / `WARNING` |
+| `FEEDGRAB_PROXY_ENABLED` | No | Enable global proxy injection (default: `false`) |
+| `FEEDGRAB_PROXY_URL` | No | HTTP / SOCKS5 proxy URL, e.g. `http://127.0.0.1:7890` |
+| `FEEDGRAB_NO_PROXY` | No | Comma-separated bypass list, default `127.0.0.1,localhost`, keeping local CDP/internal services direct |
 | `X_AUTH_TOKEN` | X GraphQL only | Twitter/X auth cookie |
 | `X_CT0` | X GraphQL only | Twitter/X CSRF token cookie |
 | `X_GRAPHQL_ENABLED` | No | Enable/disable GraphQL tier (default: `true`) |
@@ -630,10 +637,10 @@ cp .env.example .env
 | `X_API_MIN_VIEWS` | No | Min views filter (empty=no filter) |
 | `FORCE_REFETCH` | No | Force re-fetch, skip dedup and overwrite existing files (default: `false`) |
 | `X_SEARCH_ENABLED` | No | Enable Twitter keyword search (default: `true`) |
-| `X_SEARCH_LANG` | No | Default search language (default: `zh`, empty=any) |
+| `X_SEARCH_LANG` | No | Default search language (default: `zh`; `zh+zxx` covers Chinese tweets plus Article cards; empty=any) |
 | `X_SEARCH_DAYS` | No | Default search time range in days (default: `1`) |
 | `X_SEARCH_MIN_FAVES` | No | Default min likes filter (default: `0`=no filter) |
-| `X_SEARCH_SORT` | No | Search sort: `live`=Latest / `top`=Top (default: `live`) |
+| `X_SEARCH_SORT` | No | Search sort: `live`=Latest / `top`=Top / `all`=merged Latest+Top (default: `live`) |
 | `X_SEARCH_MAX_RESULTS` | No | Max tweets per search (default: `100`) |
 | `X_SEARCH_SAVE_TWEETS` | No | Save individual tweet .md files (default: `false`, summary table only) |
 | `X_SEARCH_MERGE_KEYWORDS` | No | Merge multi-keyword search results into one file (default: `false`, also via `--merge` flag) |
@@ -663,6 +670,16 @@ cp .env.example .env
 | `IDCFLARE_CDP_ENABLED` | No | Prefer reusing a running Chrome session for IDCFlare JSON fetches (default: `true`) |
 | `IDCFLARE_PAGE_LOAD_TIMEOUT` | No | IDCFlare browser page wait timeout in milliseconds (default: `15000`) |
 | `IDCFLARE_REPLY_MODE` | No | IDCFlare reply capture mode: `author` (default, OP + topic author replies only) / `all` (full thread) / `none` (OP only) |
+| `REDDIT_REPLY_MODE` | No | Reddit reply mode: `top` (default, top-level only) / `tree` (initial nested tree) / `all` (extra morechildren expansion) |
+| `REDDIT_RETRY_ATTEMPTS` | No | Retry count for Reddit direct `.json` 429/5xx/network errors (default: `3`) |
+| `REDDIT_MAX_PAGES` | No | Max `after` cursor pages for `reddit-so` / `reddit-sub` (default: `5`) |
+| `REDDIT_MORECHILDREN_ROUNDS` | No | morechildren expansion rounds when `REDDIT_REPLY_MODE=all` (default: `2`) |
+| `REDDIT_SEARCH_ENABLED` | No | Enable Reddit keyword search `reddit-so` (default: `true`) |
+| `REDDIT_SEARCH_SORT` | No | `reddit-so` sort: `relevance` / `hot` / `top` / `new` / `comments` (default: `relevance`) |
+| `REDDIT_SEARCH_TIME_RANGE` | No | `reddit-so` time range: `all` / `year` / `month` / `week` / `day` / `hour` (default: `all`) |
+| `REDDIT_SEARCH_LIMIT` | No | Default `reddit-so` result count (default: `10`) |
+| `REDDIT_SEARCH_SAVE_POSTS` | No | Deep-fetch each post after `reddit-so` search (default: `false`) |
+| `REDDIT_SEARCH_SUBREDDIT` | No | Default subreddit scope for `reddit-so`, empty=sitewide |
 | `CHROME_CDP_LOGIN` | No | Enable CDP cookie extraction from running Chrome (default: `false`) |
 | `CHROME_CDP_PORT` | No | Chrome CDP port (default: `9222`) |
 | `X_DOWNLOAD_MEDIA` | No | Download Twitter images/videos to local `attachments/` subdirectory (default: `false`) |

@@ -122,6 +122,152 @@ def test_cli_fetch_uses_service_and_keeps_single_url_output(monkeypatch, capsys)
     assert "Sample body..." in out
 
 
+def test_cli_fetch_reports_batch_failures_without_crashing(monkeypatch, capsys):
+    import feedgrab.cli as cli
+
+    class FakeFetchService:
+        async def fetch_urls(self, urls):
+            from feedgrab.service.models import FetchRequest, FetchResult, ServiceError
+
+            return [
+                FetchResult(
+                    request=FetchRequest(url=urls[0]),
+                    content=_sample_content(),
+                    platform="github",
+                ),
+                FetchResult(
+                    request=FetchRequest(url=urls[1]),
+                    content=None,
+                    platform="web",
+                    success=False,
+                    error=ServiceError(
+                        "network down",
+                        code="fetch_error",
+                        details={"url": urls[1]},
+                    ).to_dict(),
+                ),
+            ]
+
+    monkeypatch.setattr(cli, "FetchService", FakeFetchService)
+
+    cli.cmd_fetch(["https://github.com/owner/repo", "https://example.com/fail"])
+
+    out = capsys.readouterr().out
+    assert "[github] Sample repo" in out
+    assert "失败 [web] https://example.com/fail: network down" in out
+    assert "已抓取 1/2 个 URL" in out
+
+
+def test_cli_twitter_search_exits_when_all_batch_keywords_fail(monkeypatch, capsys):
+    import feedgrab.cli as cli
+    import feedgrab.config as config
+    import feedgrab.fetchers.twitter_keyword_search as search_module
+
+    monkeypatch.setattr(config, "x_search_enabled", lambda: True)
+    monkeypatch.setattr(config, "x_search_lang", lambda: "")
+    monkeypatch.setattr(config, "x_search_days", lambda: 1)
+    monkeypatch.setattr(config, "x_search_min_faves", lambda: 0)
+    monkeypatch.setattr(config, "x_search_min_retweets", lambda: 0)
+    monkeypatch.setattr(config, "x_search_sort", lambda: "live")
+    monkeypatch.setattr(config, "x_search_exclude_retweets", lambda: True)
+    monkeypatch.setattr(config, "x_search_delay", lambda: 0)
+    monkeypatch.setattr(config, "x_search_max_results", lambda: 10)
+    monkeypatch.setattr(config, "x_search_save_tweets", lambda: False)
+    monkeypatch.setattr(config, "x_search_merge_keywords", lambda: True)
+
+    async def failing_search(**_kwargs):
+        raise RuntimeError("missing Twitter login")
+
+    monkeypatch.setattr(search_module, "search_twitter_keyword", failing_search)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_twitter_search(["alpha,beta"])
+
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "❌ [alpha] missing Twitter login" in out
+    assert "❌ [beta] missing Twitter login" in out
+    assert "❌ 所有 X 关键词搜索都失败：alpha, beta" in out
+
+
+def test_cli_twitter_search_merge_writes_empty_summary(monkeypatch, tmp_path, capsys):
+    import feedgrab.cli as cli
+    import feedgrab.config as config
+    import feedgrab.fetchers.twitter_keyword_search as search_module
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    monkeypatch.delenv("OBSIDIAN_VAULT", raising=False)
+    monkeypatch.setattr(config, "x_search_enabled", lambda: True)
+    monkeypatch.setattr(config, "x_search_lang", lambda: "")
+    monkeypatch.setattr(config, "x_search_days", lambda: 1)
+    monkeypatch.setattr(config, "x_search_min_faves", lambda: 0)
+    monkeypatch.setattr(config, "x_search_min_retweets", lambda: 0)
+    monkeypatch.setattr(config, "x_search_sort", lambda: "live")
+    monkeypatch.setattr(config, "x_search_exclude_retweets", lambda: True)
+    monkeypatch.setattr(config, "x_search_delay", lambda: 0)
+    monkeypatch.setattr(config, "x_search_max_results", lambda: 10)
+    monkeypatch.setattr(config, "x_search_save_tweets", lambda: False)
+    monkeypatch.setattr(config, "x_search_merge_keywords", lambda: True)
+
+    async def empty_search(**kwargs):
+        return {
+            "total": 0,
+            "saved": 0,
+            "query": kwargs["keyword"],
+            "output_path": "",
+            "csv_path": "",
+            "tweets": [],
+        }
+
+    monkeypatch.setattr(search_module, "search_twitter_keyword", empty_search)
+
+    cli.cmd_twitter_search(["alpha,beta"])
+
+    out = capsys.readouterr().out
+    assert "合并汇总：" in out
+    merged_files = list(tmp_path.glob("X/search/1day_new/alpha+beta_*.md"))
+    assert len(merged_files) == 1
+    assert "*未找到结果。*" in merged_files[0].read_text(encoding="utf-8")
+
+
+def test_cli_twitter_search_merge_uses_all_sort_output_dir(monkeypatch, tmp_path, capsys):
+    import feedgrab.cli as cli
+    import feedgrab.config as config
+    import feedgrab.fetchers.twitter_keyword_search as search_module
+
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    monkeypatch.delenv("OBSIDIAN_VAULT", raising=False)
+    monkeypatch.setattr(config, "x_search_enabled", lambda: True)
+    monkeypatch.setattr(config, "x_search_lang", lambda: "zh+zxx")
+    monkeypatch.setattr(config, "x_search_days", lambda: 3)
+    monkeypatch.setattr(config, "x_search_min_faves", lambda: 0)
+    monkeypatch.setattr(config, "x_search_min_retweets", lambda: 0)
+    monkeypatch.setattr(config, "x_search_sort", lambda: "all")
+    monkeypatch.setattr(config, "x_search_exclude_retweets", lambda: True)
+    monkeypatch.setattr(config, "x_search_delay", lambda: 0)
+    monkeypatch.setattr(config, "x_search_max_results", lambda: 10)
+    monkeypatch.setattr(config, "x_search_save_tweets", lambda: False)
+    monkeypatch.setattr(config, "x_search_merge_keywords", lambda: True)
+
+    async def empty_search(**kwargs):
+        return {
+            "total": 0,
+            "saved": 0,
+            "query": kwargs["keyword"],
+            "output_path": "",
+            "csv_path": "",
+            "tweets": [],
+        }
+
+    monkeypatch.setattr(search_module, "search_twitter_keyword", empty_search)
+
+    cli.cmd_twitter_search(["alpha,beta"])
+
+    capsys.readouterr()
+    assert list(tmp_path.glob("X/search/3day_all/alpha+beta_*.md"))
+    assert not list(tmp_path.glob("X/search/3day_hot/alpha+beta_*.md"))
+
+
 def test_mcp_read_url_uses_fetch_service(monkeypatch):
     _install_fake_mcp(monkeypatch)
 
@@ -156,6 +302,49 @@ def test_mcp_read_url_uses_fetch_service(monkeypatch):
     assert payload["title"] == "Sample repo"
     assert payload["source_type"] == "github"
     assert asyncio.run(mcp_server.detect_platform("https://github.com/owner/repo")) == "github"
+
+
+def test_mcp_read_batch_includes_structured_failure_without_none_crash(monkeypatch):
+    _install_fake_mcp(monkeypatch)
+
+    import mcp_server
+
+    mcp_server = importlib.reload(mcp_server)
+
+    class FakeFetchService:
+        async def fetch_urls(self, urls):
+            from feedgrab.service.models import FetchRequest, FetchResult, ServiceError
+
+            return [
+                FetchResult(
+                    request=FetchRequest(url=urls[0]),
+                    content=_sample_content(),
+                    platform="github",
+                ),
+                FetchResult(
+                    request=FetchRequest(url=urls[1]),
+                    content=None,
+                    platform="web",
+                    success=False,
+                    error=ServiceError(
+                        "network down",
+                        code="fetch_error",
+                        details={"url": urls[1]},
+                    ).to_dict(),
+                ),
+            ]
+
+    mcp_server.fetch_service = FakeFetchService()
+
+    raw = asyncio.run(
+        mcp_server.read_batch(["https://github.com/owner/repo", "https://example.com/fail"])
+    )
+    payload = json.loads(raw)
+
+    assert payload[0]["ok"] is True
+    assert payload[0]["title"] == "Sample repo"
+    assert payload[1]["ok"] is False
+    assert payload[1]["error"]["code"] == "fetch_error"
 
 
 def _install_fake_mcp(monkeypatch):

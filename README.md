@@ -118,6 +118,7 @@ feedgrab ytb-so "ML" --after 2025-01-01 --limit 5
 # 搜索 Twitter 推文（按互动量排序的汇总表格）
 feedgrab x-so openclaw                                        # 默认：最近1天 + 中文 + 最新tab
 feedgrab x-so "AI Agent" --days 7 --min-faves 50 --sort top   # 自定义参数
+feedgrab x-so WorkBuddy --lang zh+zxx --sort all              # 中文普通推文 + Article 长文，合并 Latest/Top
 feedgrab x-so '"openclaw" lang:zh since:2026-03-01' --raw     # 原始查询模式
 feedgrab x-so openclaw --save                                  # 同时保存单篇推文 .md
 feedgrab x-so "梯子,VPN,v2ray,小火箭" --merge                  # 多关键词合并到一个表格
@@ -194,6 +195,8 @@ feedgrab medium-pub better-programming --limit 20              # Medium 出版�
 
 feedgrab https://www.reddit.com/r/MachineLearning/comments/<id>/foo/  # Reddit 单帖 + Top 50 评论
 feedgrab reddit-sub MachineLearning --sort hot --limit 25      # Reddit 子版块批量
+feedgrab reddit-so codex --sort comments --time all --limit 10 # Reddit 关键词搜索
+REDDIT_REPLY_MODE=tree feedgrab https://www.reddit.com/r/...   # 保留初始响应里的嵌套回复
 
 feedgrab https://m.weibo.cn/status/4857881961438732            # 微博单条
 feedgrab weibo-user 1234567890 --limit 20                      # 微博用户主页
@@ -324,7 +327,7 @@ Claude Code 配置（`~/.claude/claude_desktop_config.json`）：
 | Apple Podcasts | — | 通过 Claude Code 技能 |
 | **HackerNews** | **Hacker News Firebase API v0**（0 Cookie / 0 反爬，单条 item + 一层评论 + `hn top/new/best/ask/show/jobs` 列表批量） | — |
 | **Medium** | **Jina Reader** → JSON-LD articleBody → Stealth Browser；用户/出版物批量走 RSS feed (`medium-user @<handle>` / `medium-pub <slug>`) | — |
-| **Reddit** | **old.reddit.com .json + 自报 UA** → CDP 复用 Chrome → Stealth Playwright + saved session → Jina（单帖含 Top 50 评论 + `reddit-sub` 子版块批量，hot/new/top/best/rising 五种排序） | — |
+| **Reddit** | **old.reddit.com .json + 自报 UA** → CDP 复用 Chrome → Stealth Playwright + saved session → Jina（单帖支持 `REDDIT_REPLY_MODE=top/tree/all`，`reddit-sub` 子版块批量，`reddit-so` 关键词搜索 + 汇总表） | — |
 | **Weibo** | m.weibo.cn 移动端 API（show + container/getIndex）+ SSR `$render_data` 兜底（单条 + `weibo-user` 用户主页批量；SUB Cookie 可选） | — |
 | **Douyin** | **CDP 复用 Chrome** → Stealth Playwright + saved session → SSR `RENDER_DATA` 解析 → Jina（不破解签名，依赖浏览器内执行；短链自动 302 解析 aweme_id） | — |
 | **知识星球**（Zsxq） | Tier 0 HTTP cookie（articles.zsxq.com SSR HTML / api.zsxq.com `/topics/{id}/info` JSON）→ CDP 复用 Chrome → Stealth Playwright → Jina；topic 五形态全覆盖（talk / question+answer / article / **solution**）；短链 `t.zsxq.com/<code>` 302 解析；评论三态 `none/all/author` | `feedgrab login zsxq` |
@@ -665,7 +668,7 @@ async def main():
 asyncio.run(main())
 ```
 
-CLI 命令仍保持原有行为；MCP 服务器也通过同一 service 层调用抓取能力。
+CLI 命令仍保持原有行为；MCP 服务器也通过同一 service 层调用抓取能力。批量抓取和 MCP 调用会返回结构化失败项，不再因为单个 URL 失败吞掉整批结果；`FEEDGRAB_PROXY_*` 代理配置也在 service 设置层统一暴露。
 
 ## 配置
 
@@ -678,6 +681,9 @@ cp .env.example .env
 | 变量 | 必需 | 说明 |
 |------|------|------|
 | `FEEDGRAB_LOG_LEVEL` | 否 | 日志级别：`INFO`（默认）/ `DEBUG` / `WARNING` |
+| `FEEDGRAB_PROXY_ENABLED` | 否 | 启用全局代理注入（默认：`false`） |
+| `FEEDGRAB_PROXY_URL` | 否 | HTTP / SOCKS5 代理地址，如 `http://127.0.0.1:7890` |
+| `FEEDGRAB_NO_PROXY` | 否 | 逗号分隔的不走代理地址，默认 `127.0.0.1,localhost`，避免本地 CDP/内部服务被代理 |
 | `X_AUTH_TOKEN` | 仅 X GraphQL | Twitter/X 认证 Cookie |
 | `X_CT0` | 仅 X GraphQL | Twitter/X CSRF 令牌 Cookie |
 | `X_GRAPHQL_ENABLED` | 否 | 启用/禁用 GraphQL 层（默认：`true`） |
@@ -708,10 +714,10 @@ cp .env.example .env
 | `X_API_MIN_VIEWS` | 否 | 最低阅读量过滤（留空=不过滤） |
 | `FORCE_REFETCH` | 否 | 强制重新抓取，跳过去重并覆盖已有文件（默认：`false`） |
 | `X_SEARCH_ENABLED` | 否 | 启用 Twitter 关键词搜索（默认：`true`） |
-| `X_SEARCH_LANG` | 否 | 搜索默认语言（默认：`zh`，留空=不限语言） |
+| `X_SEARCH_LANG` | 否 | 搜索默认语言（默认：`zh`；`zh+zxx` 同时覆盖中文普通推文和 Article 长文；留空=不限语言） |
 | `X_SEARCH_DAYS` | 否 | 搜索默认天数（默认：`1`，最近24小时） |
 | `X_SEARCH_MIN_FAVES` | 否 | 搜索默认最低点赞数（默认：`0`=不过滤） |
-| `X_SEARCH_SORT` | 否 | 搜索排序模式：`live`=最新 / `top`=热门（默认：`live`） |
+| `X_SEARCH_SORT` | 否 | 搜索排序模式：`live`=最新 / `top`=热门 / `all`=Live+Top 合并去重（默认：`live`） |
 | `X_SEARCH_MAX_RESULTS` | 否 | 每次搜索最大推文数（默认：`100`） |
 | `X_SEARCH_SAVE_TWEETS` | 否 | 是否同时保存单篇推文 .md（默认：`false`，仅汇总表格） |
 | `X_SEARCH_MERGE_KEYWORDS` | 否 | 多关键词搜索时合并结果到一个文件（默认：`false`，也可用 `--merge` 开启） |
@@ -755,6 +761,16 @@ cp .env.example .env
 | `IDCFLARE_CDP_ENABLED` | 否 | IDCFlare 优先复用已运行 Chrome 的 Cookie / Cloudflare 会话抓取 JSON（默认：`true`） |
 | `IDCFLARE_PAGE_LOAD_TIMEOUT` | 否 | IDCFlare 浏览器页面等待超时毫秒（默认：`15000`） |
 | `IDCFLARE_REPLY_MODE` | 否 | IDCFlare 回复抓取模式：`author`（默认，仅主贴 + 楼主自回）/ `all`（完整楼层）/ `none`（仅主贴） |
+| `REDDIT_REPLY_MODE` | 否 | Reddit 评论模式：`top`（默认，仅顶层）/ `tree`（初始嵌套树）/ `all`（额外 morechildren 展开） |
+| `REDDIT_RETRY_ATTEMPTS` | 否 | Reddit direct `.json` 429/5xx/网络错误重试次数（默认：`3`） |
+| `REDDIT_MAX_PAGES` | 否 | `reddit-so` / `reddit-sub` after cursor 最大分页数（默认：`5`） |
+| `REDDIT_MORECHILDREN_ROUNDS` | 否 | `REDDIT_REPLY_MODE=all` 时 morechildren 展开轮数（默认：`2`） |
+| `REDDIT_SEARCH_ENABLED` | 否 | 启用 Reddit 关键词搜索 `reddit-so`（默认：`true`） |
+| `REDDIT_SEARCH_SORT` | 否 | `reddit-so` 排序：`relevance` / `hot` / `top` / `new` / `comments`（默认：`relevance`） |
+| `REDDIT_SEARCH_TIME_RANGE` | 否 | `reddit-so` 时间范围：`all` / `year` / `month` / `week` / `day` / `hour`（默认：`all`） |
+| `REDDIT_SEARCH_LIMIT` | 否 | `reddit-so` 默认结果数（默认：`10`） |
+| `REDDIT_SEARCH_SAVE_POSTS` | 否 | `reddit-so` 搜索后逐篇深抓单帖（默认：`false`） |
+| `REDDIT_SEARCH_SUBREDDIT` | 否 | `reddit-so` 默认限定子版块，留空=全站 |
 | `CHROME_CDP_LOGIN` | 否 | 启用 CDP Cookie 提取，`feedgrab login` 优先从运行中的 Chrome 提取（默认：`false`） |
 | `CHROME_CDP_PORT` | 否 | Chrome CDP 端口（默认：`9222`） |
 | `X_DOWNLOAD_MEDIA` | 否 | Twitter 图片/视频下载到本地 `attachments/` 子目录（默认：`false`） |

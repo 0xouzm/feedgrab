@@ -54,7 +54,7 @@ Then stop — do not proceed without feedgrab.
 | Telegram | `t.me/*` | Telethon |
 | HackerNews | `news.ycombinator.com/item?id=*` | Firebase API v0 (item.json + first-layer comments + `hn top/new/best/ask/show/jobs` list batch) |
 | Medium | `medium.com/*`, `*.medium.com/*` | Jina Reader → JSON-LD articleBody → Stealth Browser; user/publication batch via RSS |
-| Reddit | `reddit.com/r/*/comments/*`, `redd.it/*` | old.reddit.com .json + self-UA → CDP → Stealth Playwright + saved session → Jina (with Top 50 comments + reddit-sub batch) |
+| Reddit | `reddit.com/r/*/comments/*`, `redd.it/*` | old.reddit.com .json + self-UA → CDP → Stealth Playwright + saved session → Jina (`REDDIT_REPLY_MODE=top/tree/all`; batch/search via `reddit-sub` / `reddit-so`) |
 | Weibo | `weibo.com/*`, `weibo.cn/*`, `m.weibo.cn/status/*` | m.weibo.cn /statuses/show + container/getIndex + SSR $render_data fallback (SUB cookie optional) |
 | Douyin (抖音) | `douyin.com/video/*`, `v.douyin.com/*` (short link) | CDP → Stealth Playwright + saved session → SSR RENDER_DATA → Jina (browser-side signing, no algorithm break) |
 | Zsxq (知识星球) | `articles.zsxq.com/id_*.html`, `wx.zsxq.com/group/*/topic/*`, `t.zsxq.com/*` (short) | HTTP cookie (articles SSR HTML / api.zsxq.com topic JSON) → CDP → Stealth Playwright → Jina (auth-walled, login required) |
@@ -128,6 +128,7 @@ This reads the URL from the system clipboard.
 - For **LinuxDo / Discourse**: `feedgrab login linuxdo` if the topic is private or the site requires a browser session / Cloudflare cookie
 - For **IDCFlare / Discourse**: `feedgrab login idcflare` if the topic is private or the site requires a browser session / Cloudflare cookie
 - For **Discourse forums**: default reply mode is OP + topic-author follow-up replies only; switch with `LINUXDO_REPLY_MODE` / `IDCFLARE_REPLY_MODE` (`author` / `all` / `none`)
+- For **Reddit**: use `REDDIT_REPLY_MODE=tree` for nested replies or `REDDIT_REPLY_MODE=all` for extra morechildren expansion; use `/feedgrab-batch` for `reddit-so` search
 - For **Feishu**: set `FEISHU_APP_ID` + `FEISHU_APP_SECRET` for Open API access
 - For **KDocs**: `feedgrab login kdocs` to save session (or enable `KDOCS_CDP_ENABLED=true` to reuse running Chrome)
 - For **FlowUs**: `feedgrab login flowus` for paid/private docs; default images use signed online URLs, set `FLOWUS_DOWNLOAD_IMAGES=true` for local attachments

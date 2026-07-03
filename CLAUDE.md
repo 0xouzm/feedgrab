@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.25.0
+- **当前版本**：v0.26.0
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -45,7 +45,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 | RSS | feedparser |
 | HackerNews | Firebase API v0（item.json + 一层评论；hn top/new/best/ask/show/jobs 列表批量） |
 | Medium | Jina Reader → JSON-LD articleBody → Stealth Browser；medium-user / medium-pub 走 RSS feed |
-| Reddit | old.reddit.com .json + 自报 UA → CDP 复用 Chrome → Stealth Playwright + saved session → Jina（首屏 Top 50 评论 + reddit-sub 五种排序） |
+| Reddit | old.reddit.com .json + 自报 UA → CDP 复用 Chrome → Stealth Playwright + saved session → Jina（`REDDIT_REPLY_MODE=top/tree/all` + `reddit-sub` + `reddit-so`） |
 | Weibo | m.weibo.cn `/statuses/show` + `/api/container/getIndex`（SUB Cookie 可选 + Visitor 占位 + SSR `$render_data` 兜底） |
 | Douyin | CDP 复用 Chrome → Stealth Playwright + saved session → SSR RENDER_DATA → Jina（不破解签名，浏览器内自动签名；v.douyin.com 短链 302 解析） |
 | 知识星球 | Tier 0 HTTP cookie（articles SSR HTML / topic API JSON）→ Tier 1 CDP 复用 → Tier 2 Stealth Browser → Tier 3 Jina（强登录态门控，仅姿态保留）；短链 t.zsxq.com 302 解析；topic 五形态：talk/question+answer/article/solution；评论三态 |
@@ -122,6 +122,7 @@ feedgrab/
 - `utils/http_client.py`：curl_cffi `Session(impersonate="chrome")` TLS 指纹 → requests fallback
 - 所有 fetcher 的 `requests.get()`/`urllib` 均走 `http_client.get/post`
 - 异常兼容：`except requests.Timeout`/`except requests.RequestException` 无需改动
+- 全局代理由 `FEEDGRAB_PROXY_ENABLED` / `FEEDGRAB_PROXY_URL` / `FEEDGRAB_NO_PROXY` 控制，service 设置层统一暴露并对密码脱敏
 
 ### User-Agent 与指纹
 
@@ -165,7 +166,7 @@ feedgrab/
 
 | 平台 | 关键点 |
 |------|--------|
-| X/Twitter | `x-client-transaction-id` 签名头必需（SearchTimeline）；queryId 四级解析（disk→community→JS→hardcoded）；feature flags 动态更新 + 紧凑编码；Cookie 多账号轮换（`sessions/twitter.json + x_2.json + ...`）；Article 优先 GraphQL `content_state` 原生渲染 |
+| X/Twitter | `x-client-transaction-id` 签名头必需（SearchTimeline）；queryId 四级解析（disk→community→JS→hardcoded）；feature flags 动态更新 + 紧凑编码；Cookie 多账号轮换（`sessions/twitter.json + x_2.json + ...`）；Article 优先 GraphQL `content_state` 原生渲染；`x-so --lang zh+zxx --sort all` 覆盖中文普通推文 + Article 长文并合并 Latest/Top |
 | 小红书 | xhshow 签名配置用真实 `platform.system()` + `get_user_agent()`；Cookie 从 `sessions/xhs.json`；xsec_token LRU 缓存 500 条；Pinia Store 注入作为 Tier 0.5 兜底（`XHS_PINIA_ENABLED` 默认 true） |
 | LinuxDo / IDCFlare / Discourse | 主路径不是 DOM 抓取，而是 `topic.json`：Tier 0 游客/已保存 session Cookie → Tier 1 CDP 页面内 `fetch(...json)` → Tier 2 Stealth Playwright 页面内 `fetch(...json)` → Tier 3 Jina；明确 404 / 私有 / 需登录时提前终止，不再把错误页写入 Markdown；默认 `reply_mode=author` 只抓主贴 + 楼主自回，可切换 `all` / `none`；本地 `sessions/{platform}.json` 缺失时先做 CDP / browser warmup |
 | 飞书 | 必用 vanilla playwright；标题清理零宽字符（U+200B-U+206F, U+FEFF）；Block→MD 支持 20+ 类型；知识库批量优先抓虚拟目录树 `wikiToken`；代码块统一使用 4 个反引号；表格优先读取 `snapshot.rows_id / columns_id` 修复单行错位；图片数据在 `snapshot.image.token`（非 `image.token`） |
@@ -174,7 +175,7 @@ feedgrab/
 | YouTube | InnerTube ANDROID 客户端绕过部分限制；yt-dlp 默认 `YTDLP_COOKIES_BROWSER=chrome` 绕 bot 检测；智能断句：标点拆分→跨 snippet 合并（CJK 无空格/拉丁加空格）→段落分组；标点率 <10% 跳过断句 |
 | HackerNews | Firebase API v0（`https://hacker-news.firebaseio.com/v0/...`），0 Cookie / 0 反爬；评论默认抓首屏一层 50 条，递归全树留 v0.21+；HN created_at 输出 ISO 8601（让 `parse_twitter_date_local` 直接消费） |
 | Medium | Tier 0 Jina → Tier 1 JSON-LD articleBody → Tier 2 Stealth Browser；用户/出版物批量直接 RSS（`medium.com/feed/<@user|publication>`）+ 单篇 Tier 链补全；member-only 文案匹配 → front matter `is_member_only=true` 优雅降级 |
-| Reddit | Tier 0 `old.reddit.com .json` + 自报 UA（`feedgrab/0.20.0`）→ Tier 1 CDP `reddit.com` cookie context → Tier 2 Stealth Playwright + `sessions/reddit.json` → Tier 3 Jina；浏览器内 `fetch()` 复用 Cloudflare 状态；评论按 score 排序 + 过滤 stickied，不展开 "load more comments" |
+| Reddit | Tier 0 `old.reddit.com .json` + 自报 UA（`feedgrab/0.20.0`）→ Tier 1 CDP `reddit.com` cookie context → Tier 2 Stealth Playwright + `sessions/reddit.json` → Tier 3 Jina；浏览器内 `fetch()` 复用 Cloudflare 状态；`REDDIT_REPLY_MODE=top/tree/all` 控制顶层、初始嵌套树或 morechildren 完整展开；`reddit-so` 关键词搜索输出汇总 Markdown |
 | Weibo | m.weibo.cn 移动端 API（show/container/getIndex），SUB Cookie 走 `WEIBO_COOKIE` env 或 `sessions/weibo.json`；SSR 兜底解析 `var $render_data=[{...}][0]||`；created_at 用 `email.utils.parsedate_to_datetime` 解析 RFC 2822；转发用 Markdown 引用块嵌套 |
 | Douyin | CDP/Launch 共用同一 page 内 `fetch('/aweme/v1/web/aweme/detail/?aweme_id=...')`，浏览器自动签名 a_bogus / X-Bogus / msToken；明确**不破解**签名算法（每月变化）；SSR 兜底解析 `<script id="RENDER_DATA">` URL-encoded JSON；短链 `v.douyin.com/<code>` → 302 → `iesdouyin.com/share/video/<aweme_id>/` |
 | 付费墙 | 7 级 Tier 级联（JSON-LD/Googlebot/Bingbot/Generic/AMP/EU IP/archive.today/Google Cache）；`PAYWALL_JSONLD_FOR_ALL=true` 让 Tier 0 对 generic URL 都跑；Googlebot/Bingbot 每次覆盖 UA + Referer + `X-Forwarded-For` + `cookies={}` |
@@ -193,6 +194,7 @@ feedgrab/
 
 | 版本 | 功能 |
 |------|------|
+| v0.26.0 | main CLI 对齐 feedgrab-desktop v0.1.14 的后端能力：新增 Reddit 搜索与评论模式增强、X/Twitter `zh+zxx` Article 搜索覆盖和 Live+Top 合并排序、全局代理 service 设置、批量/MCP 结构化失败返回与用户可见中文消息补齐；保持 desktop worker/安装包/GUI 文件不合入 main |
 | v0.25.0 | 第一阶段 service layer 架构升级：新增 `feedgrab/service/` 的结构化 API（models / FetchService / Output / Login / Settings / Doctor / Job），CLI 单 URL 和 MCP 入口改为共用 `FetchService`，保持终端命令、Markdown 输出、去重索引和 session 格式兼容；修复 MP 后台 session 失效错误被掩盖问题；FlowUs 在线图片模式改为写入可预览的 `cdn2.flowus.cn` 签名 URL，本地模式仍通过 `FLOWUS_DOWNLOAD_IMAGES=true` 下载 `attachments/`；测试 210 passed |
 | v0.24.1 | 修复 Twitter 多账号 429 轮换：抽出 `fetch_with_cookie_rotation()` helper（`twitter_cookies.py`），统一 7 个批量 fetcher（user_tweets / bookmarks / list / user_lists / retweeters / search_people / keyword_search）的"账号限流后跨账号重试"逻辑；之前重试仅复用同一被限流账号 3 次就停（user_tweets）或直接 break（其余 6 个），现在改为**每个账号都试一遍**才真正终止；关键日志统一加 `>>> ... <<<` 高亮 + 剩余可用账号数 + 最早解封倒计时；测试 193 → 201；实测 `feedgrab https://x.com/AdrianPunk115` 抓取量 557 → 632（+13.4%） |
 | v0.24.0 | 新增「FlowUs 息流」（flowus.cn）平台支持（公开分享 + 付费/私有分享 + 个人空间链接）；Notion 风格 block-tree 扁平 JSON 渲染（8 类 block：page/paragraph/bullet/ordered/heading/quote/media/code + 5 种 enhancer + 链接片段）；纯 HTTP 链路（公开零 cookie / 付费需 `next_auth`+`next_auth.sig` 双 cookie）+ CDP/Launch 浏览器兜底；图片本地化：headless 浏览器渲染 + 多 pass 滚动 + lazy→eager 抓 `cdn2.flowus.cn` 签名 URL（59/59 全成功） |
@@ -235,7 +237,7 @@ feedgrab/
 | LinuxDo / IDCFlare / Discourse | `linuxdo.py` + `idcflare.py`（topic JSON → CDP → 浏览器 → Jina） |
 | HackerNews | `hackernews.py`（Firebase API v0 + 列表批量 + 一层评论） |
 | Medium | `medium.py`（Jina + JSON-LD + Browser + RSS feed 批量） |
-| Reddit | `reddit.py`（.json + CDP/Browser fetch + reddit-sub） |
+| Reddit | `reddit.py`（.json + CDP/Browser fetch + reddit-sub + reddit-so + reply_mode） |
 | Weibo | `weibo.py`（m.weibo.cn show + container/getIndex + SSR 兜底） |
 | Douyin | `douyin.py`（CDP/Launch + SSR RENDER_DATA + 短链 302 解析） |
 | 知识星球 | `zsxq.py`（articles SSR HTML + topic API JSON + 五形态 + 短链 302） |

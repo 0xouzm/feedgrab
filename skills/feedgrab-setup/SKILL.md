@@ -75,6 +75,9 @@ feedgrab login wechat
 # Feishu — opens browser for login
 feedgrab login feishu
 
+# Reddit — opens browser for login if Cloudflare/private content needs it
+feedgrab login reddit
+
 # LinuxDo / Discourse — opens browser for login
 feedgrab login linuxdo
 
@@ -104,6 +107,7 @@ feedgrab doctor x          # Twitter/X
 feedgrab doctor xhs        # Xiaohongshu
 feedgrab doctor mpweixin   # WeChat
 feedgrab doctor feishu     # Feishu
+feedgrab doctor reddit     # Reddit
 ```
 
 ## Step 6: Test
@@ -123,11 +127,18 @@ Key environment variables (all optional):
 # Output
 OUTPUT_DIR=./output
 
+# Proxy (optional)
+FEEDGRAB_PROXY_ENABLED=false
+FEEDGRAB_PROXY_URL=
+FEEDGRAB_NO_PROXY=127.0.0.1,localhost
+
 # Twitter
 X_BOOKMARKS_ENABLED=true
 X_USER_TWEETS_ENABLED=true
 X_LIST_TWEETS_ENABLED=true
 X_DOWNLOAD_MEDIA=true
+X_SEARCH_LANG=zh
+X_SEARCH_SORT=live
 
 # Xiaohongshu
 XHS_USER_NOTES_ENABLED=true
@@ -166,6 +177,13 @@ LINUXDO_REPLY_MODE=author
 IDCFLARE_CDP_ENABLED=true
 IDCFLARE_PAGE_LOAD_TIMEOUT=15000
 IDCFLARE_REPLY_MODE=author
+
+# Reddit
+REDDIT_CDP_ENABLED=true
+REDDIT_REPLY_MODE=top          # top/tree/all
+REDDIT_SEARCH_ENABLED=true
+REDDIT_SEARCH_SORT=relevance
+REDDIT_SEARCH_TIME_RANGE=all
 
 # KDocs (金山文档)
 KDOCS_CDP_ENABLED=false

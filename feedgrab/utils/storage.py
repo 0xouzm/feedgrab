@@ -97,6 +97,14 @@ def _parse_xhs_location(raw: str) -> str:
     return ""
 
 
+def _yaml_quoted_single_line(value: str) -> str:
+    """Return a double-quoted YAML scalar safe for Obsidian Properties."""
+    text = re.sub(r"[\r\n\t]+", " ", str(value or ""))
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    text = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
 def _format_subtitle_text(text: str) -> str:
     """Format subtitle/transcript text with paragraph breaks.
 
@@ -428,13 +436,10 @@ def _format_markdown(item: UnifiedContent) -> str:
         published = _format_iso_datetime(extra["created_at"], with_time=False)
     fetched_date = item.fetched_at[:10] if item.fetched_at else ""
 
-    # --- Title (escape quotes for YAML) ---
-    fm_title = (item.title or "").replace('"', '\\"')
-
     # --- YAML front matter (Obsidian Properties format) ---
     fm_lines = [
         "---",
-        f'title: "{fm_title}"',
+        f"title: {_yaml_quoted_single_line(item.title)}",
         f'source: "{item.url}"',
         f"author:",
         f'  - "{item.source_name}"',
@@ -678,6 +683,14 @@ def _format_markdown(item: UnifiedContent) -> str:
         fm_lines.append(f"is_self: {str(bool(extra.get('is_self', True))).lower()}")
         if extra.get("linked_url"):
             fm_lines.append(f'linked_url: "{extra["linked_url"]}"')
+        if extra.get("search_keyword"):
+            fm_lines.append(f'search_keyword: "{extra["search_keyword"]}"')
+        if extra.get("search_sort"):
+            fm_lines.append(f'search_sort: "{extra["search_sort"]}"')
+        if extra.get("search_time_range"):
+            fm_lines.append(f'search_time_range: "{extra["search_time_range"]}"')
+        if extra.get("result_type"):
+            fm_lines.append(f'result_type: "{extra["result_type"]}"')
 
     # Weibo extras
     is_weibo = item.source_type == SourceType.WEIBO

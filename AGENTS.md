@@ -6,7 +6,7 @@ feedgrab 是一个万能内容抓取器，从任意平台抓取内容并输出�
 
 - **仓库**：https://github.com/iBigQiang/feedgrab
 - **作者**：[@iBigQiang](https://github.com/iBigQiang)（强子手记）
-- **当前版本**：v0.25.0
+- **当前版本**：v0.26.0
 - **Python**：≥3.10
 - **许可证**：MIT
 
@@ -44,6 +44,7 @@ feedgrab 由两个项目融合升级而来：
 | 小宇宙 | SSR `__NEXT_DATA__` + Groq Whisper 转录 |
 | 喜马拉雅 | Web Revision API + canPlay 降级 + Groq Whisper（免费节目） |
 | RSS | feedparser |
+| Reddit | old.reddit.com .json + 自报 UA → CDP 复用 Chrome → Stealth Playwright + saved session → Jina（`REDDIT_REPLY_MODE=top/tree/all` + `reddit-sub` + `reddit-so`） |
 | 知识星球 | Tier 0 HTTP cookie（articles SSR HTML / topic API JSON）→ Tier 1 CDP 复用 → Tier 2 Stealth Browser → Tier 3 Jina；短链 t.zsxq.com 302 解析；topic 五形态：talk/question+answer/article/solution；评论三态 |
 | 付费新闻（300+） | 7 级 Tier 绕过（JSON-LD → Googlebot/Bingbot UA → AMP → EU IP → archive.today → Google Cache → Jina） |
 | 任意网页 | JSON-LD 前置探测 → Jina 兜底 |
@@ -156,7 +157,7 @@ feedgrab/
 
 ### Service 层（`feedgrab/service/`）
 
-`feedgrab/service/` 是 CLI、MCP 和未来 GUI 复用的结构化后端 API 层。`FetchService.fetch_url()` 内部继续复用 `UniversalReader.read()`，保留既有 Markdown 保存、媒体本地化、去重索引和 session 语义。Service 通过 `FetchResult.artifacts` 暴露产物路径，不把 artifact 写入 `UnifiedContent.extra`，避免改变 Markdown/front matter 或 MCP `to_dict()` 兼容输出。
+`feedgrab/service/` 是 CLI、MCP 和未来 GUI 复用的结构化后端 API 层。`FetchService.fetch_url()` 内部继续复用 `UniversalReader.read()`，保留既有 Markdown 保存、媒体本地化、去重索引和 session 语义。Service 通过 `FetchResult.artifacts` 暴露产物路径，不把 artifact 写入 `UnifiedContent.extra`，避免改变 Markdown/front matter 或 MCP `to_dict()` 兼容输出。批量抓取和 MCP 调用返回结构化失败项；`platform_settings.py` 暴露 `FEEDGRAB_PROXY_*`、Reddit 和 X 搜索设置。
 
 ### GitHub 仓库 README 抓取（`fetchers/github.py`）
 
@@ -164,7 +165,7 @@ feedgrab/
 
 ### Twitter 关键词搜索（`twitter_keyword_search.py`）
 
-`feedgrab x-so <keyword>` 通过三级兜底策略搜索 Twitter，输出按查看数降序排列的 Markdown 汇总表格 + CSV。**Tier 0 GraphQL**（SearchTimeline 端点，<2s/页）→ **Tier 1 CDP 直连**（复用已打开 Chrome，Cookie 域名匹配 `.x.com`/`.twitter.com`，秒级启动）→ **Tier 2 Playwright launch**（隐身浏览器 + session 预热）。浏览器路径复用 `SearchResponseCollector` + `_scroll_and_collect_search`（来自 `twitter_search_tweets.py`），数据格式完全兼容（同一 `extract_tweet_data()`）。`X_SEARCH_BROWSER_FALLBACK=true`（默认）控制是否启用浏览器兜底。支持逗号分隔多关键词批量搜索（`feedgrab x-so "k1,k2,k3"`），`--merge` 合并结果到一个文件（含关键词列），默认分开生成。`build_search_query()` 自动拼接高级搜索运算符（lang/since/min_faves/-is:retweet 等），关键词自动包引号。MD 表格中内容摘要为超链接（无独立链接列），CSV 保留明文链接列。`_generate_summary_table()` 同时输出 `.md`（Obsidian `cssclasses: wide`）和 `.csv`（UTF-8 BOM），合并模式下按查看数全局排序 + 添加关键词列。12 个 `X_SEARCH_*` 配置函数提供默认值。`--raw` 模式让用户完全控制查询语法。`X_SEARCH_SAVE_TWEETS=true` 可选保存单篇推文 .md 到子目录。输出路径：`X/search/{days}day_{new|hot}/{keyword}_{date}.{md,csv}`。
+`feedgrab x-so <keyword>` 通过三级兜底策略搜索 Twitter，输出按查看数降序排列的 Markdown 汇总表格 + CSV。**Tier 0 GraphQL**（SearchTimeline 端点，<2s/页）→ **Tier 1 CDP 直连**（复用已打开 Chrome，Cookie 域名匹配 `.x.com`/`.twitter.com`，秒级启动）→ **Tier 2 Playwright launch**（隐身浏览器 + session 预热）。浏览器路径复用 `SearchResponseCollector` + `_scroll_and_collect_search`（来自 `twitter_search_tweets.py`），数据格式完全兼容（同一 `extract_tweet_data()`）。`X_SEARCH_BROWSER_FALLBACK=true`（默认）控制是否启用浏览器兜底。支持逗号分隔多关键词批量搜索（`feedgrab x-so "k1,k2,k3"`），`--merge` 合并结果到一个文件（含关键词列），默认分开生成。`build_search_query()` 自动拼接高级搜索运算符（lang/since/min_faves/-is:retweet 等），关键词自动包引号；`--lang zh+zxx` 会同时覆盖中文普通推文和 Article 长文卡片，英文关键词会扩展大小写组合。`--sort all` 同时搜索 Latest 和 Top 后合并去重，再按查看数排序。MD 表格中内容摘要为超链接（无独立链接列），Article 摘要优先显示长文标题；CSV 保留明文链接列。`_generate_summary_table()` 同时输出 `.md`（Obsidian `cssclasses: wide`）和 `.csv`（UTF-8 BOM），合并模式下按查看数全局排序 + 添加关键词列。12 个 `X_SEARCH_*` 配置函数提供默认值。`--raw` 模式让用户完全控制查询语法。`X_SEARCH_SAVE_TWEETS=true` 可选保存单篇推文 .md 到子目录。输出路径：`X/search/{days}day_{new|hot|all}/{keyword}_{date}.{md,csv}`。
 
 ### x-client-transaction-id 反检测（`twitter_graphql.py`）
 
@@ -214,7 +215,7 @@ Article 长文在 Tier 0 命中后优先用 GraphQL `content_state` 原生渲染
 
 ### curl_cffi TLS 指纹统一
 
-`utils/http_client.py` 提供统一 HTTP 客户端：curl_cffi `Session(impersonate="chrome")` 模拟 Chrome TLS 指纹（JA3/JA4 完全匹配），fallback 到标准 requests。所有 fetcher 的 `requests.get()`/`urllib.request.urlopen()` 均已迁移到 `http_client.get()`/`http_client.post()`。异常兼容层确保现有 `except requests.Timeout`/`except requests.RequestException` 代码无需改动。`raise_for_status()` 辅助函数包装 curl_cffi 的状态码异常为 `requests.HTTPError`。
+`utils/http_client.py` 提供统一 HTTP 客户端：curl_cffi `Session(impersonate="chrome")` 模拟 Chrome TLS 指纹（JA3/JA4 完全匹配），fallback 到标准 requests。所有 fetcher 的 `requests.get()`/`urllib.request.urlopen()` 均已迁移到 `http_client.get()`/`http_client.post()`。异常兼容层确保现有 `except requests.Timeout`/`except requests.RequestException` 代码无需改动。`raise_for_status()` 辅助函数包装 curl_cffi 的状态码异常为 `requests.HTTPError`。全局代理由 `FEEDGRAB_PROXY_ENABLED` / `FEEDGRAB_PROXY_URL` / `FEEDGRAB_NO_PROXY` 控制。
 
 ### 全局去重索引
 
@@ -413,6 +414,7 @@ yt-dlp 默认只启用 deno。`_js_runtime_args()` 自动检测 deno/node/bun �
 
 | 版本 | 功能 |
 |------|------|
+| v0.26.0 | main CLI 对齐 feedgrab-desktop v0.1.14 的后端能力：新增 Reddit 搜索与评论模式增强、X/Twitter `zh+zxx` Article 搜索覆盖和 Live+Top 合并排序、全局代理 service 设置、批量/MCP 结构化失败返回与用户可见中文消息补齐；保持 desktop worker/安装包/GUI 文件不合入 main |
 | v0.25.0 | 第一阶段 service layer 架构升级：新增 `feedgrab/service/` 的结构化 API（models / FetchService / Output / Login / Settings / Doctor / Job），CLI 单 URL 和 MCP 入口改为共用 `FetchService`，保持终端命令、Markdown 输出、去重索引和 session 格式兼容；修复 MP 后台 session 失效错误被掩盖问题；FlowUs 在线图片模式改为写入可预览的 `cdn2.flowus.cn` 签名 URL，本地模式仍通过 `FLOWUS_DOWNLOAD_IMAGES=true` 下载 `attachments/`；测试 210 passed |
 | v0.21.0 | 新增「知识星球」（Zsxq）平台支持（articles.zsxq.com 长文章 + wx.zsxq.com 短帖 + t.zsxq.com 短链 302 解析）；4 级 Tier 链路 + 五形态 topic 渲染（含 solution）+ 三态评论筛选 |
 | v0.20.1 | 修复 Twitter 长 thread 被误判为 Article 导致 quoted tweet 丢失（`schema.from_twitter` 改用 `_has_article_body` 看 article_data 实际内容） |
@@ -449,6 +451,7 @@ yt-dlp 默认只启用 deno。`_js_runtime_args()` 自动检测 deno/node/bun �
 | YouTube 相关 | `youtube.py`（字幕/转录）+ `youtube_search.py`（搜索/下载） |
 | GitHub 相关 | `github.py`（REST API + 中文 README 优先） |
 | LinuxDo / IDCFlare / Discourse | `linuxdo.py` + `idcflare.py`（topic JSON → CDP → 浏览器 → Jina） |
+| Reddit 相关 | `reddit.py`（.json + CDP/Browser fetch + reddit-sub + reddit-so + reply_mode） |
 | 小红书相关 | `xhs*.py`（4个文件）+ `browser.py` |
 | 飞书相关 | `feishu.py`（单篇 + Block→MD + 图片）+ `feishu_wiki.py`（知识库批量）+ `browser.py` |
 | 金山文档相关 | `kdocs.py`（ProseMirror DOM 提取 + shapes API 图片 + CDP 直连） |

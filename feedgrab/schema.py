@@ -247,6 +247,21 @@ def _has_article_body(article_data: dict) -> bool:
     return bool(body and len(body.strip()) > 200)
 
 
+def _clean_twitter_title(text: str, max_len: int = 50) -> str:
+    """Collapse tweet text into a short, single-line title."""
+    text = re.sub(r'\*{1,3}', '', text or "")
+    text = re.sub(r'[\r\n\t]+', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text) <= max_len:
+        return text
+
+    candidate = text[:max_len]
+    for i in range(len(candidate) - 1, max_len // 3 - 1, -1):
+        if candidate[i] in "。！？.!?":
+            return candidate[:i + 1]
+    return candidate
+
+
 def from_twitter(data: dict) -> UnifiedContent:
     # If thread data is present, assemble rich content from all tweets
     tweets = data.get("thread_tweets", [])
@@ -295,10 +310,12 @@ def from_twitter(data: dict) -> UnifiedContent:
     else:
         tweet_type = "status"
 
+    title = _clean_twitter_title(data.get("title") or data.get("text", ""))
+
     return UnifiedContent(
         source_type=SourceType.TWITTER,
         source_name=data.get("author", ""),
-        title=data.get("title", re.sub(r'[\r\n\t]+', '', data.get("text", ""))[:50]),
+        title=title,
         content=content,
         url=data.get("url", ""),
         tags=data.get("hashtags", []),
@@ -730,6 +747,7 @@ def from_reddit(data: dict) -> UnifiedContent:
         title=data.get("title", "") or "Untitled",
         content=data.get("content", ""),
         url=data.get("url", ""),
+        category=data.get("category", ""),
         tags=data.get("tags", []),
         extra={
             "reddit_id": data.get("id", ""),
@@ -742,6 +760,23 @@ def from_reddit(data: dict) -> UnifiedContent:
             "linked_url": data.get("linked_url", ""),
             "created_at": data.get("created_at", ""),
             "author_name": data.get("author_name", "") or author,
+            "search_keyword": data.get("search_keyword", ""),
+            "search_sort": data.get("search_sort", ""),
+            "search_time_range": data.get("search_time_range", ""),
+            "result_type": data.get("result_type", ""),
+            "request_url": data.get("request_url", ""),
+            "tier": data.get("tier", ""),
+            "reply_mode": data.get("reply_mode", ""),
+            "rendered_reply_count": data.get("rendered_reply_count", 0),
+            "more_expanded_count": data.get("more_expanded_count", 0),
+            "more_remaining_count": data.get("more_remaining_count", 0),
+            "post_hint": data.get("post_hint", ""),
+            "preview_image_url": data.get("preview_image_url", ""),
+            "gallery_urls": data.get("gallery_urls", []),
+            "media_url": data.get("media_url", ""),
+            "images": data.get("images", []),
+            "videos": data.get("videos", []),
+            "page_count": data.get("page_count", 0),
         },
     )
 
