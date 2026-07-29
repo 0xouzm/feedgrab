@@ -915,7 +915,7 @@ feedgrab/
 
 ## 致谢
 
-feedgrab 由以下两个项目融合升级而来，继承了 x-reader 的多平台架构，并融合了 baoyu-danger-x-to-markdown 对 X/Twitter GraphQL 的深度抓取能力：
+feedgrab 由以下两个项目融合为起点、一路迭代升级而来，继承了 x-reader 的多平台架构，并融合了 baoyu-danger-x-to-markdown 对 X/Twitter GraphQL 的深度抓取能力：
 
 - **[x-reader](https://github.com/runesleo/x-reader)**：由 [@runes_leo](https://x.com/runes_leo) 开发的多平台万能内容阅读器，提供了核心架构、CLI、MCP 服务器和 7+ 平台的抓取器。
 - **[baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown)**：由 [@dotey](https://x.com/dotey)（宝玉）开发的 X/Twitter 深度抓取技能，提供了逆向工程的 GraphQL API 访问、线程重建和 Markdown 渲染能力。
