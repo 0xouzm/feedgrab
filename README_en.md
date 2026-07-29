@@ -1,15 +1,57 @@
-# feedgrab
+<div align="center">
 
-**English** | **[中文](README.md)**
+<h1>feedgrab</h1>
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+<h3>The Universal Content Grabber for 18+ Media Platforms, from URLs and Keywords to Obsidian Markdown</h3>
 
-Universal content grabber — fetch, transcribe, and digest content from any platform.
+<p>
+  <a href="DEVLOG.md"><img src="https://img.shields.io/badge/version-v0.25.0-0A84FF.svg" alt="feedgrab v0.25.0"></a>
+  <a href="#install"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6B7280.svg" alt="Windows, macOS and Linux"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/built%20with-Python%203.10%2B-3776AB.svg?logo=python&amp;logoColor=white" alt="Built with Python 3.10+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22C55E.svg?logo=opensourceinitiative&amp;logoColor=white" alt="MIT License"></a>
+  <a href="https://github.com/iBigQiang/feedgrab/stargazers"><img src="https://img.shields.io/github/stars/iBigQiang/feedgrab?style=flat&amp;logo=github&amp;label=stars" alt="GitHub Stars"></a>
+</p>
 
-Give it a URL (article, video, podcast, tweet), get back structured content. Works as CLI, Python library, MCP server, or Claude Code skills.
+<p>
+  <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/browser-Playwright-2EAD33.svg?logo=playwright&amp;logoColor=white" alt="Playwright browser automation"></a>
+  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/protocol-MCP-7C3AED.svg" alt="Model Context Protocol server"></a>
+  <a href="https://code.claude.com/docs/en/features-overview"><img src="https://img.shields.io/badge/skills-Claude%20Code-D97757.svg?logo=anthropic&amp;logoColor=white" alt="Claude Code skills"></a>
+  <a href="https://obsidian.md/"><img src="https://img.shields.io/badge/output-Obsidian%20Markdown-7C3AED.svg?logo=obsidian&amp;logoColor=white" alt="Obsidian-compatible Markdown"></a>
+</p>
 
-> **Origin**: feedgrab is a fusion upgrade based on [x-reader](https://github.com/runesleo/x-reader) by [@runes_leo](https://x.com/runes_leo) and the [baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown) Claude Code skill by [@dotey](https://x.com/dotey). It inherits x-reader's multi-platform architecture and integrates baoyu's reverse-engineered X/Twitter GraphQL capabilities for deep tweet/thread fetching.
+<p><strong>feedgrab</strong> is an open-source, <strong>vibe-coded</strong> collector for mainstream media and content platforms. Give it a supported URL or keyword and it detects the platform, batch-fetches the content, and exports metadata-rich, Obsidian-compatible Markdown. It currently supports 18+ mainstream platforms. Its core fetching paths prioritize free interfaces, so paid APIs are usually unnecessary and API costs stay close to zero.</p>
+
+<h3>🌐 Official Repository &amp; Documentation: <a href="https://github.com/iBigQiang/feedgrab">github.com/iBigQiang/feedgrab</a></h3>
+
+<p><strong>English</strong> | <strong><a href="README.md">中文</a></strong> | <a href="#install">Install</a> | <a href="https://github.com/iBigQiang/feedgrab/tree/feedgrab-desktop">Windows Desktop</a> | <a href="DEVLOG.md">Changelog</a></p>
+
+</div>
+
+## ❤️ Sponsors
+
+> [Want to appear here?](mailto:ibigqiang@gmail.com)
+
+<details open>
+<summary>Click to expand or collapse sponsor content</summary>
+
+**👑 Title Sponsor**
+
+[![Hitu Image](https://hitu.me/og.jpeg)](https://hitu.me/zh/)
+
+Hitu Image is the title sponsor of feedgrab. It is an all-in-one ChatGPT image creation tool for text-to-image generation, image editing, style transfer, background removal, old photo restoration, and upscaling. New users receive free credits, with no credit card required and no watermark restrictions. **[Try Hitu Image](https://hitu.me/zh/generate)**, or **[register through this offer](https://hitu.me/zh/notices/order-and-get-20-off-in-points)** and receive 20% bonus credits after purchasing a plan.
+
+---
+
+**Sponsors**
+
+<table>
+<tr>
+<td width="180"><a href="https://huangqiang.me/"><img src="https://huangqiang.me/og.png" alt="Qiang's Notes · iBigQiang" width="150"></a></td>
+<td>Thanks to Qiang's Notes for supporting feedgrab. Qiang's Notes is the personal IP brand website of BigQiang / iBigQiang, bringing together independent development, open-source projects, products, writing, and ways to collaborate. <strong><a href="https://huangqiang.me/">Visit huangqiang.me</a></strong></td>
+</tr>
+</table>
+
+</details>
 
 ## What It Does
 
@@ -17,7 +59,7 @@ Give it a URL (article, video, podcast, tweet), get back structured content. Wor
 Any URL → Platform Detection → Fetch Content → Unified Output
               ↓                      ↓                ↓
          auto-detect           text: Jina Reader    → output/X/Author_Date：Title.md
-         17+ platforms         video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
+         18+ platforms         video: yt-dlp subs    → output/YouTube/Author_Date：Title.md
                                audio: Whisper transcription
                                API: Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / Feishu Open API / Discourse Topic JSON
                                X/Twitter: GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
@@ -779,10 +821,10 @@ User sends URL
 
 ## Credits
 
-feedgrab is built upon:
+feedgrab is a fusion upgrade built on the following two projects. It inherits x-reader's multi-platform architecture and incorporates the deep X/Twitter GraphQL fetching capabilities developed in baoyu-danger-x-to-markdown:
 
-- **[x-reader](https://github.com/runesleo/x-reader)** by [@runes_leo](https://x.com/runes_leo) — the original multi-platform content reader providing the core architecture, CLI, MCP server, and fetchers for 7+ platforms.
-- **[baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown)** by [@dotey](https://x.com/dotey) (宝玉) — the X/Twitter deep fetching skill providing reverse-engineered GraphQL API access, thread reconstruction, and Markdown rendering.
+- **[x-reader](https://github.com/runesleo/x-reader)** by [@runes_leo](https://x.com/runes_leo): the original multi-platform content reader that provided the core architecture, CLI, MCP server, and fetchers for 7+ platforms.
+- **[baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown)** by [@dotey](https://x.com/dotey) (宝玉): the X/Twitter deep-fetching skill that provided reverse-engineered GraphQL API access, thread reconstruction, and Markdown rendering.
 
 ## Author
 

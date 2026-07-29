@@ -1,15 +1,57 @@
-# feedgrab
+<div align="center">
 
-**[English](README_en.md)** | **中文**
+<h1>feedgrab</h1>
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+<h3>18+ 主流自媒体与内容平台的一站式抓取、批量采集与 Obsidian Markdown 输出工具</h3>
 
-万能内容抓取器 — 从任意平台抓取、转录和消化内容。
+<p>
+  <a href="DEVLOG.md"><img src="https://img.shields.io/badge/version-v0.25.0-0A84FF.svg" alt="feedgrab v0.25.0"></a>
+  <a href="#安装"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6B7280.svg" alt="Windows, macOS and Linux"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/built%20with-Python%203.10%2B-3776AB.svg?logo=python&amp;logoColor=white" alt="Built with Python 3.10+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22C55E.svg?logo=opensourceinitiative&amp;logoColor=white" alt="MIT License"></a>
+  <a href="https://github.com/iBigQiang/feedgrab/stargazers"><img src="https://img.shields.io/github/stars/iBigQiang/feedgrab?style=flat&amp;logo=github&amp;label=stars" alt="GitHub Stars"></a>
+</p>
 
-给它一个 URL（文章、视频、播客、推文），返回结构化的内容。支持 CLI 命令行、Python 库、MCP 服务器和 Claude Code 技能四种使用方式。
+<p>
+  <a href="https://playwright.dev/"><img src="https://img.shields.io/badge/browser-Playwright-2EAD33.svg?logo=playwright&amp;logoColor=white" alt="Playwright browser automation"></a>
+  <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/protocol-MCP-7C3AED.svg" alt="Model Context Protocol server"></a>
+  <a href="https://code.claude.com/docs/en/features-overview"><img src="https://img.shields.io/badge/skills-Claude%20Code-D97757.svg?logo=anthropic&amp;logoColor=white" alt="Claude Code skills"></a>
+  <a href="https://obsidian.md/"><img src="https://img.shields.io/badge/output-Obsidian%20Markdown-7C3AED.svg?logo=obsidian&amp;logoColor=white" alt="Obsidian-compatible Markdown"></a>
+</p>
 
-> **项目来源**：feedgrab 是在 [@runes_leo](https://x.com/runes_leo) 的 [x-reader](https://github.com/runesleo/x-reader) 和 [@dotey](https://x.com/dotey)（宝玉）的 [baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown) Claude Code 技能基础上融合升级而来。继承了 x-reader 的多平台架构，融合了宝玉 skill 逆向工程的 X/Twitter GraphQL 深度抓取能力。
+<p><strong>feedgrab</strong> 是一个面向主流自媒体与内容平台的 <strong>vibe coding</strong> 开源抓取工具。输入已支持平台的 URL 或关键词，它会自动识别平台、批量抓取内容，并统一输出为带完整元数据、兼容 Obsidian 的 Markdown 文档。目前支持 18+ 主流平台，核心抓取链路优先使用免费接口，通常无需购买付费 API，使用成本接近 0。</p>
+
+<h3>🌐 官方仓库与使用文档：<a href="https://github.com/iBigQiang/feedgrab">github.com/iBigQiang/feedgrab</a></h3>
+
+<p><strong><a href="README_en.md">English</a></strong> | <strong>中文</strong> | <a href="#安装">安装</a> | <a href="https://github.com/iBigQiang/feedgrab/tree/feedgrab-desktop">Windows桌面版</a> | <a href="DEVLOG.md">更新日志</a></p>
+
+</div>
+
+## ❤️ 赞助商
+
+> [想出现在这里？](mailto:ibigqiang@gmail.com)
+
+<details open>
+<summary>点击展开或收起赞助商内容</summary>
+
+**👑 冠名赞助商**
+
+[![嗨图象（Hitu Image）](https://hitu.me/og.jpeg)](https://hitu.me/zh/)
+
+感谢「嗨图象」冠名赞助 feedgrab！嗨图象是一站式 ChatGPT 图像生成工具，支持文生图、图像编辑、风格迁移、背景移除、老照片修复和高清放大。注册即享免费额度，无需信用卡，无水印限制，适合内容创作者、电商和所有需要高效制作图片的用户。**[开启「嗨图象」AI 生图体验](https://hitu.me/zh/generate)**，或通过**[活动链接](https://hitu.me/zh/notices/order-and-get-20-off-in-points)**注册并充值套餐，获得 20% 额外积分。
+
+---
+
+**赞助商**
+
+<table>
+<tr>
+<td width="180"><a href="https://huangqiang.me/"><img src="https://huangqiang.me/og.png" alt="强子手记 · iBigQiang" width="150"></a></td>
+<td>感谢「强子手记」支持 feedgrab！强子手记是 BigQiang / iBigQiang 的个人 IP 品牌网站，汇集独立开发、开源项目、产品、文章与合作入口。<strong><a href="https://huangqiang.me/">访问 huangqiang.me</a></strong></td>
+</tr>
+</table>
+
+</details>
 
 ## 它能做什么
 
@@ -17,7 +59,7 @@
 任意 URL → 平台检测 → 抓取内容 → 统一输出
               ↓                ↓          ↓
          自动识别          文本：Jina Reader    → output/X/作者_日期：标题.md
-         17+ 平台           视频：InnerTube API → yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
+         18+ 平台           视频：InnerTube API → yt-dlp 字幕    → output/YouTube/作者_日期：标题.md
                            音频：Whisper 转录
                            API：Bilibili / RSS / Telegram / YouTube Data API v3 / GitHub REST API / 飞书 Open API / Discourse Topic JSON
                            X/Twitter：GraphQL → FxTwitter → Syndication → oEmbed → Jina → Playwright
@@ -873,10 +915,10 @@ feedgrab/
 
 ## 致谢
 
-feedgrab 基于以下项目融合升级而来：
+feedgrab 由以下两个项目融合升级而来，继承了 x-reader 的多平台架构，并融合了 baoyu-danger-x-to-markdown 对 X/Twitter GraphQL 的深度抓取能力：
 
-- **[x-reader](https://github.com/runesleo/x-reader)** — 由 [@runes_leo](https://x.com/runes_leo) 开发的多平台万能内容阅读器，提供了核心架构、CLI、MCP 服务器和 7+ 平台的抓取器。
-- **[baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown)** — 由 [@dotey](https://x.com/dotey)（宝玉）开发的 X/Twitter 深度抓取技能，提供了逆向工程的 GraphQL API 访问、线程重建和 Markdown 渲染能力。
+- **[x-reader](https://github.com/runesleo/x-reader)**：由 [@runes_leo](https://x.com/runes_leo) 开发的多平台万能内容阅读器，提供了核心架构、CLI、MCP 服务器和 7+ 平台的抓取器。
+- **[baoyu-danger-x-to-markdown](https://github.com/JimLiu/baoyu-skills/tree/main/skills/baoyu-danger-x-to-markdown)**：由 [@dotey](https://x.com/dotey)（宝玉）开发的 X/Twitter 深度抓取技能，提供了逆向工程的 GraphQL API 访问、线程重建和 Markdown 渲染能力。
 
 ## 作者
 
