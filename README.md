@@ -38,7 +38,7 @@
 
 [![嗨图象（Hitu Image）](https://hitu.me/og.jpeg)](https://hitu.me/zh/)
 
-感谢「嗨图象」冠名赞助 feedgrab！嗨图象是一站式 ChatGPT 图像生成工具，支持文生图、图像编辑、风格迁移、背景移除、老照片修复和高清放大。注册即享免费额度，无需信用卡，无水印限制，适合内容创作者、电商和所有需要高效制作图片的用户。**[开启「嗨图象」AI 生图体验](https://hitu.me/zh/generate)**，或通过**[活动链接](https://hitu.me/zh/notices/order-and-get-20-off-in-points)**注册并充值套餐，获得 20% 额外积分。
+感谢「嗨图象」冠名赞助 feedgrab！嗨图象是一站式 ChatGPT 图像生成工具，支持文生图、图像编辑、风格迁移、背景移除、老照片修复和高清放大。注册即享免费额度，无需信用卡，无水印限制，适合内容创作者、电商和所有需要高效制作图片的用户。 **[开启「嗨图象」AI 生图体验](https://hitu.me/zh/generate)** ，或通过 **[活动链接](https://hitu.me/zh/notices/order-and-get-20-off-in-points)** 注册并充值套餐，获得 20% 额外积分。
 
 ---
 
