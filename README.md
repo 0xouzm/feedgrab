@@ -47,7 +47,7 @@
 <table>
 <tr>
 <td width="180"><a href="https://huangqiang.me/"><img src="https://huangqiang.me/og.png" alt="强子手记 · iBigQiang" width="150"></a></td>
-<td>感谢「强子手记」支持 feedgrab！强子手记是 BigQiang / iBigQiang 的个人 IP 品牌网站，汇集独立开发、开源项目、产品、文章与合作入口。<strong><a href="https://huangqiang.me/">访问 huangqiang.me</a></strong></td>
+<td>感谢<strong><a href="https://huangqiang.me/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab">强子手记</a></strong>支持 feedgrab！强子手记是 BigQiang / iBigQiang 的个人 IP 品牌网站，汇集独立开发、开源项目、产品、文章与合作入口，访问<strong><a href="https://huangqiang.me/">huangqiang.me</a></strong></td>
 </tr>
 <tr>
 <td width="180"><a href="https://www.atlascloud.ai/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab"><img src="docs/Sponsor/ATLAS_CLOUD%20LOGO_BLACK.svg" alt="Atlas Cloud" width="150"></a></td>

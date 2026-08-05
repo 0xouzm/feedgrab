@@ -47,7 +47,7 @@ Hitu Image is the title sponsor of feedgrab. It is an all-in-one ChatGPT image c
 <table>
 <tr>
 <td width="180"><a href="https://huangqiang.me/"><img src="https://huangqiang.me/og.png" alt="Qiang's Notes · iBigQiang" width="150"></a></td>
-<td>Thanks to Qiang's Notes for supporting feedgrab. Qiang's Notes is the personal IP brand website of BigQiang / iBigQiang, bringing together independent development, open-source projects, products, writing, and ways to collaborate. <strong><a href="https://huangqiang.me/">Visit huangqiang.me</a></strong></td>
+<td>Thanks to <strong><a href="https://huangqiang.me/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab">Qiang's Notes</a></strong> for supporting feedgrab. Qiang's Notes is the personal IP brand website of BigQiang / iBigQiang, bringing together independent development, open-source projects, products, writing, and ways to collaborate. <strong><a href="https://huangqiang.me/">Visit huangqiang.me</a></strong></td>
 </tr>
 <tr>
 <td width="180"><a href="https://www.atlascloud.ai/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab"><img src="docs/Sponsor/ATLAS_CLOUD%20LOGO_BLACK.svg" alt="Atlas Cloud" width="150"></a></td>
