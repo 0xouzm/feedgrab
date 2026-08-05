@@ -49,6 +49,11 @@ Hitu Image is the title sponsor of feedgrab. It is an all-in-one ChatGPT image c
 <td width="180"><a href="https://huangqiang.me/"><img src="https://huangqiang.me/og.png" alt="Qiang's Notes · iBigQiang" width="150"></a></td>
 <td>Thanks to Qiang's Notes for supporting feedgrab. Qiang's Notes is the personal IP brand website of BigQiang / iBigQiang, bringing together independent development, open-source projects, products, writing, and ways to collaborate. <strong><a href="https://huangqiang.me/">Visit huangqiang.me</a></strong></td>
 </tr>
+<tr>
+<td width="180"><a href="https://www.atlascloud.ai/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab"><img src="docs/Sponsor/ATLAS_CLOUD%20LOGO_BLACK.svg" alt="Atlas Cloud" width="150"></a></td>
+<td><strong><a href="https://www.atlascloud.ai/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab">Atlas Cloud</a></strong> is a full-modal AI inference platform that gives developers a single AI API to access video generation, image generation, and LLM APIs. Instead of managing multiple vendor integrations, you connect once and get unified access to 300+ curated models across all modalities.
+Check out Atlas Cloud's new Coding Plan promotion for more budget-friendly API access: <a href="https://www.atlascloud.ai/console/coding-plan">https://www.atlascloud.ai/console/coding-plan</a></td>
+</tr>
 </table>
 
 </details>

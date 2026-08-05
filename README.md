@@ -38,7 +38,7 @@
 
 [![嗨图象（Hitu Image）](https://hitu.me/og.jpeg)](https://hitu.me/zh/)
 
-感谢「嗨图象」冠名赞助 feedgrab！嗨图象是一站式 ChatGPT 图像生成工具，支持文生图、图像编辑、风格迁移、背景移除、老照片修复和高清放大。注册即享免费额度，无需信用卡，无水印限制，适合内容创作者、电商和所有需要高效制作图片的用户。 **[开启「嗨图象」AI 生图体验](https://hitu.me/zh/generate)** ，或通过 **[活动链接](https://hitu.me/zh/notices/order-and-get-20-off-in-points)** 注册并充值套餐，获得 20% 额外积分。
+感谢「嗨图象」冠名赞助 feedgrab！嗨图象是一站式 ChatGPT 图像生成工具，支持文生图、图像编辑、风格迁移、背景移除、老照片修复和高清放大。注册即享免费额度，无需信用卡，无水印限制，适合内容创作者、电商和所有需要高效制作图片的用户。 **[开启「嗨图象」AI 生图体验](https://hitu.me/zh/generate)** 或通过 **[活动链接](https://hitu.me/zh/notices/order-and-get-20-off-in-points)** 注册并充值套餐，获得 20% 额外积分。
 
 ---
 
@@ -48,6 +48,11 @@
 <tr>
 <td width="180"><a href="https://huangqiang.me/"><img src="https://huangqiang.me/og.png" alt="强子手记 · iBigQiang" width="150"></a></td>
 <td>感谢「强子手记」支持 feedgrab！强子手记是 BigQiang / iBigQiang 的个人 IP 品牌网站，汇集独立开发、开源项目、产品、文章与合作入口。<strong><a href="https://huangqiang.me/">访问 huangqiang.me</a></strong></td>
+</tr>
+<tr>
+<td width="180"><a href="https://www.atlascloud.ai/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab"><img src="docs/Sponsor/ATLAS_CLOUD%20LOGO_BLACK.svg" alt="Atlas Cloud" width="150"></a></td>
+<td><strong><a href="https://www.atlascloud.ai/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab">Atlas Cloud</a></strong> 是一个全模态 AI 推理平台，为开发者提供统一的 AI API，可调用视频生成、图像生成和大语言模型 API。无需分别对接多个供应商，只需接入一次，即可统一访问覆盖所有模态的 300+ 精选模型。
+Atlas Cloud 新推出 Coding Plan 优惠方案，以更实惠的价格提供 API 访问：<a href="https://www.atlascloud.ai/console/coding-plan">https://www.atlascloud.ai/console/coding-plan</a></td>
 </tr>
 </table>
 
