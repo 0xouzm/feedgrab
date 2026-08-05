@@ -50,9 +50,9 @@
 <td>感谢<strong><a href="https://huangqiang.me/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab">强子手记</a></strong>支持 feedgrab！强子手记是 BigQiang / iBigQiang 的个人 IP 品牌网站，汇集独立开发、开源项目、产品、文章与合作入口，访问<strong><a href="https://huangqiang.me/">huangqiang.me</a></strong></td>
 </tr>
 <tr>
-<td width="180"><a href="https://www.atlascloud.ai/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab"><img src="docs/Sponsor/ATLAS_CLOUD%20LOGO_BLACK.svg" alt="Atlas Cloud" width="150"></a></td>
+<td width="180"><a href="https://www.atlascloud.ai/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab"><img src="docs/Sponsor/ATLAS_CLOUD_LOGO_BLACK.svg" alt="Atlas Cloud" width="150"></a></td>
 <td><strong><a href="https://www.atlascloud.ai/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab">Atlas Cloud</a></strong> 是一个全模态 AI 推理平台，为开发者提供统一的 AI API，可调用视频生成、图像生成和大语言模型 API。无需分别对接多个供应商，只需接入一次，即可统一访问覆盖所有模态的 300+ 精选模型。
-Atlas Cloud 新推出 Coding Plan 优惠方案，以更实惠的价格提供 API 访问：<a href="https://www.atlascloud.ai/console/coding-plan">https://www.atlascloud.ai/console/coding-plan</a></td>
+Atlas Cloud 新推出 Coding Plan 优惠方案，以更实惠的价格提供 API 访问：<a href="https://www.atlascloud.ai/console/coding-plan/?utm_source=github&amp;utm_medium=link&amp;utm_campaign=feedgrab">https://www.atlascloud.ai/console/coding-plan</a></td>
 </tr>
 </table>
 
