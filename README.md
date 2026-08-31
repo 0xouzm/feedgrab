@@ -94,9 +94,10 @@ feedgrab clip
 # 抓取推文（配置好 Cookie 后自动走 GraphQL 深度抓取）
 feedgrab https://x.com/elonmusk/status/123456
 
-# 批量抓取书签（需要 X_BOOKMARKS_ENABLED=true）
-feedgrab https://x.com/i/bookmarks
-feedgrab https://x.com/i/bookmarks/2015311287715340624  # 指定书签文件夹
+# 批量抓取书签（需要 X_BOOKMARKS_ENABLED=true；仅主账号登录态可读）
+feedgrab https://x.com/i/history                       # 书签总览（X 现行 URL）
+feedgrab https://x.com/i/history/bookmarks/2015311287715340624  # 指定书签文件夹
+feedgrab https://x.com/i/bookmarks                     # legacy URL，仍然识别
 
 # 批量抓取用户推文（需要 X_USER_TWEETS_ENABLED=true）
 feedgrab https://x.com/iBigQiang                        # 抓取全部推文
@@ -117,13 +118,13 @@ feedgrab https://x.com/i/lists/2002743803959300263/subscribers   # 列表订阅�
 
 # v0.22.0: 批量抓取用户的回复推文 & 喜欢推文
 feedgrab https://x.com/ai_xiaomu/with_replies                    # 用户回复 tab（含自回复）
-feedgrab https://x.com/ai_xiaomu/likes                           # 用户喜欢（Twitter 默认私密，仅公开账号可见）
+feedgrab https://x.com/iBigQiang/likes                           # 只能抓自己的喜欢 —— 需要主账号登录态
 
 # v0.23.0: 抓取推文的转推者 / 点赞者列表（输出 MD + CSV，按粉丝倒序）
 feedgrab x-retweeters https://x.com/ai_xiaomu/status/2051099012288356592
 feedgrab x-favoriters 2051099012288356592                        # 也支持直接传 tweet_id
 feedgrab https://x.com/ai_xiaomu/status/2051099012288356592/retweets  # 等价 URL 路由
-feedgrab https://x.com/ai_xiaomu/status/2051099012288356592/likes     # 点赞者（作者可能隐藏）
+feedgrab https://x.com/iBigQiang/status/2051099012288356592/likes     # 点赞者：仅推文作者本人可读 —— 需要主账号登录态
 
 # v0.23.0: Twitter 人物搜索（SearchTimeline product=People）
 feedgrab x-so "AI Agent" --people                                # 关键词搜索人物，按粉丝倒序
@@ -485,6 +486,20 @@ sessions/
 > Cookie 不绑定 IP/设备，可跨电脑使用。只要不在浏览器上退出登录，Cookie 就一直有效。
 >
 > 429 时自动切换到下一个未限流账号，15 分钟冷却后自动恢复。
+
+#### 主账号 vs 轮换：哪些渠道必须用主账号
+
+轮换只对**公开**数据有意义。账号私有渠道只有唯一一个登录态读得到，轮换过去只会丢掉那个唯一可能成功的账号。以下边界由 2026-08-31 的真实抓取交叉实测确认（主号 `@iBigQiang` vs 备用号 `x_2.json`），不是推测：
+
+| 渠道 | 权限边界 | 行为 |
+|------|---------|------|
+| 书签（`/i/history`、`/i/history/bookmarks/<id>`） | 账号本人 | 钉死 `sessions/twitter.json`，缺主账号直接报错并给出登录指引 |
+| 用户喜欢（`/<用户>/likes`） | 账号本人 | 钉死主账号。备用号即使抓公开主页的 likes 也是空列表 |
+| 点赞者（`/status/<id>/likes`、`x-favoriters`） | **推文作者本人** | 钉死主账号。对第三方 12817 赞的推文实测，非作者账号一律空列表 |
+| 转推者（`/status/<id>/retweets`、`x-retweeters`） | 公开 | 正常多账号轮换 |
+| 单贴 / 长文 / 账号批量 / 回复 / 列表 / 列表成员 / 关注列表 / 关键词搜索 / 人物搜索 | 公开 | 正常多账号轮换 |
+
+所以 likes / 点赞者抓到空结果，含义是「你不是本人 / 不是作者」，**不是**「对方隐藏了列表」——X 只把这两个列表暴露给唯一一个账号。
 
 ### TwitterAPI.io 付费 API（可选）
 
